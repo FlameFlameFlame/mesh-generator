@@ -1,3 +1,5 @@
+import pytest
+
 from generator.models import SiteModel, SiteStore
 
 
@@ -49,3 +51,30 @@ def test_site_store_iter():
     store.add(SiteModel("B", 3.0, 4.0, 2))
     names = [s.name for s in store]
     assert names == ["A", "B"]
+
+
+def test_validate_priorities_ok():
+    store = SiteStore()
+    store.add(SiteModel("A", 1.0, 2.0, 1))
+    store.add(SiteModel("B", 3.0, 4.0, 2))
+    store.add(SiteModel("C", 5.0, 6.0, 3))
+    store.validate_priorities()  # should not raise
+
+
+def test_validate_priorities_gap():
+    store = SiteStore()
+    store.add(SiteModel("A", 1.0, 2.0, 1))
+    store.add(SiteModel("B", 3.0, 4.0, 3))
+    with pytest.raises(ValueError, match="Priority gap"):
+        store.validate_priorities()
+
+
+def test_validate_priorities_empty():
+    store = SiteStore()
+    store.validate_priorities()  # should not raise
+
+
+def test_validate_priorities_single():
+    store = SiteStore()
+    store.add(SiteModel("A", 1.0, 2.0, 2))
+    store.validate_priorities()  # single priority, no gap
