@@ -1,10 +1,13 @@
 import json
+import logging
 import os
 
 import yaml
 from shapely.geometry import MultiPoint, mapping
 
 from generator.models import SiteModel
+
+logger = logging.getLogger(__name__)
 
 
 def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
@@ -30,6 +33,7 @@ def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
 
     with open(path, "w") as f:
         json.dump(collection, f, indent=2)
+    logger.info("Exported %d sites to %s", len(sites), path)
 
 
 def export_boundary_geojson(
@@ -52,6 +56,7 @@ def export_boundary_geojson(
 
     with open(path, "w") as f:
         json.dump(collection, f, indent=2)
+    logger.info("Exported boundary to %s", path)
 
 
 def export_config_yaml(
@@ -88,3 +93,4 @@ def export_config_yaml(
     config_path = os.path.join(output_dir, "config.yaml")
     with open(config_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+    logger.info("Exported config to %s", config_path)

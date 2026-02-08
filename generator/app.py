@@ -1,18 +1,22 @@
 """Site Generator — Flask + Leaflet web UI for placing mesh network sites."""
 
+import json
+import logging
 import os
 import webbrowser
 
+import yaml
 from flask import Flask, jsonify, render_template_string, request
 
 from generator.models import SiteModel, SiteStore
 from generator.export import export_sites_geojson, export_boundary_geojson, export_config_yaml
 
+logger = logging.getLogger(__name__)
+
 app = Flask(__name__)
 store = SiteStore()
 _counter = 0
-
-PRIORITY_COLORS = {1: "red", 2: "orange", 3: "blue", 4: "green", 5: "gray"}
+_loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, coverage)
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -24,7 +28,8 @@ HTML_PAGE = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
-  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: #f5f5f5; border-bottom: 1px solid #ddd; }
+  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+             background: #f5f5f5; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
   #toolbar button { padding: 6px 16px; cursor: pointer; }
   #btn-add-site { font-weight: bold; }
   #btn-add-site.active { background: #c00; color: #fff; }
@@ -32,7 +37,8 @@ HTML_PAGE = """<!DOCTYPE html>
   #map.placing { cursor: crosshair !important; }
   #main { display: flex; flex: 1; overflow: hidden; }
   #map { flex: 3; }
-  #sidebar { flex: 1; min-width: 260px; max-width: 360px; display: flex; flex-direction: column; border-left: 1px solid #ddd; }
+  #sidebar { flex: 1; min-width: 280px; max-width: 380px; display: flex;
+             flex-direction: column; border-left: 1px solid #ddd; }
   #site-list { flex: 1; overflow-y: auto; }
   #site-list table { width: 100%; border-collapse: collapse; }
   #site-list th, #site-list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
@@ -43,14 +49,18 @@ HTML_PAGE = """<!DOCTYPE html>
   #controls input, #controls select { width: 100%; padding: 4px 6px; margin-top: 2px; }
   #controls .btn-row { display: flex; gap: 6px; margin-top: 10px; }
   #controls button { flex: 1; padding: 6px; cursor: pointer; }
-  #export-path { padding: 8px 12px; background: #eafaea; border-top: 1px solid #ccc; font-size: 0.85em; display: none; }
+  #layer-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
+  #layer-panel label { display: block; margin: 3px 0; cursor: pointer; }
+  #status-bar { padding: 6px 12px; background: #eafaea; border-top: 1px solid #ccc;
+                font-size: 0.85em; display: none; }
 </style>
 </head>
 <body>
 
 <div id="toolbar">
   <button id="btn-add-site" onclick="toggleAddMode()">+ Add Site</button>
-  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:200px;padding:4px;"></label>
+  <button onclick="doLoadProject()">Load Project</button>
+  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
   <button onclick="doExport()">Export</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
 </div>
@@ -80,7 +90,13 @@ HTML_PAGE = """<!DOCTYPE html>
         <button onclick="doDelete()" style="background:#fee;">Delete</button>
       </div>
     </div>
-    <div id="export-path"></div>
+    <div id="layer-panel">
+      <strong>Layers</strong>
+      <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
+      <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
+      <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
+    </div>
+    <div id="status-bar"></div>
   </div>
 </div>
 
@@ -91,10 +107,15 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
 }).addTo(map);
 
-let sites = [];      // [{name, lat, lon, priority}]
-let markers = [];    // L.circleMarker instances
+let sites = [];
+let siteMarkers = [];
 let selectedIdx = -1;
 let addMode = false;
+
+// Data layers from loaded project
+let layerGroups = { roads: L.layerGroup().addTo(map),
+                    towers: L.layerGroup().addTo(map),
+                    boundary: L.layerGroup().addTo(map) };
 
 function toggleAddMode() {
   addMode = !addMode;
@@ -109,7 +130,7 @@ function toggleAddMode() {
   } else {
     btn.classList.remove('active');
     btn.textContent = '+ Add Site';
-    hint.textContent = 'Click "Add Site" then click on the map';
+    hint.textContent = '';
     mapEl.classList.remove('placing');
   }
 }
@@ -132,22 +153,21 @@ function addSite(name, lat, lon, priority) {
 }
 
 function refresh() {
-  // Markers
-  markers.forEach(m => map.removeLayer(m));
-  markers = [];
+  siteMarkers.forEach(m => map.removeLayer(m));
+  siteMarkers = [];
   sites.forEach((s, i) => {
     let m = L.circleMarker([s.lat, s.lon], {
-      radius: 8, color: '#333', weight: 1, fillColor: COLORS[s.priority] || 'gray', fillOpacity: 0.85
-    }).addTo(map).bindTooltip(s.name);
+      radius: 9, color: '#333', weight: 2, fillColor: COLORS[s.priority] || 'gray', fillOpacity: 0.9
+    }).addTo(map).bindTooltip(s.name, {permanent: false});
     m.on('click', () => selectSite(i));
-    markers.push(m);
+    siteMarkers.push(m);
   });
-  // Table
   let tbody = document.getElementById('site-tbody');
   tbody.innerHTML = '';
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + s.name + '</td><td>' + '★'.repeat(s.priority) + ' (' + s.priority + ')</td>';
+    tr.innerHTML = '<td>' + s.name + '</td><td>' +
+      '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
     tbody.appendChild(tr);
@@ -190,10 +210,69 @@ function doExport() {
     body: JSON.stringify({output_dir: dir})
   }).then(r => r.json()).then(data => {
     if (data.error) { alert(data.error); return; }
-    let el = document.getElementById('export-path');
-    el.style.display = 'block';
-    el.textContent = 'Exported ' + data.count + ' sites to: ' + data.output_dir;
+    setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
   });
+}
+
+// --- Project load & layer visualization ---
+
+function doLoadProject() {
+  let configPath = prompt('Path to config.yaml (or directory containing it):');
+  if (!configPath) return;
+  setStatus('Loading project...');
+  fetch('/api/load', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({path: configPath})
+  }).then(r => r.json()).then(data => {
+    if (data.error) { alert(data.error); setStatus(''); return; }
+    sites = data.sites || [];
+    refresh();
+    renderLayers(data.layers || {});
+    setStatus('Loaded project: ' + (data.config_path || ''));
+    if (data.bounds) map.fitBounds(data.bounds);
+  });
+}
+
+function renderLayers(layers) {
+  // Roads
+  layerGroups.roads.clearLayers();
+  if (layers.roads) {
+    L.geoJSON(layers.roads, {
+      style: { color: '#2266aa', weight: 2, opacity: 0.7 }
+    }).addTo(layerGroups.roads);
+  }
+  // Towers (from optimizer output)
+  layerGroups.towers.clearLayers();
+  if (layers.towers) {
+    L.geoJSON(layers.towers, {
+      pointToLayer: function(feature, latlng) {
+        return L.circleMarker(latlng, {
+          radius: 6, color: '#000', weight: 1, fillColor: '#ff0', fillOpacity: 0.9
+        }).bindTooltip('Tower ' + (feature.properties.tower_id || '') +
+          ' (' + (feature.properties.source || '') + ')');
+      }
+    }).addTo(layerGroups.towers);
+  }
+  // Boundary
+  layerGroups.boundary.clearLayers();
+  if (layers.boundary) {
+    L.geoJSON(layers.boundary, {
+      style: { color: '#888', weight: 2, dashArray: '6 4', fillColor: '#ccc', fillOpacity: 0.1 }
+    }).addTo(layerGroups.boundary);
+  }
+}
+
+function toggleLayer(name) {
+  let chk = document.getElementById('chk-' + name);
+  if (chk.checked) layerGroups[name].addTo(map);
+  else map.removeLayer(layerGroups[name]);
+}
+
+function setStatus(msg) {
+  let el = document.getElementById('status-bar');
+  if (msg) { el.style.display = 'block'; el.textContent = msg; }
+  else { el.style.display = 'none'; }
 }
 </script>
 </body>
@@ -222,6 +301,7 @@ def add_site():
         priority=data.get("priority", 1),
     )
     store.add(site)
+    logger.info("Added site %s at (%.4f, %.4f) priority=%d", site.name, site.lat, site.lon, site.priority)
     return jsonify(store.to_list())
 
 
@@ -235,6 +315,7 @@ def update_site(idx):
         site.name = data["name"]
     if "priority" in data:
         store.update_priority(idx, data["priority"])
+    logger.info("Updated site %d: name=%s priority=%d", idx, site.name, site.priority)
     return jsonify(store.to_list())
 
 
@@ -242,7 +323,9 @@ def update_site(idx):
 def delete_site(idx):
     if idx < 0 or idx >= len(store):
         return jsonify({"error": "invalid index"}), 400
+    name = store.get(idx).name
     store.remove(idx)
+    logger.info("Deleted site %d (%s)", idx, name)
     return jsonify(store.to_list())
 
 
@@ -250,6 +333,12 @@ def delete_site(idx):
 def export():
     if len(store) == 0:
         return jsonify({"error": "No sites to export."})
+
+    try:
+        store.validate_priorities()
+    except ValueError as e:
+        logger.warning("Priority validation failed: %s", e)
+        return jsonify({"error": str(e)})
 
     data = request.json
     output_dir = os.path.abspath(data.get("output_dir", "output"))
@@ -263,6 +352,7 @@ def export():
     export_boundary_geojson(sites, boundary_path)
     export_config_yaml(output_dir, sites_path, boundary_path)
 
+    logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
@@ -270,8 +360,131 @@ def export():
     })
 
 
+@app.route("/api/load", methods=["POST"])
+def load_project():
+    """Load a project from a config.yaml path (or directory containing one)."""
+    global _counter, _loaded_layers
+    data = request.json
+    path = data.get("path", "").strip()
+
+    if os.path.isdir(path):
+        path = os.path.join(path, "config.yaml")
+    if not os.path.isfile(path):
+        logger.error("Config file not found: %s", path)
+        return jsonify({"error": f"File not found: {path}"})
+
+    config_dir = os.path.dirname(os.path.abspath(path))
+
+    with open(path) as f:
+        config = yaml.safe_load(f)
+    logger.info("Loaded config from %s", path)
+
+    inputs = config.get("inputs", {})
+    outputs = config.get("outputs", {})
+
+    def resolve(p):
+        if not p:
+            return None
+        if os.path.isabs(p):
+            return p
+        return os.path.join(config_dir, p)
+
+    # Load sites into the store
+    store._sites.clear()
+    _counter = 0
+    sites_path = resolve(inputs.get("target_sites"))
+    if sites_path and os.path.isfile(sites_path):
+        with open(sites_path) as f:
+            sites_data = json.load(f)
+        for feat in sites_data.get("features", []):
+            props = feat.get("properties", {})
+            coords = feat["geometry"]["coordinates"]
+            site = SiteModel(
+                name=props.get("name", f"Site_{_counter + 1}"),
+                lat=coords[1],
+                lon=coords[0],
+                priority=props.get("priority", 1),
+            )
+            store.add(site)
+            _counter += 1
+        logger.info("Loaded %d sites from %s", len(store), sites_path)
+
+    # Load GeoJSON layers for visualization
+    layers = {}
+    layer_files = {
+        "roads": resolve(inputs.get("roads")),
+        "boundary": resolve(inputs.get("boundary")),
+        "towers": resolve(outputs.get("towers")),
+    }
+    for key, fpath in layer_files.items():
+        if fpath and os.path.isfile(fpath):
+            with open(fpath) as f:
+                layers[key] = json.load(f)
+            logger.info("Loaded layer '%s' from %s", key, fpath)
+        else:
+            if fpath:
+                logger.warning("Layer '%s' file not found: %s", key, fpath)
+
+    _loaded_layers = layers
+
+    # Compute bounds for map fit
+    bounds = _compute_bounds(layers, store)
+
+    return jsonify({
+        "config_path": os.path.abspath(path),
+        "sites": store.to_list(),
+        "layers": layers,
+        "bounds": bounds,
+    })
+
+
+def _compute_bounds(layers, store):
+    """Compute [[south, west], [north, east]] from all loaded data."""
+    lats, lons = [], []
+    for site in store:
+        lats.append(site.lat)
+        lons.append(site.lon)
+    for key in ("roads", "boundary", "towers"):
+        geojson = layers.get(key)
+        if not geojson:
+            continue
+        for feat in geojson.get("features", []):
+            _collect_coords(feat.get("geometry", {}), lats, lons)
+    if not lats:
+        return None
+    return [[min(lats), min(lons)], [max(lats), max(lons)]]
+
+
+def _collect_coords(geometry, lats, lons):
+    """Recursively extract lat/lon from a GeoJSON geometry."""
+    gtype = geometry.get("type", "")
+    coords = geometry.get("coordinates", [])
+    if gtype == "Point":
+        lons.append(coords[0])
+        lats.append(coords[1])
+    elif gtype in ("LineString", "MultiPoint"):
+        for c in coords:
+            lons.append(c[0])
+            lats.append(c[1])
+    elif gtype in ("Polygon", "MultiLineString"):
+        for ring in coords:
+            for c in ring:
+                lons.append(c[0])
+                lats.append(c[1])
+    elif gtype == "MultiPolygon":
+        for poly in coords:
+            for ring in poly:
+                for c in ring:
+                    lons.append(c[0])
+                    lats.append(c[1])
+
+
 def main():
-    print("Starting Mesh Site Generator at http://127.0.0.1:5050")
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
+    logger.info("Starting Mesh Site Generator at http://127.0.0.1:5050")
     webbrowser.open("http://127.0.0.1:5050")
     app.run(host="127.0.0.1", port=5050, debug=False)
 

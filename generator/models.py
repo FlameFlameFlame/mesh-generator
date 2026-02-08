@@ -31,6 +31,19 @@ class SiteStore:
             for s in self._sites
         ]
 
+    def validate_priorities(self) -> None:
+        """Raise ValueError if priorities have gaps (e.g. 1 and 3 but no 2)."""
+        if not self._sites:
+            return
+        used = sorted({s.priority for s in self._sites})
+        expected = list(range(used[0], used[-1] + 1))
+        missing = set(expected) - set(used)
+        if missing:
+            raise ValueError(
+                f"Priority gap: levels {sorted(missing)} have no sites. "
+                f"Used priorities: {used}"
+            )
+
     def __len__(self) -> int:
         return len(self._sites)
 
