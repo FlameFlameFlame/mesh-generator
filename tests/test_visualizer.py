@@ -1,0 +1,215 @@
+"""Tests for expanded load, coverage endpoint, and clear state."""
+import json
+import os
+
+import yaml
+
+from generator.app import app
+
+
+def _write_fixture(tmp_path):
+    """Create a minimal project fixture with all output files."""
+    # Sites
+    sites = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [44.5, 40.2]},
+            "properties": {"name": "Yerevan", "priority": 1},
+        }],
+    }
+    sites_path = str(tmp_path / "sites.geojson")
+    with open(sites_path, "w") as f:
+        json.dump(sites, f)
+
+    # Boundary
+    boundary = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [
+                [[44.0, 40.0], [45.0, 40.0], [45.0, 41.0], [44.0, 41.0], [44.0, 40.0]]
+            ]},
+            "properties": {},
+        }],
+    }
+    boundary_path = str(tmp_path / "boundary.geojson")
+    with open(boundary_path, "w") as f:
+        json.dump(boundary, f)
+
+    # Towers
+    towers = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [44.5, 40.2]},
+            "properties": {"tower_id": 1, "source": "seed", "h3_index": "8828c0001"},
+        }],
+    }
+    towers_path = str(tmp_path / "towers.geojson")
+    with open(towers_path, "w") as f:
+        json.dump(towers, f)
+
+    # Visibility edges
+    edges = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": [[44.5, 40.2], [44.6, 40.3]]},
+            "properties": {"source_id": 1, "target_id": 2, "distance_m": 12000},
+        }],
+    }
+    edges_path = str(tmp_path / "visibility_edges.geojson")
+    with open(edges_path, "w") as f:
+        json.dump(edges, f)
+
+    # Coverage
+    coverage = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [
+                [[44.5, 40.2], [44.51, 40.2], [44.51, 40.21], [44.5, 40.21], [44.5, 40.2]]
+            ]},
+            "properties": {"h3_index": "8828c0001", "elevation": 1200, "visible_tower_count": 2},
+        }],
+    }
+    coverage_path = str(tmp_path / "coverage.geojson")
+    with open(coverage_path, "w") as f:
+        json.dump(coverage, f)
+
+    # Report
+    report = {
+        "total_cells": 100,
+        "cells_with_towers": 5,
+        "total_towers": 5,
+        "num_clusters": 1,
+        "towers_by_source": {"seed": 2, "route": 3},
+    }
+    report_path = str(tmp_path / "report.json")
+    with open(report_path, "w") as f:
+        json.dump(report, f)
+
+    # Config
+    config = {
+        "parameters": {"h3_resolution": 8},
+        "inputs": {
+            "boundary": boundary_path,
+            "roads": "",
+            "target_sites": sites_path,
+            "elevation": "",
+        },
+        "outputs": {
+            "towers": towers_path,
+            "coverage": coverage_path,
+            "report": report_path,
+            "visibility_edges": edges_path,
+        },
+    }
+    config_path = str(tmp_path / "config.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump(config, f)
+
+    return config_path
+
+
+class TestLoadProject:
+    def test_load_returns_edges_layer(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert "edges" in data["layers"]
+        assert data["layers"]["edges"]["type"] == "FeatureCollection"
+
+    def test_load_returns_report(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert data["report"] is not None
+        assert data["report"]["total_towers"] == 5
+
+    def test_load_returns_has_coverage(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert data["has_coverage"] is True
+
+    def test_load_without_outputs(self, tmp_path):
+        """Loading a config with no output files still works."""
+        sites = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [44.5, 40.2]},
+                "properties": {"name": "A", "priority": 1},
+            }],
+        }
+        sites_path = str(tmp_path / "sites.geojson")
+        with open(sites_path, "w") as f:
+            json.dump(sites, f)
+
+        config = {
+            "parameters": {},
+            "inputs": {"target_sites": sites_path, "boundary": "", "roads": "", "elevation": ""},
+            "outputs": {"towers": "nonexistent.geojson", "report": "nonexistent.json"},
+        }
+        config_path = str(tmp_path / "config.yaml")
+        with open(config_path, "w") as f:
+            yaml.dump(config, f)
+
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert "error" not in data
+        assert data["report"] is None
+        assert data["has_coverage"] is False
+
+
+class TestCoverageEndpoint:
+    def test_coverage_after_load(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            client.post("/api/load", json={"path": config_path})
+            resp = client.get("/api/coverage")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["type"] == "FeatureCollection"
+        assert len(data["features"]) == 1
+
+    def test_coverage_404_without_load(self, tmp_path):
+        with app.test_client() as client:
+            # Clear first to ensure no stale state
+            client.post("/api/clear")
+            resp = client.get("/api/coverage")
+
+        assert resp.status_code == 404
+
+
+class TestClearResetsState:
+    def test_clear_resets_coverage(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            client.post("/api/load", json={"path": config_path})
+            client.post("/api/clear")
+            resp = client.get("/api/coverage")
+
+        assert resp.status_code == 404
+
+    def test_clear_resets_report(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        with app.test_client() as client:
+            client.post("/api/load", json={"path": config_path})
+            client.post("/api/clear")
+            resp = client.post("/api/load", json={"path": config_path})
+            # Re-load should work fine after clear
+            data = resp.get_json()
+
+        assert data["report"]["total_towers"] == 5
