@@ -103,6 +103,7 @@ def export_config_yaml(
             "towers": os.path.join(output_dir, "towers.geojson"),
             "coverage": os.path.join(output_dir, "coverage.geojson"),
             "report": os.path.join(output_dir, "report.json"),
+            "visibility_edges": os.path.join(output_dir, "visibility_edges.geojson"),
         },
     }
 

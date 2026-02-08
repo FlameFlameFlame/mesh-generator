@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 app = Flask(__name__)
 store = SiteStore()
 _counter = 0
-_loaded_layers = {}  # key -> geojson dict (roads, towers, boundary)
+_loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
+_loaded_report = None  # report.json dict from mesh-engine output
+_loaded_coverage = None  # coverage.geojson dict (lazy-served)
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -43,8 +45,8 @@ HTML_PAGE = """<!DOCTYPE html>
   #main { display: flex; flex: 1; overflow: hidden; }
   #map { flex: 3; }
   #sidebar { flex: 1; min-width: 280px; max-width: 380px; display: flex;
-             flex-direction: column; border-left: 1px solid #ddd; }
-  #site-list { flex: 1; overflow-y: auto; }
+             flex-direction: column; border-left: 1px solid #ddd; overflow-y: auto; }
+  #site-list { overflow-y: auto; max-height: 220px; }
   #site-list table { width: 100%; border-collapse: collapse; }
   #site-list th, #site-list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
   #site-list tr.selected { background: #d0e8ff; }
@@ -56,8 +58,22 @@ HTML_PAGE = """<!DOCTYPE html>
   #controls button { flex: 1; padding: 6px; cursor: pointer; }
   #layer-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
   #layer-panel label { display: block; margin: 3px 0; cursor: pointer; }
+  #layer-panel .sub-control { margin-left: 22px; margin-top: 2px; }
+  #tower-legend { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
+  #tower-legend .legend-item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  #tower-legend .legend-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; display: inline-block; }
+  #report-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
+  #report-panel table { width: 100%; border-collapse: collapse; }
+  #report-panel td { padding: 3px 6px; }
+  #report-panel td:first-child { color: #666; }
+  #report-panel td:last-child { font-weight: 600; text-align: right; }
   #status-bar { padding: 6px 12px; background: #eafaea; border-top: 1px solid #ccc;
                 font-size: 0.85em; display: none; }
+  .color-legend { position: absolute; bottom: 20px; right: 20px; background: white;
+                  padding: 8px 12px; border-radius: 4px; box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+                  z-index: 1000; font-size: 0.82em; display: none; }
+  .color-legend .gradient-bar { width: 200px; height: 14px; border: 1px solid #999; margin: 4px 0; }
+  .color-legend .labels { display: flex; justify-content: space-between; font-size: 0.9em; color: #555; }
 </style>
 </head>
 <body>
@@ -102,14 +118,40 @@ HTML_PAGE = """<!DOCTYPE html>
       <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
       <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
+      <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
+      <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons</label>
+      <div class="sub-control" id="coverage-metric-row" style="display:none;">
+        <select id="coverage-metric" onchange="renderCoverage()">
+          <option value="visible_tower_count">Visible tower count</option>
+          <option value="path_loss">Path loss (dB)</option>
+          <option value="elevation">Elevation (m)</option>
+          <option value="clearance">Clearance (m)</option>
+          <option value="distance_to_closest_tower">Distance to tower (m)</option>
+        </select>
+      </div>
+    </div>
+    <div id="tower-legend">
+      <strong>Tower Sources</strong>
+      <div id="tower-legend-items"></div>
+    </div>
+    <div id="report-panel">
+      <strong>Report</strong>
+      <table id="report-table"></table>
     </div>
     <div id="status-bar"></div>
   </div>
 </div>
 
+<div class="color-legend" id="color-legend">
+  <div id="legend-title">Coverage</div>
+  <div class="gradient-bar" id="legend-gradient"></div>
+  <div class="labels"><span id="legend-min">0</span><span id="legend-max">1</span></div>
+</div>
+
 <script>
 const COLORS = {1:"red", 2:"orange", 3:"blue", 4:"green", 5:"gray"};
-let map = L.map('map').setView([40.18, 44.51], 8);
+const TOWER_COLORS = {seed:"#e74c3c", route:"#3498db", bridge:"#9b59b6", greedy:"#e67e22", corridor:"#27ae60"};
+let map = L.map('map', {preferCanvas: true}).setView([40.18, 44.51], 8);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
 }).addTo(map);
@@ -119,10 +161,36 @@ let siteMarkers = [];
 let selectedIdx = -1;
 let addMode = false;
 
-// Data layers from loaded project
+// Data layers
 let layerGroups = { roads: L.layerGroup().addTo(map),
                     towers: L.layerGroup().addTo(map),
-                    boundary: L.layerGroup().addTo(map) };
+                    boundary: L.layerGroup().addTo(map),
+                    edges: L.layerGroup().addTo(map),
+                    coverage: L.layerGroup() };
+let coverageData = null;  // cached GeoJSON from /api/coverage
+let hasCoverage = false;  // server says coverage file exists
+let coverageFetched = false;
+
+// Viridis-like 5-stop color scale
+const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
+function viridisColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  let idx = t * (VIRIDIS.length - 1);
+  let lo = Math.floor(idx), hi = Math.min(lo + 1, VIRIDIS.length - 1);
+  let f = idx - lo;
+  let r = Math.round(VIRIDIS[lo][0] + f * (VIRIDIS[hi][0] - VIRIDIS[lo][0]));
+  let g = Math.round(VIRIDIS[lo][1] + f * (VIRIDIS[hi][1] - VIRIDIS[lo][1]));
+  let b = Math.round(VIRIDIS[lo][2] + f * (VIRIDIS[hi][2] - VIRIDIS[lo][2]));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function edgeColor(dist_m) {
+  // Green (short) to red (long): 0..70 km
+  let t = Math.min(dist_m / 70000, 1);
+  let r = Math.round(255 * t);
+  let g = Math.round(255 * (1 - t));
+  return 'rgb(' + r + ',' + g + ',0)';
+}
 
 function toggleAddMode() {
   addMode = !addMode;
@@ -228,9 +296,15 @@ function doClear() {
       sites = [];
       selectedIdx = -1;
       refresh();
-      layerGroups.roads.clearLayers();
-      layerGroups.towers.clearLayers();
-      layerGroups.boundary.clearLayers();
+      Object.values(layerGroups).forEach(lg => lg.clearLayers());
+      coverageData = null;
+      hasCoverage = false;
+      coverageFetched = false;
+      document.getElementById('chk-coverage').checked = false;
+      document.getElementById('coverage-metric-row').style.display = 'none';
+      document.getElementById('color-legend').style.display = 'none';
+      document.getElementById('tower-legend').style.display = 'none';
+      document.getElementById('report-panel').style.display = 'none';
       setStatus('');
     });
 }
@@ -272,8 +346,12 @@ function doLoadProject() {
   }).then(r => r.json()).then(data => {
     if (data.error) { alert(data.error); setStatus(''); return; }
     sites = data.sites || [];
+    hasCoverage = data.has_coverage || false;
+    coverageData = null;
+    coverageFetched = false;
     refresh();
     renderLayers(data.layers || {});
+    if (data.report) showReport(data.report);
     setStatus('Loaded project: ' + (data.config_path || ''));
     if (data.bounds) map.fitBounds(data.bounds);
   });
@@ -287,17 +365,28 @@ function renderLayers(layers) {
       style: { color: '#2266aa', weight: 2, opacity: 0.7 }
     }).addTo(layerGroups.roads);
   }
-  // Towers (from optimizer output)
+  // Towers (colored by source)
   layerGroups.towers.clearLayers();
+  let sourceCounts = {};
   if (layers.towers) {
     L.geoJSON(layers.towers, {
       pointToLayer: function(feature, latlng) {
+        let src = feature.properties.source || 'unknown';
+        sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+        let color = TOWER_COLORS[src] || '#ff0';
         return L.circleMarker(latlng, {
-          radius: 6, color: '#000', weight: 1, fillColor: '#ff0', fillOpacity: 0.9
-        }).bindTooltip('Tower ' + (feature.properties.tower_id || '') +
-          ' (' + (feature.properties.source || '') + ')');
+          radius: 6, color: '#000', weight: 1, fillColor: color, fillOpacity: 0.9
+        }).bindTooltip(
+          '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
+          'Source: ' + src + '<br>' +
+          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '...',
+          {direction: 'top'}
+        );
       }
     }).addTo(layerGroups.towers);
+    showTowerLegend(sourceCounts);
+  } else {
+    document.getElementById('tower-legend').style.display = 'none';
   }
   // Boundary
   layerGroups.boundary.clearLayers();
@@ -306,6 +395,142 @@ function renderLayers(layers) {
       style: { color: '#888', weight: 2, dashArray: '6 4', fillColor: '#ccc', fillOpacity: 0.1 }
     }).addTo(layerGroups.boundary);
   }
+  // Visibility edges
+  layerGroups.edges.clearLayers();
+  if (layers.edges) {
+    L.geoJSON(layers.edges, {
+      style: function(feature) {
+        let d = feature.properties.distance_m || 0;
+        return { color: edgeColor(d), weight: 2, opacity: 0.7 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties;
+        let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(1) : '?';
+        let loss = p.path_loss_db ? p.path_loss_db.toFixed(1) : 'N/A';
+        let clr = p.clearance_m != null ? p.clearance_m.toFixed(1) : 'N/A';
+        layer.bindTooltip(
+          '<b>Link ' + p.source_id + ' &#8596; ' + p.target_id + '</b><br>' +
+          'Distance: ' + distKm + ' km<br>' +
+          'Path loss: ' + loss + ' dB<br>' +
+          'Clearance: ' + clr + ' m',
+          {sticky: true}
+        );
+      }
+    }).addTo(layerGroups.edges);
+    document.getElementById('chk-edges').checked = true;
+  }
+}
+
+function showTowerLegend(sourceCounts) {
+  let container = document.getElementById('tower-legend-items');
+  container.innerHTML = '';
+  for (let [src, count] of Object.entries(sourceCounts).sort()) {
+    let color = TOWER_COLORS[src] || '#ff0';
+    let div = document.createElement('div');
+    div.className = 'legend-item';
+    div.innerHTML = '<span class="legend-dot" style="background:' + color + '"></span>' +
+      src + ' <span style="color:#888">(' + count + ')</span>';
+    container.appendChild(div);
+  }
+  document.getElementById('tower-legend').style.display = 'block';
+}
+
+function showReport(report) {
+  let table = document.getElementById('report-table');
+  table.innerHTML = '';
+  let rows = [
+    ['Total cells', report.total_cells],
+    ['Cells with towers', report.cells_with_towers],
+    ['Total towers', report.total_towers],
+    ['Clusters', report.num_clusters],
+  ];
+  if (report.towers_by_source) {
+    for (let [src, count] of Object.entries(report.towers_by_source).sort()) {
+      rows.push(['  ' + src, count]);
+    }
+  }
+  rows.forEach(([label, val]) => {
+    let tr = document.createElement('tr');
+    tr.innerHTML = '<td>' + label + '</td><td>' + val + '</td>';
+    table.appendChild(tr);
+  });
+  document.getElementById('report-panel').style.display = 'block';
+}
+
+// --- Coverage hexagons (lazy loaded) ---
+
+function toggleCoverage() {
+  let chk = document.getElementById('chk-coverage');
+  let metricRow = document.getElementById('coverage-metric-row');
+  if (chk.checked) {
+    metricRow.style.display = 'block';
+    if (!coverageData && !coverageFetched) {
+      coverageFetched = true;
+      setStatus('Loading coverage data...');
+      fetch('/api/coverage')
+        .then(r => { if (!r.ok) throw new Error('No coverage'); return r.json(); })
+        .then(data => {
+          coverageData = data;
+          renderCoverage();
+          layerGroups.coverage.addTo(map);
+          setStatus('Coverage loaded: ' + (data.features || []).length + ' cells');
+        }).catch(err => {
+          setStatus('Coverage not available');
+          chk.checked = false;
+          metricRow.style.display = 'none';
+          coverageFetched = false;
+        });
+    } else if (coverageData) {
+      renderCoverage();
+      layerGroups.coverage.addTo(map);
+    }
+  } else {
+    map.removeLayer(layerGroups.coverage);
+    metricRow.style.display = 'none';
+    document.getElementById('color-legend').style.display = 'none';
+  }
+}
+
+function renderCoverage() {
+  if (!coverageData) return;
+  layerGroups.coverage.clearLayers();
+  let metric = document.getElementById('coverage-metric').value;
+  let features = coverageData.features || [];
+
+  // Compute min/max for the selected metric
+  let vals = features.map(f => f.properties[metric]).filter(v => v != null && isFinite(v));
+  if (vals.length === 0) { document.getElementById('color-legend').style.display = 'none'; return; }
+  let mn = Math.min(...vals);
+  let mx = Math.max(...vals);
+  let range = mx - mn || 1;
+
+  L.geoJSON(coverageData, {
+    style: function(feature) {
+      let v = feature.properties[metric];
+      let t = (v != null && isFinite(v)) ? (v - mn) / range : 0;
+      return { fillColor: viridisColor(t), fillOpacity: 0.6, color: '#333', weight: 0.3 };
+    },
+    onEachFeature: function(feature, layer) {
+      let p = feature.properties;
+      let lines = Object.entries(p).map(([k, v]) => {
+        if (v == null) return k + ': N/A';
+        if (typeof v === 'number') return k + ': ' + (Number.isInteger(v) ? v : v.toFixed(2));
+        return k + ': ' + v;
+      });
+      layer.bindTooltip(lines.join('<br>'), {sticky: true});
+    }
+  }).addTo(layerGroups.coverage);
+
+  // Update legend
+  let legend = document.getElementById('color-legend');
+  document.getElementById('legend-title').textContent = metric.replace(/_/g, ' ');
+  let bar = document.getElementById('legend-gradient');
+  let stops = [];
+  for (let i = 0; i <= 10; i++) stops.push(viridisColor(i / 10) + ' ' + (i * 10) + '%');
+  bar.style.background = 'linear-gradient(to right, ' + stops.join(', ') + ')';
+  document.getElementById('legend-min').textContent = mn.toFixed(1);
+  document.getElementById('legend-max').textContent = mx.toFixed(1);
+  legend.style.display = 'block';
 }
 
 function toggleLayer(name) {
@@ -377,13 +602,23 @@ def delete_site(idx):
 @app.route("/api/clear", methods=["POST"])
 def clear_project():
     """Clear all sites and loaded layers."""
-    global _counter, _roads_geojson, _loaded_layers
+    global _counter, _roads_geojson, _loaded_layers, _loaded_report, _loaded_coverage
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
     _loaded_layers = {}
+    _loaded_report = None
+    _loaded_coverage = None
     logger.info("Project cleared")
     return jsonify({"ok": True})
+
+
+@app.route("/api/coverage", methods=["GET"])
+def get_coverage():
+    """Serve cached coverage GeoJSON (lazy-loaded by frontend on toggle)."""
+    if _loaded_coverage is None:
+        return jsonify({"error": "No coverage data loaded"}), 404
+    return jsonify(_loaded_coverage)
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -476,7 +711,7 @@ def export():
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers, _roads_geojson
+    global _counter, _loaded_layers, _roads_geojson, _loaded_report, _loaded_coverage
     data = request.json
     path = data.get("path", "").strip()
 
@@ -528,6 +763,7 @@ def load_project():
         "roads": resolve(inputs.get("roads")),
         "boundary": resolve(inputs.get("boundary")),
         "towers": resolve(outputs.get("towers")),
+        "edges": resolve(outputs.get("visibility_edges")),
     }
     for key, fpath in layer_files.items():
         if fpath and os.path.isfile(fpath):
@@ -541,6 +777,23 @@ def load_project():
     _loaded_layers = layers
     _roads_geojson = layers.get("roads")
 
+    # Load report
+    _loaded_report = None
+    report_path = resolve(outputs.get("report"))
+    if report_path and os.path.isfile(report_path):
+        with open(report_path) as f:
+            _loaded_report = json.load(f)
+        logger.info("Loaded report from %s", report_path)
+
+    # Load coverage (cached for lazy serving via /api/coverage)
+    _loaded_coverage = None
+    coverage_path = resolve(outputs.get("coverage"))
+    if coverage_path and os.path.isfile(coverage_path):
+        with open(coverage_path) as f:
+            _loaded_coverage = json.load(f)
+        logger.info("Loaded coverage from %s (%d features)",
+                     coverage_path, len(_loaded_coverage.get("features", [])))
+
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
 
@@ -549,6 +802,8 @@ def load_project():
         "sites": store.to_list(),
         "layers": layers,
         "bounds": bounds,
+        "report": _loaded_report,
+        "has_coverage": _loaded_coverage is not None,
     })
 
 
