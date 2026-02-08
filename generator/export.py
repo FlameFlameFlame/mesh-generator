@@ -3,7 +3,8 @@ import logging
 import os
 
 import yaml
-from shapely.geometry import MultiPoint, mapping
+from shapely.geometry import MultiPoint, mapping, shape
+from shapely.ops import unary_union
 
 from generator.models import SiteModel
 
@@ -36,12 +37,27 @@ def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
     logger.info("Exported %d sites to %s", len(sites), path)
 
 
+def export_roads_geojson(roads_geojson: dict, path: str) -> None:
+    """Write roads GeoJSON FeatureCollection to file."""
+    with open(path, "w") as f:
+        json.dump(roads_geojson, f, indent=2)
+    logger.info("Exported %d roads to %s", len(roads_geojson.get("features", [])), path)
+
+
 def export_boundary_geojson(
-    sites: list[SiteModel], path: str, buffer_deg: float = 0.05
+    sites: list[SiteModel], path: str, buffer_deg: float = 0.15,
+    roads_geojson: dict | None = None,
 ) -> None:
-    """Write convex hull of sites (buffered) as a GeoJSON FeatureCollection with a single Polygon."""
-    points = MultiPoint([(s.lon, s.lat) for s in sites])
-    hull = points.convex_hull.buffer(buffer_deg)
+    """Write convex hull of sites+roads (buffered) as a GeoJSON FeatureCollection with a single Polygon."""
+    geoms = [MultiPoint([(s.lon, s.lat) for s in sites])]
+    if roads_geojson:
+        for feat in roads_geojson.get("features", []):
+            try:
+                geoms.append(shape(feat["geometry"]))
+            except Exception:
+                pass
+    combined = unary_union(geoms)
+    hull = combined.convex_hull.buffer(buffer_deg)
 
     collection = {
         "type": "FeatureCollection",
