@@ -1,0 +1,90 @@
+import json
+import os
+
+import yaml
+from shapely.geometry import MultiPoint, mapping
+
+from generator.models import SiteModel
+
+
+def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
+    """Write sites as a GeoJSON FeatureCollection of Points."""
+    features = []
+    for site in sites:
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [site.lon, site.lat],
+            },
+            "properties": {
+                "name": site.name,
+                "priority": site.priority,
+            },
+        })
+
+    collection = {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+    with open(path, "w") as f:
+        json.dump(collection, f, indent=2)
+
+
+def export_boundary_geojson(
+    sites: list[SiteModel], path: str, buffer_deg: float = 0.05
+) -> None:
+    """Write convex hull of sites (buffered) as a GeoJSON FeatureCollection with a single Polygon."""
+    points = MultiPoint([(s.lon, s.lat) for s in sites])
+    hull = points.convex_hull.buffer(buffer_deg)
+
+    collection = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": mapping(hull),
+                "properties": {},
+            }
+        ],
+    }
+
+    with open(path, "w") as f:
+        json.dump(collection, f, indent=2)
+
+
+def export_config_yaml(
+    output_dir: str,
+    sites_path: str,
+    boundary_path: str,
+    roads_path: str = "",
+    elevation_path: str = "",
+) -> None:
+    """Write a config.yaml matching mesh-engine's MeshCalculatorConfig.from_dict format."""
+    config = {
+        "parameters": {
+            "h3_resolution": 8,
+            "frequency_hz": 868000000.0,
+            "mast_height_m": 28.0,
+            "max_visibility_m": 70000.0,
+            "tower_separation_m": 5000.0,
+            "hop_limit": 7,
+            "max_nodes_per_road": 10,
+        },
+        "inputs": {
+            "boundary": boundary_path,
+            "elevation": elevation_path,
+            "roads": roads_path,
+            "target_sites": sites_path,
+        },
+        "outputs": {
+            "towers": os.path.join(output_dir, "towers.geojson"),
+            "coverage": os.path.join(output_dir, "coverage.geojson"),
+            "report": os.path.join(output_dir, "report.json"),
+        },
+    }
+
+    config_path = os.path.join(output_dir, "config.yaml")
+    with open(config_path, "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
