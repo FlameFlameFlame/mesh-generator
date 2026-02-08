@@ -9,14 +9,19 @@ import yaml
 from flask import Flask, jsonify, render_template_string, request
 
 from generator.models import SiteModel, SiteStore
-from generator.export import export_sites_geojson, export_boundary_geojson, export_config_yaml
+from generator.export import (
+    export_sites_geojson, export_boundary_geojson,
+    export_roads_geojson, export_config_yaml,
+)
+from generator.roads import fetch_roads
 
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 store = SiteStore()
 _counter = 0
-_loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, coverage)
+_loaded_layers = {}  # key -> geojson dict (roads, towers, boundary)
+_roads_geojson = None  # stored roads from Generate or Load
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -59,7 +64,9 @@ HTML_PAGE = """<!DOCTYPE html>
 
 <div id="toolbar">
   <button id="btn-add-site" onclick="toggleAddMode()">+ Add Site</button>
+  <button id="btn-generate" onclick="doGenerate()">Generate</button>
   <button onclick="doLoadProject()">Load Project</button>
+  <button onclick="doClear()" style="background:#fee;">Clear</button>
   <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
   <button onclick="doExport()">Export</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
@@ -214,6 +221,44 @@ function doExport() {
   });
 }
 
+function doClear() {
+  if (!confirm('Clear all sites and layers?')) return;
+  fetch('/api/clear', {method: 'POST'})
+    .then(r => r.json()).then(data => {
+      sites = [];
+      selectedIdx = -1;
+      refresh();
+      layerGroups.roads.clearLayers();
+      layerGroups.towers.clearLayers();
+      layerGroups.boundary.clearLayers();
+      setStatus('');
+    });
+}
+
+// --- Generate: fetch roads from OSM for the site area ---
+
+function doGenerate() {
+  if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
+  let btn = document.getElementById('btn-generate');
+  btn.disabled = true;
+  btn.textContent = 'Fetching roads...';
+  setStatus('Fetching roads from OpenStreetMap...');
+  fetch('/api/generate', {method: 'POST'})
+    .then(r => r.json()).then(data => {
+      btn.disabled = false;
+      btn.textContent = 'Generate';
+      if (data.error) { alert(data.error); setStatus(''); return; }
+      renderLayers(data.layers || {});
+      setStatus('Loaded ' + (data.road_count || 0) + ' roads');
+      if (data.bounds) map.fitBounds(data.bounds, {padding: [30, 30]});
+    }).catch(err => {
+      btn.disabled = false;
+      btn.textContent = 'Generate';
+      alert('Error: ' + err);
+      setStatus('');
+    });
+}
+
 // --- Project load & layer visualization ---
 
 function doLoadProject() {
@@ -329,6 +374,66 @@ def delete_site(idx):
     return jsonify(store.to_list())
 
 
+@app.route("/api/clear", methods=["POST"])
+def clear_project():
+    """Clear all sites and loaded layers."""
+    global _counter, _roads_geojson, _loaded_layers
+    store._sites.clear()
+    _counter = 0
+    _roads_geojson = None
+    _loaded_layers = {}
+    logger.info("Project cleared")
+    return jsonify({"ok": True})
+
+
+@app.route("/api/generate", methods=["POST"])
+def generate():
+    """Compute boundary from sites, fetch roads from OSM, return layers for visualization."""
+    global _roads_geojson, _loaded_layers
+    if len(store) < 2:
+        return jsonify({"error": "Need at least 2 sites."})
+
+    # Compute bounding box with buffer for road fetching
+    sites = list(store)
+    lats = [s.lat for s in sites]
+    lons = [s.lon for s in sites]
+    buffer = 0.15  # ~16 km buffer around sites
+    south, north = min(lats) - buffer, max(lats) + buffer
+    west, east = min(lons) - buffer, max(lons) + buffer
+
+    try:
+        roads = fetch_roads(south, west, north, east)
+    except Exception as e:
+        logger.error("Failed to fetch roads: %s", e)
+        return jsonify({"error": f"Failed to fetch roads: {e}"})
+
+    _roads_geojson = roads
+    logger.info("Generated: %d road features", len(roads.get("features", [])))
+
+    # Build boundary from the road fetch bbox (encompasses all roads)
+    from shapely.geometry import box, mapping
+    boundary_poly = box(west, south, east, north)
+    boundary_geojson = {
+        "type": "FeatureCollection",
+        "features": [{
+            "type": "Feature",
+            "geometry": mapping(boundary_poly),
+            "properties": {},
+        }],
+    }
+
+    layers = {"roads": roads, "boundary": boundary_geojson}
+    _loaded_layers = layers
+
+    bounds = _compute_bounds(layers, store)
+
+    return jsonify({
+        "road_count": len(roads.get("features", [])),
+        "layers": layers,
+        "bounds": bounds,
+    })
+
+
 @app.route("/api/export", methods=["POST"])
 def export():
     if len(store) == 0:
@@ -346,24 +451,32 @@ def export():
 
     sites_path = os.path.join(output_dir, "sites.geojson")
     boundary_path = os.path.join(output_dir, "boundary.geojson")
+    roads_path = os.path.join(output_dir, "roads.geojson")
 
     sites = list(store)
     export_sites_geojson(sites, sites_path)
-    export_boundary_geojson(sites, boundary_path)
-    export_config_yaml(output_dir, sites_path, boundary_path)
+    export_boundary_geojson(sites, boundary_path, roads_geojson=_roads_geojson)
+
+    # Export roads if available (from Generate or Load)
+    roads_export_path = ""
+    if _roads_geojson:
+        export_roads_geojson(_roads_geojson, roads_path)
+        roads_export_path = roads_path
+
+    export_config_yaml(output_dir, sites_path, boundary_path, roads_path=roads_export_path)
 
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
-        "files": [sites_path, boundary_path, os.path.join(output_dir, "config.yaml")],
+        "files": [sites_path, boundary_path, roads_path, os.path.join(output_dir, "config.yaml")],
     })
 
 
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers
+    global _counter, _loaded_layers, _roads_geojson
     data = request.json
     path = data.get("path", "").strip()
 
@@ -426,6 +539,7 @@ def load_project():
                 logger.warning("Layer '%s' file not found: %s", key, fpath)
 
     _loaded_layers = layers
+    _roads_geojson = layers.get("roads")
 
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
