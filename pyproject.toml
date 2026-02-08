@@ -1,0 +1,23 @@
+[tool.poetry]
+name = "mesh-generator"
+version = "0.1.0"
+description = "GUI tool to place mesh network sites on a map and export GeoJSON/config for mesh-engine"
+authors = []
+package-mode = false
+packages = [{include = "generator"}]
+
+[tool.poetry.scripts]
+mesh-generator = "generator.app:main"
+
+[tool.poetry.dependencies]
+python = ">=3.10,<4.0"
+flask = ">=3.0"
+pyyaml = ">=6.0"
+shapely = ">=2.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
