@@ -14,6 +14,7 @@ from generator.export import (
     export_roads_geojson, export_config_yaml,
 )
 from generator.roads import fetch_roads
+from generator.elevation import fetch_and_write_elevation, render_elevation_image
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
+_elevation_path = None  # path to downloaded elevation GeoTIFF
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -37,10 +39,20 @@ HTML_PAGE = """<!DOCTYPE html>
   body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
   #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
              background: #f5f5f5; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
-  #toolbar button { padding: 6px 16px; cursor: pointer; }
-  #btn-add-site { font-weight: bold; }
-  #btn-add-site.active { background: #c00; color: #fff; }
+  #toolbar button, #controls button {
+    padding: 6px 16px; cursor: pointer; border: 1px solid #aaa; border-radius: 3px;
+    background: #fff; font-size: 0.85em; transition: background 0.15s;
+  }
+  #toolbar button:hover, #controls button:hover { background: #e8e8e8; }
+  #toolbar button:disabled { opacity: 0.5; cursor: default; }
+  #toolbar button.danger, #controls button.danger { background: #fee; border-color: #daa; }
+  #toolbar button.danger:hover, #controls button.danger:hover { background: #fdd; }
+  #toolbar button.primary { background: #e0edff; border-color: #8ab; font-weight: 600; }
+  #toolbar button.primary:hover { background: #cde0f8; }
+  #btn-add-site.active { background: #c00; color: #fff; border-color: #900; }
   #toolbar .hint { margin-left: auto; color: #666; font-size: 0.9em; }
+  .progress-wrap { display: none; align-items: center; gap: 6px; font-size: 0.82em; color: #555; }
+  .progress-wrap progress { width: 120px; height: 14px; }
   #map.placing { cursor: crosshair !important; }
   #main { display: flex; flex: 1; overflow: hidden; }
   #map { flex: 3; }
@@ -79,12 +91,15 @@ HTML_PAGE = """<!DOCTYPE html>
 <body>
 
 <div id="toolbar">
-  <button id="btn-add-site" onclick="toggleAddMode()">+ Add Site</button>
-  <button id="btn-generate" onclick="doGenerate()">Generate</button>
+  <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
+  <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
+  <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
+  <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
+  <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
   <button onclick="doLoadProject()">Load Project</button>
-  <button onclick="doClear()" style="background:#fee;">Clear</button>
+  <button class="danger" onclick="doClear()">Clear</button>
   <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
-  <button onclick="doExport()">Export</button>
+  <button class="primary" onclick="doExport()">Export</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
 </div>
 
@@ -110,7 +125,7 @@ HTML_PAGE = """<!DOCTYPE html>
       </label>
       <div class="btn-row">
         <button onclick="doUpdate()">Update</button>
-        <button onclick="doDelete()" style="background:#fee;">Delete</button>
+        <button class="danger" onclick="doDelete()">Delete</button>
       </div>
     </div>
     <div id="layer-panel">
@@ -128,6 +143,10 @@ HTML_PAGE = """<!DOCTYPE html>
           <option value="clearance">Clearance (m)</option>
           <option value="distance_to_closest_tower">Distance to tower (m)</option>
         </select>
+      </div>
+      <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>
+      <div class="sub-control" id="elevation-opacity-row" style="display:none;">
+        <label>Opacity <input type="range" id="elev-opacity" min="0" max="1" step="0.05" value="0.5" oninput="setElevationOpacity(this.value)"></label>
       </div>
     </div>
     <div id="tower-legend">
@@ -166,10 +185,17 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     towers: L.layerGroup().addTo(map),
                     boundary: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
-                    coverage: L.layerGroup() };
+                    coverage: L.layerGroup(),
+                    elevation: L.layerGroup() };
 let coverageData = null;  // cached GeoJSON from /api/coverage
 let hasCoverage = false;  // server says coverage file exists
 let coverageFetched = false;
+
+// Elevation overlay
+let elevationOverlay = null;
+let elevationMeta = null;
+let elevationFetched = false;
+let hasElevation = false;
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -302,6 +328,14 @@ function doClear() {
       coverageFetched = false;
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
+      // Reset elevation
+      elevationOverlay = null;
+      elevationMeta = null;
+      elevationFetched = false;
+      hasElevation = false;
+      document.getElementById('chk-elevation').checked = false;
+      document.getElementById('chk-elevation').disabled = true;
+      document.getElementById('elevation-opacity-row').style.display = 'none';
       document.getElementById('color-legend').style.display = 'none';
       document.getElementById('tower-legend').style.display = 'none';
       document.getElementById('report-panel').style.display = 'none';
@@ -309,27 +343,57 @@ function doClear() {
     });
 }
 
-// --- Generate: fetch roads from OSM for the site area ---
+// --- Download roads from OSM ---
 
-function doGenerate() {
+function doFetchRoads() {
   if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
-  let btn = document.getElementById('btn-generate');
+  let btn = document.getElementById('btn-roads');
+  let prog = document.getElementById('roads-progress');
+  let bar = document.getElementById('roads-bar');
+  let label = document.getElementById('roads-label');
   btn.disabled = true;
-  btn.textContent = 'Fetching roads...';
-  setStatus('Fetching roads from OpenStreetMap...');
+  prog.style.display = 'inline-flex';
+  bar.removeAttribute('value');
+  label.textContent = 'Fetching roads...';
   fetch('/api/generate', {method: 'POST'})
     .then(r => r.json()).then(data => {
       btn.disabled = false;
-      btn.textContent = 'Generate';
-      if (data.error) { alert(data.error); setStatus(''); return; }
+      if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
+      bar.value = 1; bar.max = 1;
+      label.textContent = (data.road_count || 0) + ' roads loaded';
       renderLayers(data.layers || {});
-      setStatus('Loaded ' + (data.road_count || 0) + ' roads');
       if (data.bounds) map.fitBounds(data.bounds, {padding: [30, 30]});
     }).catch(err => {
       btn.disabled = false;
-      btn.textContent = 'Generate';
+      prog.style.display = 'none';
       alert('Error: ' + err);
-      setStatus('');
+    });
+}
+
+// --- Download elevation from SRTM ---
+
+function doFetchElevation() {
+  if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
+  let btn = document.getElementById('btn-elevation');
+  let prog = document.getElementById('elev-progress');
+  let bar = document.getElementById('elev-bar');
+  let label = document.getElementById('elev-label');
+  btn.disabled = true;
+  prog.style.display = 'inline-flex';
+  bar.removeAttribute('value');
+  label.textContent = 'Downloading SRTM tiles...';
+  fetch('/api/elevation', {method: 'POST'})
+    .then(r => r.json()).then(data => {
+      btn.disabled = false;
+      if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
+      bar.value = 1; bar.max = 1;
+      label.textContent = data.tiles + ' tile(s), ' + data.size_mb + ' MB';
+      hasElevation = true;
+      document.getElementById('chk-elevation').disabled = false;
+    }).catch(err => {
+      btn.disabled = false;
+      prog.style.display = 'none';
+      alert('Error: ' + err);
     });
 }
 
@@ -533,6 +597,62 @@ function renderCoverage() {
   legend.style.display = 'block';
 }
 
+// --- Elevation overlay ---
+
+function toggleElevation() {
+  let chk = document.getElementById('chk-elevation');
+  let opRow = document.getElementById('elevation-opacity-row');
+  if (chk.checked) {
+    opRow.style.display = 'block';
+    if (!elevationOverlay && !elevationFetched) {
+      elevationFetched = true;
+      setStatus('Loading elevation image...');
+      fetch('/api/elevation-image')
+        .then(r => { if (!r.ok) throw new Error('No elevation'); return r.json(); })
+        .then(data => {
+          elevationMeta = data;
+          let b = data.bounds;
+          let bounds = [[b.south, b.west], [b.north, b.east]];
+          elevationOverlay = L.imageOverlay(
+            'data:image/png;base64,' + data.image,
+            bounds,
+            {opacity: parseFloat(document.getElementById('elev-opacity').value)}
+          );
+          layerGroups.elevation.addLayer(elevationOverlay);
+          layerGroups.elevation.addTo(map);
+          showElevationLegend(data.min_elevation, data.max_elevation);
+          setStatus('Elevation loaded (' + data.min_elevation + ' – ' + data.max_elevation + ' m)');
+        }).catch(err => {
+          setStatus('Elevation image not available');
+          chk.checked = false;
+          opRow.style.display = 'none';
+          elevationFetched = false;
+        });
+    } else if (elevationOverlay) {
+      layerGroups.elevation.addTo(map);
+      showElevationLegend(elevationMeta.min_elevation, elevationMeta.max_elevation);
+    }
+  } else {
+    map.removeLayer(layerGroups.elevation);
+    opRow.style.display = 'none';
+    document.getElementById('color-legend').style.display = 'none';
+  }
+}
+
+function setElevationOpacity(val) {
+  if (elevationOverlay) elevationOverlay.setOpacity(parseFloat(val));
+}
+
+function showElevationLegend(minElev, maxElev) {
+  let legend = document.getElementById('color-legend');
+  document.getElementById('legend-title').textContent = 'Elevation (m)';
+  let bar = document.getElementById('legend-gradient');
+  bar.style.background = 'linear-gradient(to right, rgb(34,139,34) 0%, rgb(144,190,65) 25%, rgb(218,195,80) 50%, rgb(165,113,55) 70%, rgb(190,170,155) 85%, rgb(255,255,255) 100%)';
+  document.getElementById('legend-min').textContent = minElev;
+  document.getElementById('legend-max').textContent = maxElev;
+  legend.style.display = 'block';
+}
+
 function toggleLayer(name) {
   let chk = document.getElementById('chk-' + name);
   if (chk.checked) layerGroups[name].addTo(map);
@@ -602,13 +722,19 @@ def delete_site(idx):
 @app.route("/api/clear", methods=["POST"])
 def clear_project():
     """Clear all sites and loaded layers."""
-    global _counter, _roads_geojson, _loaded_layers, _loaded_report, _loaded_coverage
+    global _counter, _roads_geojson, _loaded_layers, _loaded_report, _loaded_coverage, _elevation_path
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
+    if _elevation_path and os.path.isfile(_elevation_path):
+        try:
+            os.unlink(_elevation_path)
+        except OSError:
+            pass
+    _elevation_path = None
     logger.info("Project cleared")
     return jsonify({"ok": True})
 
@@ -619,6 +745,57 @@ def get_coverage():
     if _loaded_coverage is None:
         return jsonify({"error": "No coverage data loaded"}), 404
     return jsonify(_loaded_coverage)
+
+
+@app.route("/api/elevation", methods=["POST"])
+def download_elevation():
+    """Download SRTM elevation tiles for the site bounding box."""
+    import tempfile
+    global _elevation_path
+    if len(store) < 2:
+        return jsonify({"error": "Need at least 2 sites."})
+
+    sites = list(store)
+    lats = [s.lat for s in sites]
+    lons = [s.lon for s in sites]
+    buffer = 0.15
+    south, north = min(lats) - buffer, max(lats) + buffer
+    west, east = min(lons) - buffer, max(lons) + buffer
+
+    try:
+        fd, path = tempfile.mkstemp(suffix=".tif", prefix="elevation_")
+        os.close(fd)
+        fetch_and_write_elevation(south, west, north, east, path)
+        _elevation_path = path
+        size_mb = os.path.getsize(path) / (1024 * 1024)
+        from generator.elevation import _tiles_for_bbox
+        tile_count = len(_tiles_for_bbox(south, west, north, east))
+        logger.info("Downloaded elevation: %d tiles, %.1f MB -> %s", tile_count, size_mb, path)
+        return jsonify({
+            "tiles": tile_count,
+            "size_mb": round(size_mb, 1),
+            "path": path,
+        })
+    except Exception as e:
+        logger.error("Failed to download elevation: %s", e)
+        return jsonify({"error": f"Failed to download elevation: {e}"})
+
+
+@app.route("/api/elevation-image", methods=["GET"])
+def get_elevation_image():
+    """Return a colorized PNG of the elevation data as base64 + bounds."""
+    import base64
+    if _elevation_path is None or not os.path.isfile(_elevation_path):
+        return jsonify({"error": "No elevation data available"}), 404
+    try:
+        png_bytes, metadata = render_elevation_image(_elevation_path)
+        return jsonify({
+            "image": base64.b64encode(png_bytes).decode("ascii"),
+            **metadata,
+        })
+    except Exception as e:
+        logger.error("Failed to render elevation image: %s", e)
+        return jsonify({"error": f"Failed to render elevation: {e}"}), 500
 
 
 @app.route("/api/generate", methods=["POST"])
@@ -698,13 +875,27 @@ def export():
         export_roads_geojson(_roads_geojson, roads_path)
         roads_export_path = roads_path
 
-    export_config_yaml(output_dir, sites_path, boundary_path, roads_path=roads_export_path)
+    # Copy pre-downloaded elevation to output directory
+    elevation_export_path = ""
+    if _elevation_path and os.path.isfile(_elevation_path):
+        import shutil
+        elevation_dest = os.path.join(output_dir, "elevation.tif")
+        shutil.copy2(_elevation_path, elevation_dest)
+        elevation_export_path = elevation_dest
+        logger.info("Copied elevation to %s", elevation_dest)
+
+    export_config_yaml(
+        output_dir, sites_path, boundary_path,
+        roads_path=roads_export_path,
+        elevation_path=elevation_export_path,
+    )
 
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
-        "files": [sites_path, boundary_path, roads_path, os.path.join(output_dir, "config.yaml")],
+        "files": [sites_path, boundary_path, roads_path,
+                  elevation_export_path, os.path.join(output_dir, "config.yaml")],
     })
 
 
