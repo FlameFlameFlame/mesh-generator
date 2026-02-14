@@ -416,6 +416,13 @@ function doLoadProject() {
     refresh();
     renderLayers(data.layers || {});
     if (data.report) showReport(data.report);
+    if (data.has_elevation) {
+      elevationOverlay = null;
+      elevationFetched = false;
+      let chk = document.getElementById('chk-elevation');
+      chk.checked = true;
+      toggleElevation();
+    }
     setStatus('Loaded project: ' + (data.config_path || ''));
     if (data.bounds) map.fitBounds(data.bounds);
   });
@@ -647,7 +654,7 @@ function showElevationLegend(minElev, maxElev) {
   let legend = document.getElementById('color-legend');
   document.getElementById('legend-title').textContent = 'Elevation (m)';
   let bar = document.getElementById('legend-gradient');
-  bar.style.background = 'linear-gradient(to right, rgb(34,139,34) 0%, rgb(144,190,65) 25%, rgb(218,195,80) 50%, rgb(165,113,55) 70%, rgb(190,170,155) 85%, rgb(255,255,255) 100%)';
+  bar.style.background = 'linear-gradient(to right, rgb(0,80,0) 0%, rgb(50,148,38) 11%, rgb(144,190,65) 24%, rgb(218,195,80) 38%, rgb(180,130,50) 54%, rgb(165,113,55) 59%, rgb(150,100,70) 67%, rgb(170,150,130) 78%, rgb(190,175,160) 84%, rgb(220,212,206) 92%, rgb(255,255,255) 100%)';
   document.getElementById('legend-min').textContent = minElev;
   document.getElementById('legend-max').textContent = maxElev;
   legend.style.display = 'block';
@@ -902,7 +909,7 @@ def export():
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers, _roads_geojson, _loaded_report, _loaded_coverage
+    global _counter, _loaded_layers, _roads_geojson, _loaded_report, _loaded_coverage, _elevation_path
     data = request.json
     path = data.get("path", "").strip()
 
@@ -985,6 +992,12 @@ def load_project():
         logger.info("Loaded coverage from %s (%d features)",
                      coverage_path, len(_loaded_coverage.get("features", [])))
 
+    # Load elevation if available
+    elevation_file = resolve(inputs.get("elevation"))
+    if elevation_file and os.path.isfile(elevation_file):
+        _elevation_path = elevation_file
+        logger.info("Loaded elevation from %s", elevation_file)
+
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
 
@@ -995,6 +1008,7 @@ def load_project():
         "bounds": bounds,
         "report": _loaded_report,
         "has_coverage": _loaded_coverage is not None,
+        "has_elevation": _elevation_path is not None,
     })
 
 
