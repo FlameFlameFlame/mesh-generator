@@ -438,6 +438,7 @@ function doLoadProject() {
     coverageFetched = false;
     refresh();
     renderLayers(data.layers || {});
+    if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     if (data.report) showReport(data.report);
     if (data.has_elevation) {
       elevationOverlay = null;
@@ -1022,11 +1023,22 @@ def load_project():
         _elevation_path = elevation_file
         logger.info("Loaded elevation from %s", elevation_file)
 
+    # Derive output directory from config outputs section
+    output_dir = None
+    for out_key in ("towers", "coverage", "report", "visibility_edges"):
+        out_path = resolve(outputs.get(out_key))
+        if out_path:
+            output_dir = os.path.dirname(out_path)
+            break
+    if not output_dir:
+        output_dir = config_dir
+
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
 
     return jsonify({
         "config_path": os.path.abspath(path),
+        "output_dir": output_dir,
         "sites": store.to_list(),
         "layers": layers,
         "bounds": bounds,
