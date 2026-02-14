@@ -210,6 +210,29 @@ function viridisColor(t) {
   return 'rgb(' + r + ',' + g + ',' + b + ')';
 }
 
+// Terrain colormap (matches elevation overlay): green -> gold -> brown -> gray -> white
+const TERRAIN = [
+  [0.000,0,80,0],[0.063,28,120,28],[0.127,60,155,42],[0.175,100,175,55],
+  [0.238,144,190,65],[0.333,200,198,76],[0.381,218,195,80],[0.460,202,165,60],
+  [0.540,180,130,50],[0.587,165,113,55],[0.635,155,100,63],[0.667,150,100,70],
+  [0.746,162,136,118],[0.810,180,162,148],[0.889,208,198,188],[0.937,228,220,215],
+  [1.000,255,255,255]
+];
+function terrainColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  for (let i = 0; i < TERRAIN.length - 1; i++) {
+    if (t <= TERRAIN[i+1][0]) {
+      let t0 = TERRAIN[i][0], t1 = TERRAIN[i+1][0];
+      let f = (t1 !== t0) ? (t - t0) / (t1 - t0) : 0;
+      let r = Math.round(TERRAIN[i][1] + f * (TERRAIN[i+1][1] - TERRAIN[i][1]));
+      let g = Math.round(TERRAIN[i][2] + f * (TERRAIN[i+1][2] - TERRAIN[i][2]));
+      let b = Math.round(TERRAIN[i][3] + f * (TERRAIN[i+1][3] - TERRAIN[i][3]));
+      return 'rgb(' + r + ',' + g + ',' + b + ')';
+    }
+  }
+  return 'rgb(255,255,255)';
+}
+
 function edgeColor(dist_m) {
   // Green (short) to red (long): 0..70 km
   let t = Math.min(dist_m / 70000, 1);
@@ -575,11 +598,12 @@ function renderCoverage() {
   let mx = Math.max(...vals);
   let range = mx - mn || 1;
 
+  let colorFn = (metric === 'elevation') ? terrainColor : viridisColor;
   L.geoJSON(coverageData, {
     style: function(feature) {
       let v = feature.properties[metric];
       let t = (v != null && isFinite(v)) ? (v - mn) / range : 0;
-      return { fillColor: viridisColor(t), fillOpacity: 0.6, color: '#333', weight: 0.3 };
+      return { fillColor: colorFn(t), fillOpacity: 0.6, color: '#333', weight: 0.3 };
     },
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
@@ -597,7 +621,7 @@ function renderCoverage() {
   document.getElementById('legend-title').textContent = metric.replace(/_/g, ' ');
   let bar = document.getElementById('legend-gradient');
   let stops = [];
-  for (let i = 0; i <= 10; i++) stops.push(viridisColor(i / 10) + ' ' + (i * 10) + '%');
+  for (let i = 0; i <= 10; i++) stops.push(colorFn(i / 10) + ' ' + (i * 10) + '%');
   bar.style.background = 'linear-gradient(to right, ' + stops.join(', ') + ')';
   document.getElementById('legend-min').textContent = mn.toFixed(1);
   document.getElementById('legend-max').textContent = mx.toFixed(1);
