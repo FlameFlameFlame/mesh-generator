@@ -94,6 +94,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
+  <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
   <button onclick="doLoadProject()">Load Project</button>
@@ -389,6 +390,25 @@ function doFetchRoads() {
     }).catch(err => {
       btn.disabled = false;
       prog.style.display = 'none';
+      alert('Error: ' + err);
+    });
+}
+
+// --- Filter roads to point-to-point shortest paths ---
+
+function doFilterP2P() {
+  setStatus('Computing shortest paths...');
+  let btn = document.getElementById('btn-p2p');
+  btn.disabled = true;
+  fetch('/api/roads/filter-p2p', {method: 'POST'})
+    .then(r => r.json()).then(data => {
+      btn.disabled = false;
+      if (data.error) { alert(data.error); setStatus(''); return; }
+      renderLayers(data.layers || {});
+      setStatus('Filtered to ' + (data.road_count || 0) + ' road segments (from ' + (data.original_count || '?') + ')');
+    }).catch(err => {
+      btn.disabled = false;
+      setStatus('');
       alert('Error: ' + err);
     });
 }
@@ -875,6 +895,85 @@ def generate():
         "road_count": len(roads.get("features", [])),
         "layers": layers,
         "bounds": bounds,
+    })
+
+
+@app.route("/api/roads/filter-p2p", methods=["POST"])
+def filter_roads_p2p():
+    """Filter roads to only shortest paths between site pairs."""
+    global _roads_geojson, _loaded_layers
+
+    if not _roads_geojson:
+        return jsonify({"error": "No roads loaded. Download roads first."}), 400
+    if len(store) < 2:
+        return jsonify({"error": "Need at least 2 sites."}), 400
+
+    from math import atan2, cos, radians, sin, sqrt
+    from generator.graph import (
+        build_road_graph, find_nearest_node, shortest_path,
+        collect_path_edges, filter_roads_to_edges,
+    )
+
+    original_count = len(_roads_geojson.get("features", []))
+
+    graph = build_road_graph(_roads_geojson)
+    if graph.number_of_nodes() == 0:
+        return jsonify({"error": "Road graph is empty."}), 400
+
+    # Build site pairs from priority hierarchy
+    sites = list(store)
+    by_priority = {}
+    for s in sites:
+        by_priority.setdefault(s.priority, []).append(s)
+
+    def _dist(s1, s2):
+        R = 6_371_000
+        la1, la2 = radians(s1.lat), radians(s2.lat)
+        dlat = la2 - la1
+        dlon = radians(s2.lon - s1.lon)
+        a = sin(dlat / 2) ** 2 + cos(la1) * cos(la2) * sin(dlon / 2) ** 2
+        return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+    pairs = []
+    # P1: full mesh
+    p1 = by_priority.get(1, [])
+    for i, s1 in enumerate(p1):
+        for s2 in p1[i + 1:]:
+            pairs.append((s1, s2))
+    # P2+: each to nearest higher-priority
+    for pri in sorted(by_priority):
+        if pri == 1:
+            continue
+        higher = [s for s in sites if s.priority < pri]
+        if not higher:
+            continue
+        for s in by_priority[pri]:
+            nearest = min(higher, key=lambda h: _dist(s, h))
+            pairs.append((s, nearest))
+
+    logger.info("P2P filtering: %d site pairs", len(pairs))
+
+    # Find shortest paths and collect edges
+    used_edges = set()
+    for s1, s2 in pairs:
+        n1 = find_nearest_node(graph, s1.lat, s1.lon)
+        n2 = find_nearest_node(graph, s2.lat, s2.lon)
+        if n1 is None or n2 is None:
+            continue
+        path = shortest_path(graph, n1, n2)
+        if path:
+            used_edges.update(collect_path_edges(path))
+        else:
+            logger.warning("No path between %s and %s", s1.name, s2.name)
+
+    filtered = filter_roads_to_edges(_roads_geojson, used_edges)
+    _roads_geojson = filtered
+    _loaded_layers["roads"] = filtered
+
+    return jsonify({
+        "road_count": len(filtered.get("features", [])),
+        "original_count": original_count,
+        "layers": {"roads": filtered},
     })
 
 
