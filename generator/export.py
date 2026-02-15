@@ -24,6 +24,8 @@ def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
             "properties": {
                 "name": site.name,
                 "priority": site.priority,
+                **({"boundary_name": site.boundary_name}
+                   if site.boundary_name else {}),
             },
         })
 
@@ -75,14 +77,41 @@ def export_boundary_geojson(
     logger.info("Exported boundary to %s", path)
 
 
+def export_city_boundaries_geojson(
+    sites: list[SiteModel], path: str,
+) -> None:
+    """Write city boundaries as a GeoJSON FeatureCollection."""
+    features = []
+    for site in sites:
+        if site.boundary_geojson:
+            features.append({
+                "type": "Feature",
+                "geometry": site.boundary_geojson,
+                "properties": {
+                    "site_name": site.name,
+                    "city_name": site.boundary_name,
+                },
+            })
+
+    collection = {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+    with open(path, "w") as f:
+        json.dump(collection, f, indent=2)
+    logger.info(
+        "Exported %d city boundaries to %s", len(features), path)
+
+
 def export_config_yaml(
     output_dir: str,
     sites_path: str,
     boundary_path: str,
     roads_path: str = "",
     elevation_path: str = "",
+    city_boundaries_path: str = "",
 ) -> None:
-    """Write a config.yaml matching mesh-engine's MeshCalculatorConfig.from_dict format."""
+    """Write config.yaml for mesh-engine."""
     config = {
         "parameters": {
             "h3_resolution": 8,
@@ -98,16 +127,23 @@ def export_config_yaml(
             "elevation": elevation_path,
             "roads": roads_path,
             "target_sites": sites_path,
+            "city_boundaries": city_boundaries_path,
         },
         "outputs": {
-            "towers": os.path.join(output_dir, "towers.geojson"),
-            "coverage": os.path.join(output_dir, "coverage.geojson"),
-            "report": os.path.join(output_dir, "report.json"),
-            "visibility_edges": os.path.join(output_dir, "visibility_edges.geojson"),
+            "towers": os.path.join(
+                output_dir, "towers.geojson"),
+            "coverage": os.path.join(
+                output_dir, "coverage.geojson"),
+            "report": os.path.join(
+                output_dir, "report.json"),
+            "visibility_edges": os.path.join(
+                output_dir, "visibility_edges.geojson"),
         },
     }
 
     config_path = os.path.join(output_dir, "config.yaml")
     with open(config_path, "w") as f:
-        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+        yaml.dump(
+            config, f,
+            default_flow_style=False, sort_keys=False)
     logger.info("Exported config to %s", config_path)
