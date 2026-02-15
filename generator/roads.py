@@ -32,17 +32,24 @@ def parse_overpass_response(data: dict) -> dict:
     for element in data.get("elements", []):
         if element["type"] != "way":
             continue
+        node_ids = element.get("nodes", [])
         coords = []
-        for node_id in element.get("nodes", []):
+        resolved_ids = []
+        for node_id in node_ids:
             if node_id in nodes:
                 coords.append(list(nodes[node_id]))
+                resolved_ids.append(node_id)
         if len(coords) < 2:
             continue
         tags = element.get("tags", {})
         features.append({
             "type": "Feature",
             "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": tags,
+            "properties": {
+                **tags,
+                "osm_way_id": element["id"],
+                "osm_node_ids": resolved_ids,
+            },
         })
 
     return {"type": "FeatureCollection", "features": features}
