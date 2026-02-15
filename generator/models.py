@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -7,6 +7,8 @@ class SiteModel:
     lat: float
     lon: float
     priority: int = 1
+    boundary_geojson: dict | None = field(default=None, repr=False)
+    boundary_name: str = ""
 
 
 class SiteStore:
@@ -26,10 +28,14 @@ class SiteStore:
         return self._sites[index]
 
     def to_list(self) -> list[dict]:
-        return [
-            {"name": s.name, "lat": s.lat, "lon": s.lon, "priority": s.priority}
-            for s in self._sites
-        ]
+        result = []
+        for s in self._sites:
+            d = {"name": s.name, "lat": s.lat, "lon": s.lon,
+                 "priority": s.priority}
+            if s.boundary_name:
+                d["boundary_name"] = s.boundary_name
+            result.append(d)
+        return result
 
     def validate_priorities(self) -> None:
         """Raise ValueError if priorities have gaps (e.g. 1 and 3 but no 2)."""
