@@ -126,8 +126,10 @@ HTML_PAGE = """<!DOCTYPE html>
       </label>
       <div class="btn-row">
         <button onclick="doUpdate()">Update</button>
+        <button onclick="doDetectCity()">Detect City</button>
         <button class="danger" onclick="doDelete()">Delete</button>
       </div>
+      <div id="city-info" style="display:none;font-size:0.85em;color:#555;margin-top:4px;"></div>
     </div>
     <div id="layer-panel">
       <strong>Layers</strong>
@@ -135,6 +137,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
       <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
+      <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons</label>
       <div class="sub-control" id="coverage-metric-row" style="display:none;">
         <select id="coverage-metric" onchange="renderCoverage()">
@@ -186,6 +189,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     towers: L.layerGroup().addTo(map),
                     boundary: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
+                    cities: L.layerGroup().addTo(map),
                     coverage: L.layerGroup(),
                     elevation: L.layerGroup() };
 let coverageData = null;  // cached GeoJSON from /api/coverage
@@ -291,7 +295,8 @@ function refresh() {
   tbody.innerHTML = '';
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + s.name + '</td><td>' +
+    let label = s.name + (s.boundary_name ? ' [' + s.boundary_name + ']' : '');
+    tr.innerHTML = '<td>' + label + '</td><td>' +
       '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
@@ -304,6 +309,13 @@ function selectSite(i) {
   let s = sites[i];
   document.getElementById('edit-name').value = s.name;
   document.getElementById('edit-priority').value = s.priority;
+  let info = document.getElementById('city-info');
+  if (s.boundary_name) {
+    info.textContent = 'City: ' + s.boundary_name;
+    info.style.display = 'block';
+  } else {
+    info.style.display = 'none';
+  }
   map.panTo([s.lat, s.lon]);
   refresh();
 }
@@ -324,6 +336,37 @@ function doDelete() {
   if (selectedIdx < 0) return;
   fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
     .then(r => r.json()).then(data => { sites = data; selectedIdx = -1; refresh(); });
+}
+
+function doDetectCity() {
+  if (selectedIdx < 0) { alert('Select a site first.'); return; }
+  setStatus('Querying Overpass for city boundary...');
+  fetch('/api/sites/' + selectedIdx + '/detect-city', {method: 'POST'})
+    .then(r => r.json()).then(data => {
+      let info = document.getElementById('city-info');
+      if (data.found) {
+        setStatus('Detected city: ' + data.name);
+        info.textContent = 'City: ' + data.name;
+        info.style.display = 'block';
+        // Render boundary on map
+        if (data.geometry) {
+          L.geoJSON(data.geometry, {
+            style: { color: '#8800aa', weight: 2, dashArray: '6 4',
+                     fillColor: '#cc88ff', fillOpacity: 0.1 }
+          }).addTo(layerGroups.cities);
+        }
+        // Update site list display
+        if (sites[selectedIdx]) sites[selectedIdx].boundary_name = data.name;
+        refresh();
+      } else {
+        setStatus('No city boundary found at this location');
+        info.textContent = 'No city found';
+        info.style.display = 'block';
+      }
+    }).catch(err => {
+      setStatus('City detection failed');
+      alert('Error: ' + err);
+    });
 }
 
 function doExport() {
@@ -769,6 +812,32 @@ def delete_site(idx):
     store.remove(idx)
     logger.info("Deleted site %d (%s)", idx, name)
     return jsonify(store.to_list())
+
+
+@app.route("/api/sites/<int:idx>/detect-city", methods=["POST"])
+def detect_city_boundary(idx):
+    """Detect and store city/town boundary for a site."""
+    if idx < 0 or idx >= len(store):
+        return jsonify({"error": "Invalid site index"}), 400
+
+    site = store.get(idx)
+    from generator.boundaries import detect_city
+
+    result = detect_city(site.lat, site.lon)
+
+    if not result:
+        return jsonify({"found": False})
+
+    site.boundary_geojson = result["geometry"]
+    site.boundary_name = result["name"]
+
+    logger.info("Detected city '%s' for site %s", result["name"], site.name)
+
+    return jsonify({
+        "found": True,
+        "name": result["name"],
+        "geometry": result["geometry"],
+    })
 
 
 @app.route("/api/clear", methods=["POST"])
