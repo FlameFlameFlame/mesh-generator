@@ -12,6 +12,7 @@ from generator.models import SiteModel, SiteStore
 from generator.export import (
     export_sites_geojson, export_boundary_geojson,
     export_roads_geojson, export_config_yaml,
+    export_city_boundaries_geojson,
 )
 from generator.roads import fetch_roads
 from generator.elevation import fetch_and_write_elevation, render_elevation_image
@@ -1037,10 +1038,24 @@ def filter_roads_p2p():
         build_road_graph, find_nearest_node, shortest_path,
         collect_path_edges, filter_roads_to_edges,
     )
+    from generator.boundaries import sample_border_points
 
     original_count = len(_roads_geojson.get("features", []))
 
-    graph = build_road_graph(_roads_geojson)
+    # Remove excluded roads before building graph
+    if _excluded_road_indices:
+        source = {
+            "type": "FeatureCollection",
+            "features": [
+                f for i, f
+                in enumerate(_roads_geojson.get("features", []))
+                if i not in _excluded_road_indices
+            ],
+        }
+    else:
+        source = _roads_geojson
+
+    graph = build_road_graph(source)
     if graph.number_of_nodes() == 0:
         return jsonify({"error": "Road graph is empty."}), 400
 
@@ -1078,21 +1093,51 @@ def filter_roads_p2p():
     logger.info("P2P filtering: %d site pairs", len(pairs))
 
     # Find shortest paths and collect edges
+    def _site_nodes(site):
+        """Get routing nodes for a site (border points or site coord)."""
+        if site.boundary_geojson:
+            pts = sample_border_points(site.boundary_geojson, n=8)
+            nodes = []
+            for lat, lon in pts:
+                n = find_nearest_node(graph, lat, lon)
+                if n is not None:
+                    nodes.append(n)
+            return nodes if nodes else []
+        n = find_nearest_node(graph, site.lat, site.lon)
+        return [n] if n is not None else []
+
     used_edges = set()
     for s1, s2 in pairs:
-        n1 = find_nearest_node(graph, s1.lat, s1.lon)
-        n2 = find_nearest_node(graph, s2.lat, s2.lon)
-        if n1 is None or n2 is None:
+        nodes1 = _site_nodes(s1)
+        nodes2 = _site_nodes(s2)
+        if not nodes1 or not nodes2:
+            logger.warning(
+                "No graph nodes for %s or %s", s1.name, s2.name)
             continue
-        path = shortest_path(graph, n1, n2)
-        if path:
-            used_edges.update(collect_path_edges(path))
+        # Find shortest among all border-point combos
+        best_path = None
+        best_len = float("inf")
+        for n1 in nodes1:
+            for n2 in nodes2:
+                p = shortest_path(graph, n1, n2)
+                if p:
+                    d = sum(
+                        graph[p[i]][p[i + 1]]["distance"]
+                        for i in range(len(p) - 1)
+                    )
+                    if d < best_len:
+                        best_len = d
+                        best_path = p
+        if best_path:
+            used_edges.update(collect_path_edges(best_path))
         else:
-            logger.warning("No path between %s and %s", s1.name, s2.name)
+            logger.warning(
+                "No path between %s and %s", s1.name, s2.name)
 
-    filtered = filter_roads_to_edges(_roads_geojson, used_edges)
+    filtered = filter_roads_to_edges(source, used_edges)
     _roads_geojson = filtered
     _loaded_layers["roads"] = filtered
+    _excluded_road_indices.clear()  # reset after re-filtering
 
     return jsonify({
         "road_count": len(filtered.get("features", [])),
@@ -1160,10 +1205,18 @@ def export():
         elevation_export_path = elevation_dest
         logger.info("Copied elevation to %s", elevation_dest)
 
+    # Export city boundaries if any site has one
+    city_boundaries_path = ""
+    if any(s.boundary_geojson for s in sites):
+        city_boundaries_path = os.path.join(
+            output_dir, "city_boundaries.geojson")
+        export_city_boundaries_geojson(sites, city_boundaries_path)
+
     export_config_yaml(
         output_dir, sites_path, boundary_path,
         roads_path=roads_export_path,
         elevation_path=elevation_export_path,
+        city_boundaries_path=city_boundaries_path,
     )
 
     logger.info("Exported %d sites to %s", len(sites), output_dir)
