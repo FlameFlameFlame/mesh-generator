@@ -23,6 +23,7 @@ store = SiteStore()
 _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
+_excluded_road_indices = set()  # indices of excluded road features
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
@@ -50,6 +51,7 @@ HTML_PAGE = """<!DOCTYPE html>
   #toolbar button.primary { background: #e0edff; border-color: #8ab; font-weight: 600; }
   #toolbar button.primary:hover { background: #cde0f8; }
   #btn-add-site.active { background: #c00; color: #fff; border-color: #900; }
+  #btn-exclude.active { background: #c00; color: #fff; border-color: #900; }
   #toolbar .hint { margin-left: auto; color: #666; font-size: 0.9em; }
   .progress-wrap { display: none; align-items: center; gap: 6px; font-size: 0.82em; color: #555; }
   .progress-wrap progress { width: 120px; height: 14px; }
@@ -95,6 +97,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
+  <button id="btn-exclude" onclick="toggleExcludeMode()">Exclude Roads</button>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
   <button onclick="doLoadProject()">Load Project</button>
@@ -201,6 +204,9 @@ let elevationOverlay = null;
 let elevationMeta = null;
 let elevationFetched = false;
 let hasElevation = false;
+let excludeMode = false;
+let excludedRoadIndices = new Set();
+let cachedRoadLayers = null;  // store rendered road layers for re-styling
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -456,6 +462,31 @@ function doFilterP2P() {
     });
 }
 
+// --- Road exclusion mode ---
+
+function toggleExcludeMode() {
+  excludeMode = !excludeMode;
+  let btn = document.getElementById('btn-exclude');
+  let hint = document.getElementById('hint');
+  if (excludeMode) {
+    // Exit add-site mode if active
+    if (addMode) toggleAddMode();
+    btn.classList.add('active');
+    btn.textContent = 'Done Excluding';
+    hint.textContent = 'Click on a road segment to exclude/include it';
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'Exclude Roads';
+    hint.textContent = '';
+    // Sync excluded indices to backend
+    fetch('/api/roads/exclude', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({indices: Array.from(excludedRoadIndices)})
+    });
+  }
+}
+
 // --- Download elevation from SRTM ---
 
 function doFetchElevation() {
@@ -515,13 +546,35 @@ function doLoadProject() {
   });
 }
 
+function renderRoads() {
+  layerGroups.roads.clearLayers();
+  cachedRoadLayers = null;
+  if (!_cachedRoadsGeojson) return;
+  cachedRoadLayers = [];
+  (_cachedRoadsGeojson.features || []).forEach(function(feat, idx) {
+    let excluded = excludedRoadIndices.has(idx);
+    let style = excluded
+      ? { color: '#cc0000', weight: 3, opacity: 0.6, dashArray: '6 4' }
+      : { color: '#2266aa', weight: 2, opacity: 0.7 };
+    let lyr = L.geoJSON(feat, { style: style }).addTo(layerGroups.roads);
+    lyr.on('click', function(e) {
+      if (!excludeMode) return;
+      L.DomEvent.stopPropagation(e);
+      if (excludedRoadIndices.has(idx)) excludedRoadIndices.delete(idx);
+      else excludedRoadIndices.add(idx);
+      renderRoads();
+    });
+    cachedRoadLayers.push(lyr);
+  });
+}
+
+let _cachedRoadsGeojson = null;
+
 function renderLayers(layers) {
   // Roads
-  layerGroups.roads.clearLayers();
   if (layers.roads) {
-    L.geoJSON(layers.roads, {
-      style: { color: '#2266aa', weight: 2, opacity: 0.7 }
-    }).addTo(layerGroups.roads);
+    _cachedRoadsGeojson = layers.roads;
+    renderRoads();
   }
   // Towers (colored by source)
   layerGroups.towers.clearLayers();
@@ -843,10 +896,12 @@ def detect_city_boundary(idx):
 @app.route("/api/clear", methods=["POST"])
 def clear_project():
     """Clear all sites and loaded layers."""
-    global _counter, _roads_geojson, _loaded_layers, _loaded_report, _loaded_coverage, _elevation_path
+    global _counter, _roads_geojson, _loaded_layers, _loaded_report
+    global _loaded_coverage, _elevation_path, _excluded_road_indices
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
+    _excluded_road_indices = set()
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
@@ -1046,6 +1101,16 @@ def filter_roads_p2p():
     })
 
 
+@app.route("/api/roads/exclude", methods=["POST"])
+def set_excluded_roads():
+    """Store excluded road feature indices."""
+    global _excluded_road_indices
+    data = request.json
+    _excluded_road_indices = set(data.get("indices", []))
+    logger.info("Updated excluded roads: %d indices", len(_excluded_road_indices))
+    return jsonify({"ok": True, "count": len(_excluded_road_indices)})
+
+
 @app.route("/api/export", methods=["POST"])
 def export():
     if len(store) == 0:
@@ -1069,10 +1134,21 @@ def export():
     export_sites_geojson(sites, sites_path)
     export_boundary_geojson(sites, boundary_path, roads_geojson=_roads_geojson)
 
-    # Export roads if available (from Generate or Load)
+    # Export roads if available (filter out excluded)
     roads_export_path = ""
     if _roads_geojson:
-        export_roads_geojson(_roads_geojson, roads_path)
+        if _excluded_road_indices:
+            filtered = {
+                "type": "FeatureCollection",
+                "features": [
+                    f for i, f
+                    in enumerate(_roads_geojson.get("features", []))
+                    if i not in _excluded_road_indices
+                ],
+            }
+        else:
+            filtered = _roads_geojson
+        export_roads_geojson(filtered, roads_path)
         roads_export_path = roads_path
 
     # Copy pre-downloaded elevation to output directory
