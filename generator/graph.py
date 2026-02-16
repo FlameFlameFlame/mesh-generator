@@ -67,6 +67,26 @@ def shortest_path(graph: nx.Graph, node1, node2) -> list | None:
         return None
 
 
+def k_shortest_paths(
+    graph: nx.Graph, node1, node2, k: int = 3,
+) -> list[list]:
+    """Return up to *k* shortest simple paths between two nodes.
+
+    Uses NetworkX's Yen's algorithm implementation.  Returns a list of
+    node-lists (may be shorter than *k* if fewer paths exist).
+    """
+    try:
+        paths = []
+        for path in nx.shortest_simple_paths(graph, node1, node2,
+                                             weight="distance"):
+            paths.append(path)
+            if len(paths) >= k:
+                break
+        return paths
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return []
+
+
 def collect_path_edges(path: list) -> set[tuple]:
     """Extract set of undirected edges from a node path."""
     edges = set()
