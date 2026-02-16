@@ -285,7 +285,7 @@ function addSite(name, lat, lon, priority) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, lat, lon, priority})
-  }).then(r => r.json()).then(data => { sites = data; refresh(); });
+  }).then(safeJson).then(data => { sites = data; refresh(); });
 }
 
 function refresh() {
@@ -336,20 +336,30 @@ function doUpdate() {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, priority})
-  }).then(r => r.json()).then(data => { sites = data; refresh(); });
+  }).then(safeJson).then(data => { sites = data; refresh(); });
 }
 
 function doDelete() {
   if (selectedIdx < 0) return;
   fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
-    .then(r => r.json()).then(data => { sites = data; selectedIdx = -1; refresh(); });
+    .then(safeJson).then(data => { sites = data; selectedIdx = -1; refresh(); });
+}
+
+function safeJson(r) {
+  if (!r.ok) {
+    return r.text().then(function(t) {
+      try { return JSON.parse(t); }
+      catch(e) { return {error: 'Server error ' + r.status}; }
+    });
+  }
+  return r.json();
 }
 
 function doDetectCity() {
   if (selectedIdx < 0) { alert('Select a site first.'); return; }
   setStatus('Querying Overpass for city boundary...');
   fetch('/api/sites/' + selectedIdx + '/detect-city', {method: 'POST'})
-    .then(r => r.json()).then(data => {
+    .then(safeJson).then(data => {
       let info = document.getElementById('city-info');
       if (data.found) {
         setStatus('Detected city: ' + data.name);
@@ -383,7 +393,7 @@ function doExport() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({output_dir: dir})
-  }).then(r => r.json()).then(data => {
+  }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
     setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
   });
@@ -392,7 +402,7 @@ function doExport() {
 function doClear() {
   if (!confirm('Clear all sites and layers?')) return;
   fetch('/api/clear', {method: 'POST'})
-    .then(r => r.json()).then(data => {
+    .then(safeJson).then(data => {
       sites = [];
       selectedIdx = -1;
       refresh();
@@ -430,7 +440,7 @@ function doFetchRoads() {
   bar.removeAttribute('value');
   label.textContent = 'Fetching roads...';
   fetch('/api/generate', {method: 'POST'})
-    .then(r => r.json()).then(data => {
+    .then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
       bar.value = 1; bar.max = 1;
@@ -451,7 +461,7 @@ function doFilterP2P() {
   let btn = document.getElementById('btn-p2p');
   btn.disabled = true;
   fetch('/api/roads/filter-p2p', {method: 'POST'})
-    .then(r => r.json()).then(data => {
+    .then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { alert(data.error); setStatus(''); return; }
       renderLayers(data.layers || {});
@@ -501,7 +511,7 @@ function doFetchElevation() {
   bar.removeAttribute('value');
   label.textContent = 'Downloading SRTM tiles...';
   fetch('/api/elevation', {method: 'POST'})
-    .then(r => r.json()).then(data => {
+    .then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
       bar.value = 1; bar.max = 1;
@@ -525,7 +535,7 @@ function doLoadProject() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({path: configPath})
-  }).then(r => r.json()).then(data => {
+  }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); setStatus(''); return; }
     sites = data.sites || [];
     hasCoverage = data.has_coverage || false;
@@ -1035,12 +1045,14 @@ def filter_roads_p2p():
 
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
-        build_road_graph, find_nearest_node, shortest_path,
-        collect_path_edges, filter_roads_to_edges,
+        build_road_graph, find_nearest_node,
+        shortest_path, collect_path_edges,
+        filter_roads_to_edges,
     )
     from generator.boundaries import sample_border_points
 
-    original_count = len(_roads_geojson.get("features", []))
+    original_count = len(
+        _roads_geojson.get("features", []))
 
     # Remove excluded roads before building graph
     if _excluded_road_indices:
@@ -1048,16 +1060,24 @@ def filter_roads_p2p():
             "type": "FeatureCollection",
             "features": [
                 f for i, f
-                in enumerate(_roads_geojson.get("features", []))
+                in enumerate(
+                    _roads_geojson.get("features", []))
                 if i not in _excluded_road_indices
             ],
         }
     else:
         source = _roads_geojson
 
-    graph = build_road_graph(source)
+    try:
+        graph = build_road_graph(source)
+    except Exception as e:
+        logger.exception("Failed to build road graph")
+        return jsonify(
+            {"error": f"Failed to build road graph: {e}"})
+
     if graph.number_of_nodes() == 0:
-        return jsonify({"error": "Road graph is empty."}), 400
+        return jsonify(
+            {"error": "Road graph is empty."}), 400
 
     # Build site pairs from priority hierarchy
     sites = list(store)
@@ -1070,7 +1090,8 @@ def filter_roads_p2p():
         la1, la2 = radians(s1.lat), radians(s2.lat)
         dlat = la2 - la1
         dlon = radians(s2.lon - s1.lon)
-        a = sin(dlat / 2) ** 2 + cos(la1) * cos(la2) * sin(dlon / 2) ** 2
+        a = (sin(dlat / 2) ** 2
+             + cos(la1) * cos(la2) * sin(dlon / 2) ** 2)
         return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
     pairs = []
@@ -1083,20 +1104,23 @@ def filter_roads_p2p():
     for pri in sorted(by_priority):
         if pri == 1:
             continue
-        higher = [s for s in sites if s.priority < pri]
+        higher = [
+            s for s in sites if s.priority < pri]
         if not higher:
             continue
         for s in by_priority[pri]:
-            nearest = min(higher, key=lambda h: _dist(s, h))
+            nearest = min(
+                higher, key=lambda h: _dist(s, h))
             pairs.append((s, nearest))
 
-    logger.info("P2P filtering: %d site pairs", len(pairs))
+    logger.info(
+        "P2P filtering: %d site pairs", len(pairs))
 
     # Find shortest paths and collect edges
     def _site_nodes(site):
-        """Get routing nodes for a site (border points or site coord)."""
         if site.boundary_geojson:
-            pts = sample_border_points(site.boundary_geojson, n=8)
+            pts = sample_border_points(
+                site.boundary_geojson, n=8)
             nodes = []
             for lat, lon in pts:
                 n = find_nearest_node(graph, lat, lon)
@@ -1112,9 +1136,9 @@ def filter_roads_p2p():
         nodes2 = _site_nodes(s2)
         if not nodes1 or not nodes2:
             logger.warning(
-                "No graph nodes for %s or %s", s1.name, s2.name)
+                "No graph nodes for %s or %s",
+                s1.name, s2.name)
             continue
-        # Find shortest among all border-point combos
         best_path = None
         best_len = float("inf")
         for n1 in nodes1:
@@ -1129,18 +1153,21 @@ def filter_roads_p2p():
                         best_len = d
                         best_path = p
         if best_path:
-            used_edges.update(collect_path_edges(best_path))
+            used_edges.update(
+                collect_path_edges(best_path))
         else:
             logger.warning(
-                "No path between %s and %s", s1.name, s2.name)
+                "No path between %s and %s",
+                s1.name, s2.name)
 
     filtered = filter_roads_to_edges(source, used_edges)
     _roads_geojson = filtered
     _loaded_layers["roads"] = filtered
-    _excluded_road_indices.clear()  # reset after re-filtering
+    _excluded_road_indices.clear()
 
     return jsonify({
-        "road_count": len(filtered.get("features", [])),
+        "road_count": len(
+            filtered.get("features", [])),
         "original_count": original_count,
         "layers": {"roads": filtered},
     })

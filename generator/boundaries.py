@@ -15,21 +15,21 @@ def detect_city(lat: float, lon: float) -> dict | None:
     """Query Overpass for the administrative boundary containing (lat, lon).
 
     Returns ``{"name": str, "admin_level": int, "geometry": <GeoJSON>}``
-    for the smallest matching area, or ``None`` if the point is not inside
-    any admin boundary at levels 6-8.
+    for the smallest matching area, or ``None`` if the point is not
+    inside any admin boundary at levels 4-8.
     """
     query = (
-        f'[out:json][timeout:25];'
+        f'[out:json][timeout:60];'
         f'is_in({lat},{lon})->.a;'
         f'area.a["boundary"="administrative"]'
-        f'["admin_level"~"^(6|7|8)$"];'
+        f'["admin_level"~"^(4|5|6|7|8)$"];'
         f'rel(pivot);out geom;'
     )
 
     logger.info("Detecting city at (%.4f, %.4f)", lat, lon)
 
     try:
-        resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=30)
+        resp = requests.post(OVERPASS_URL, data={"data": query}, timeout=65)
         resp.raise_for_status()
     except Exception as e:
         logger.error("Overpass city query failed: %s", e)
@@ -42,8 +42,26 @@ def detect_city(lat: float, lon: float) -> dict | None:
         logger.info("No admin boundary found at (%.4f, %.4f)", lat, lon)
         return None
 
-    # Pick the smallest area (highest admin_level, or smallest polygon)
-    best = max(elements, key=lambda e: int(e.get("tags", {}).get("admin_level", "0")))
+    # Prefer city/town boundaries, then highest admin_level
+    city_places = {"city", "town"}
+    cities = [
+        e for e in elements
+        if e.get("tags", {}).get("place") in city_places
+    ]
+    if cities:
+        best = min(
+            cities,
+            key=lambda e: int(
+                e.get("tags", {}).get("admin_level", "99")
+            ),
+        )
+    else:
+        best = max(
+            elements,
+            key=lambda e: int(
+                e.get("tags", {}).get("admin_level", "0")
+            ),
+        )
 
     geojson = _relation_to_geojson(best)
     if geojson is None:
