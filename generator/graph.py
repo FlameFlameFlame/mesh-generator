@@ -134,6 +134,34 @@ def collect_path_edges(path: list) -> set[tuple]:
     return edges
 
 
+def collect_path_feature_indices(
+    graph: nx.Graph, path: list,
+) -> set[int]:
+    """Collect the set of feature indices used by a path through the graph."""
+    indices = set()
+    for i in range(len(path) - 1):
+        edge_data = graph.get_edge_data(path[i], path[i + 1])
+        if edge_data and "feature_idx" in edge_data:
+            indices.add(edge_data["feature_idx"])
+    return indices
+
+
+def filter_roads_by_feature_indices(
+    roads_geojson: dict,
+    used_indices: set[int],
+) -> dict:
+    """Keep only road features whose index is in *used_indices*.
+
+    Returns a new GeoJSON FeatureCollection.
+    """
+    features = roads_geojson.get("features", [])
+    kept = [f for i, f in enumerate(features) if i in used_indices]
+
+    logger.info("Filtered roads: %d / %d features kept",
+                len(kept), len(features))
+    return {"type": "FeatureCollection", "features": kept}
+
+
 def filter_roads_to_edges(
     roads_geojson: dict,
     used_edges: set[tuple],

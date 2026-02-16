@@ -3,6 +3,8 @@
 from generator.graph import (
     build_road_graph,
     collect_path_edges,
+    collect_path_feature_indices,
+    filter_roads_by_feature_indices,
     filter_roads_to_edges,
     find_nearest_node,
     k_shortest_paths,
@@ -168,3 +170,48 @@ class TestFilterRoadsToEdges:
         result = filter_roads_to_edges(FORK, edges)
         # The B-D road is the second feature
         assert len(result["features"]) == 1
+
+
+class TestCollectPathFeatureIndices:
+    def test_single_road(self):
+        G = build_road_graph(SIMPLE)
+        path = shortest_path(G, (0.0, 0.0), (1.0, 0.0))
+        indices = collect_path_feature_indices(G, path)
+        assert indices == {0}
+
+    def test_multi_road_path(self):
+        G = build_road_graph(FORK)
+        path = shortest_path(G, (0.0, 0.0), (1.0, 1.0))
+        indices = collect_path_feature_indices(G, path)
+        # Path goes A-B (feature 0) then B-D (feature 1)
+        assert indices == {0, 1}
+
+    def test_triangle_both_features(self):
+        G = build_road_graph(TRIANGLE)
+        # Indirect path A-C-B uses features 1 and 2
+        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=2)
+        all_indices = set()
+        for p in paths:
+            all_indices.update(collect_path_feature_indices(G, p))
+        # Should include all 3 features (direct + indirect)
+        assert len(all_indices) >= 2
+
+
+class TestFilterRoadsByFeatureIndices:
+    def test_keep_one(self):
+        result = filter_roads_by_feature_indices(FORK, {1})
+        assert len(result["features"]) == 1
+
+    def test_keep_all(self):
+        result = filter_roads_by_feature_indices(TRIANGLE, {0, 1, 2})
+        assert len(result["features"]) == 3
+
+    def test_keep_none(self):
+        result = filter_roads_by_feature_indices(TRIANGLE, set())
+        assert len(result["features"]) == 0
+
+    def test_preserves_correct_features(self):
+        # Feature 0 is A-B-C, Feature 1 is B-D
+        result = filter_roads_by_feature_indices(FORK, {0})
+        coords = result["features"][0]["geometry"]["coordinates"]
+        assert len(coords) == 3  # A-B-C has 3 points
