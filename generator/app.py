@@ -152,6 +152,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
       <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
       <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
+      <label><input type="checkbox" id="chk-roadhex" onchange="toggleLayer('roadhex')"> Road Hexagons</label>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons</label>
       <div class="sub-control" id="coverage-metric-row" style="display:none;">
         <select id="coverage-metric" onchange="renderCoverage()">
@@ -204,6 +205,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     boundary: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
+                    roadhex: L.layerGroup(),
                     coverage: L.layerGroup(),
                     elevation: L.layerGroup() };
 let coverageData = null;  // cached GeoJSON from /api/coverage
@@ -423,6 +425,7 @@ function doClear() {
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       excludedWayIds.clear();
+      document.getElementById('chk-roadhex').checked = false;
       document.getElementById('p2p-progress').style.display = 'none';
       // Reset elevation
       elevationOverlay = null;
@@ -635,11 +638,29 @@ function renderRoads() {
 
 let _cachedRoadsGeojson = null;
 
+function fetchRoadHexagons() {
+  fetch('/api/roads/hexagons').then(r => {
+    if (!r.ok) return;
+    return r.json();
+  }).then(data => {
+    if (!data) return;
+    layerGroups.roadhex.clearLayers();
+    L.geoJSON(data, {
+      style: { color: '#339966', weight: 0.5, fillColor: '#33cc77', fillOpacity: 0.15 }
+    }).addTo(layerGroups.roadhex);
+    // Show on map if checkbox is checked
+    if (document.getElementById('chk-roadhex').checked) {
+      layerGroups.roadhex.addTo(map);
+    }
+  });
+}
+
 function renderLayers(layers) {
   // Roads
   if (layers.roads) {
     _cachedRoadsGeojson = layers.roads;
     renderRoads();
+    fetchRoadHexagons();
   }
   // Towers (colored by source)
   layerGroups.towers.clearLayers();
@@ -1087,6 +1108,16 @@ def generate():
     })
 
 
+@app.route("/api/roads/hexagons", methods=["GET"])
+def road_hexagons():
+    """Return H3 hexagons covering current roads as GeoJSON."""
+    if not _roads_geojson:
+        return jsonify({"error": "No roads loaded"}), 404
+    from generator.coverage import roads_to_h3_cells, h3_cells_to_geojson
+    cells = roads_to_h3_cells(_roads_geojson, resolution=8)
+    return jsonify(h3_cells_to_geojson(cells))
+
+
 @app.route("/api/roads/filter-p2p", methods=["POST"])
 def filter_roads_p2p():
     """Start P2P filtering in background thread."""
@@ -1120,8 +1151,8 @@ def _do_filter_p2p():
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
         build_road_graph, build_node_index, find_nearest_node,
-        shortest_path, collect_path_edges,
-        filter_roads_to_edges,
+        shortest_path, collect_path_feature_indices,
+        filter_roads_by_feature_indices,
     )
     from generator.boundaries import sample_border_points
 
@@ -1215,7 +1246,7 @@ def _do_filter_p2p():
         K_PATHS = 3  # number of alternative routes per site pair
 
         t1 = time.monotonic()
-        used_edges = set()
+        used_feature_indices = set()
         for pair_idx, (s1, s2) in enumerate(pairs):
             _p2p_progress["current"] = pair_idx + 1
             nodes1 = _site_nodes(s1)
@@ -1240,16 +1271,17 @@ def _do_filter_p2p():
             kept = candidates[:K_PATHS]
             if kept:
                 for _, p in kept:
-                    used_edges.update(
-                        collect_path_edges(p))
+                    used_feature_indices.update(
+                        collect_path_feature_indices(graph, p))
             else:
                 logger.warning(
                     "No path between %s and %s",
                     s1.name, s2.name)
-        logger.info("Path finding done in %.1fs",
-                    time.monotonic() - t1)
+        logger.info("Path finding done in %.1fs, %d features used",
+                    time.monotonic() - t1, len(used_feature_indices))
 
-        filtered = filter_roads_to_edges(source, used_edges)
+        filtered = filter_roads_by_feature_indices(
+            source, used_feature_indices)
         _roads_geojson = filtered
         _loaded_layers["roads"] = filtered
         _excluded_way_ids.clear()
