@@ -1075,10 +1075,11 @@ def _do_filter_p2p():
     """Core P2P filtering logic — extracted for clean error handling."""
     global _roads_geojson, _loaded_layers
 
+    import time
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
-        build_road_graph, find_nearest_node,
-        k_shortest_paths, collect_path_edges,
+        build_road_graph, build_node_index, find_nearest_node,
+        shortest_path, collect_path_edges,
         filter_roads_to_edges,
     )
     from generator.boundaries import sample_border_points
@@ -1099,7 +1100,12 @@ def _do_filter_p2p():
     else:
         source = _roads_geojson
 
+    t0 = time.monotonic()
     graph = build_road_graph(source)
+    node_index = build_node_index(graph)
+    logger.info("Graph built in %.1fs (%d nodes, %d edges)",
+                time.monotonic() - t0,
+                graph.number_of_nodes(), graph.number_of_edges())
 
     if graph.number_of_nodes() == 0:
         return jsonify(
@@ -1149,15 +1155,18 @@ def _do_filter_p2p():
                 site.boundary_geojson, n=8)
             nodes = []
             for lat, lon in pts:
-                n = find_nearest_node(graph, lat, lon)
+                n = find_nearest_node(
+                    graph, lat, lon, _index=node_index)
                 if n is not None:
                     nodes.append(n)
             return nodes if nodes else []
-        n = find_nearest_node(graph, site.lat, site.lon)
+        n = find_nearest_node(
+            graph, site.lat, site.lon, _index=node_index)
         return [n] if n is not None else []
 
     K_PATHS = 3  # number of alternative routes per site pair
 
+    t1 = time.monotonic()
     used_edges = set()
     for s1, s2 in pairs:
         nodes1 = _site_nodes(s1)
@@ -1167,19 +1176,17 @@ def _do_filter_p2p():
                 "No graph nodes for %s or %s",
                 s1.name, s2.name)
             continue
-        # Collect candidate paths from all node-pair combos
+        # Single Dijkstra per node-pair, keep K_PATHS best overall
         candidates = []  # (total_distance, path)
         for n1 in nodes1:
             for n2 in nodes2:
-                for p in k_shortest_paths(
-                    graph, n1, n2, k=K_PATHS
-                ):
+                p = shortest_path(graph, n1, n2)
+                if p is not None:
                     d = sum(
                         graph[p[i]][p[i + 1]]["distance"]
                         for i in range(len(p) - 1)
                     )
                     candidates.append((d, p))
-        # Keep the K_PATHS shortest overall
         candidates.sort(key=lambda x: x[0])
         kept = candidates[:K_PATHS]
         if kept:
@@ -1190,6 +1197,7 @@ def _do_filter_p2p():
             logger.warning(
                 "No path between %s and %s",
                 s1.name, s2.name)
+    logger.info("Path finding done in %.1fs", time.monotonic() - t1)
 
     filtered = filter_roads_to_edges(source, used_edges)
     _roads_geojson = filtered

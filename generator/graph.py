@@ -4,6 +4,8 @@ import logging
 from math import atan2, cos, radians, sin, sqrt
 
 import networkx as nx
+import numpy as np
+from scipy.spatial import cKDTree
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +49,44 @@ def build_road_graph(roads_geojson: dict) -> nx.Graph:
     return G
 
 
-def find_nearest_node(graph: nx.Graph, lat: float, lon: float):
-    """Find the graph node closest to (lat, lon).  Returns (lon, lat) tuple."""
+def build_node_index(graph: nx.Graph):
+    """Build a KDTree spatial index for fast nearest-node lookups.
+
+    Returns ``(tree, node_list)`` where *tree* is a ``cKDTree`` of
+    approximate Cartesian coordinates and *node_list* maps tree indices
+    back to ``(lon, lat)`` graph nodes.
+    """
+    nodes = list(graph.nodes)
+    if not nodes:
+        return None, []
+    # Convert (lon, lat) to approximate Cartesian for KDTree
+    coords = np.array(nodes, dtype=np.float64)
+    lons_rad = np.radians(coords[:, 0])
+    lats_rad = np.radians(coords[:, 1])
+    cos_lat = np.cos(lats_rad)
+    # Equirectangular projection (good enough for nearest-neighbor)
+    xy = np.column_stack([lons_rad * cos_lat, lats_rad])
+    tree = cKDTree(xy)
+    return tree, nodes
+
+
+def find_nearest_node(graph: nx.Graph, lat: float, lon: float,
+                      _index=None):
+    """Find the graph node closest to (lat, lon).  Returns (lon, lat) tuple.
+
+    Pass ``_index=(tree, node_list)`` from :func:`build_node_index` to
+    avoid O(n) brute-force search.
+    """
+    if _index is not None:
+        tree, node_list = _index
+        if tree is None:
+            return None
+        lon_rad = radians(lon)
+        lat_rad = radians(lat)
+        cos_lat = cos(lat_rad)
+        _, idx = tree.query([lon_rad * cos_lat, lat_rad])
+        return node_list[idx]
+    # Fallback brute-force for backward compat
     best = None
     best_dist = float("inf")
     for node in graph.nodes:
