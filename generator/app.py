@@ -20,6 +20,12 @@ from generator.elevation import fetch_and_write_elevation, render_elevation_imag
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+
+
+@app.errorhandler(500)
+def _handle_500(e):
+    logger.exception("Internal server error")
+    return jsonify({"error": f"Internal server error: {e}"}), 500
 store = SiteStore()
 _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
@@ -1043,6 +1049,17 @@ def filter_roads_p2p():
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."}), 400
 
+    try:
+        return _do_filter_p2p()
+    except Exception as e:
+        logger.exception("P2P filtering failed")
+        return jsonify({"error": f"P2P filtering failed: {e}"}), 500
+
+
+def _do_filter_p2p():
+    """Core P2P filtering logic — extracted for clean error handling."""
+    global _roads_geojson, _loaded_layers
+
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
         build_road_graph, find_nearest_node,
@@ -1068,12 +1085,7 @@ def filter_roads_p2p():
     else:
         source = _roads_geojson
 
-    try:
-        graph = build_road_graph(source)
-    except Exception as e:
-        logger.exception("Failed to build road graph")
-        return jsonify(
-            {"error": f"Failed to build road graph: {e}"})
+    graph = build_road_graph(source)
 
     if graph.number_of_nodes() == 0:
         return jsonify(
