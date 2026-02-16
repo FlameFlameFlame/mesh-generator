@@ -108,8 +108,9 @@ class TestDetectCity:
                 {
                     "type": "relation",
                     "id": 123,
-                    "tags": {"name": "TestCity", "admin_level": "8",
-                             "boundary": "administrative"},
+                    "tags": {"name": "TestCity", "admin_level": "4",
+                             "boundary": "administrative",
+                             "place": "city"},
                     "members": [
                         {
                             "type": "way",
@@ -132,8 +133,60 @@ class TestDetectCity:
         result = detect_city(0.5, 0.5)
         assert result is not None
         assert result["name"] == "TestCity"
-        assert result["admin_level"] == 8
+        assert result["admin_level"] == 4
         assert "type" in result["geometry"]
+
+    @patch("generator.boundaries.requests.post")
+    def test_prefers_city_over_suburb(self, mock_post):
+        """When both city and suburb match, prefer city."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        geom_members = [
+            {
+                "type": "way",
+                "role": "outer",
+                "geometry": [
+                    {"lon": 0, "lat": 0},
+                    {"lon": 1, "lat": 0},
+                    {"lon": 1, "lat": 1},
+                    {"lon": 0, "lat": 1},
+                    {"lon": 0, "lat": 0},
+                ],
+            }
+        ]
+        mock_resp.json.return_value = {
+            "elements": [
+                {
+                    "type": "relation",
+                    "id": 100,
+                    "tags": {
+                        "name": "BigCity",
+                        "admin_level": "4",
+                        "boundary": "administrative",
+                        "place": "city",
+                    },
+                    "members": geom_members,
+                },
+                {
+                    "type": "relation",
+                    "id": 200,
+                    "tags": {
+                        "name": "District",
+                        "admin_level": "5",
+                        "boundary": "administrative",
+                        "place": "suburb",
+                    },
+                    "members": geom_members,
+                },
+            ]
+        }
+        mock_post.return_value = mock_resp
+
+        from generator.boundaries import detect_city
+        result = detect_city(0.5, 0.5)
+        assert result is not None
+        assert result["name"] == "BigCity"
+        assert result["admin_level"] == 4
 
     @patch("generator.boundaries.requests.post")
     def test_network_error_returns_none(self, mock_post):
