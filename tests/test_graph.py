@@ -5,6 +5,7 @@ from generator.graph import (
     collect_path_edges,
     filter_roads_to_edges,
     find_nearest_node,
+    k_shortest_paths,
     shortest_path,
 )
 
@@ -100,6 +101,38 @@ class TestShortestPath:
         G = build_road_graph(roads)
         path = shortest_path(G, (0.0, 0.0), (10.0, 10.0))
         assert path is None
+
+
+class TestKShortestPaths:
+    def test_returns_single_path_on_simple(self):
+        G = build_road_graph(SIMPLE)
+        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
+        assert len(paths) == 1
+        assert paths[0] == [(0.0, 0.0), (1.0, 0.0)]
+
+    def test_triangle_returns_two_paths(self):
+        G = build_road_graph(TRIANGLE)
+        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
+        # Direct A-B and indirect A-C-B
+        assert len(paths) == 2
+
+    def test_no_path_returns_empty(self):
+        roads = _make_roads(
+            [[0.0, 0.0], [1.0, 0.0]],
+            [[10.0, 10.0], [11.0, 10.0]],
+        )
+        G = build_road_graph(roads)
+        paths = k_shortest_paths(G, (0.0, 0.0), (10.0, 10.0), k=3)
+        assert paths == []
+
+    def test_paths_sorted_by_distance(self):
+        G = build_road_graph(TRIANGLE)
+        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
+        dists = []
+        for p in paths:
+            d = sum(G[p[i]][p[i + 1]]["distance"] for i in range(len(p) - 1))
+            dists.append(d)
+        assert dists == sorted(dists)
 
 
 class TestCollectPathEdges:

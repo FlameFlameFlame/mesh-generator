@@ -30,7 +30,7 @@ store = SiteStore()
 _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
-_excluded_road_indices = set()  # indices of excluded road features
+_excluded_way_ids = set()  # osm_way_id values of excluded roads
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
@@ -212,7 +212,7 @@ let elevationMeta = null;
 let elevationFetched = false;
 let hasElevation = false;
 let excludeMode = false;
-let excludedRoadIndices = new Set();
+let excludedWayIds = new Set();  // osm_way_id values of excluded roads
 let cachedRoadLayers = null;  // store rendered road layers for re-styling
 
 // Viridis-like 5-stop color scale
@@ -418,6 +418,7 @@ function doClear() {
       coverageFetched = false;
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
+      excludedWayIds.clear();
       // Reset elevation
       elevationOverlay = null;
       elevationMeta = null;
@@ -495,11 +496,11 @@ function toggleExcludeMode() {
     btn.classList.remove('active');
     btn.textContent = 'Exclude Roads';
     hint.textContent = '';
-    // Sync excluded indices to backend
+    // Sync excluded way IDs to backend
     fetch('/api/roads/exclude', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({indices: Array.from(excludedRoadIndices)})
+      body: JSON.stringify({way_ids: Array.from(excludedWayIds)})
     });
   }
 }
@@ -569,16 +570,30 @@ function renderRoads() {
   if (!_cachedRoadsGeojson) return;
   cachedRoadLayers = [];
   (_cachedRoadsGeojson.features || []).forEach(function(feat, idx) {
-    let excluded = excludedRoadIndices.has(idx);
-    let style = excluded
+    let wayId = (feat.properties || {}).osm_way_id;
+    let excluded = wayId != null && excludedWayIds.has(wayId);
+    let baseStyle = excluded
       ? { color: '#cc0000', weight: 3, opacity: 0.6, dashArray: '6 4' }
       : { color: '#2266aa', weight: 2, opacity: 0.7 };
-    let lyr = L.geoJSON(feat, { style: style }).addTo(layerGroups.roads);
+    let lyr = L.geoJSON(feat, { style: baseStyle }).addTo(layerGroups.roads);
+    // Invisible wider overlay for easier clicking in exclude mode
+    if (excludeMode) {
+      L.geoJSON(feat, {
+        style: { color: 'transparent', weight: 20, opacity: 0 }
+      }).addTo(layerGroups.roads).on('click', function(e) {
+        L.DomEvent.stopPropagation(e);
+        if (wayId == null) return;
+        if (excludedWayIds.has(wayId)) excludedWayIds.delete(wayId);
+        else excludedWayIds.add(wayId);
+        renderRoads();
+      });
+    }
     lyr.on('click', function(e) {
       if (!excludeMode) return;
       L.DomEvent.stopPropagation(e);
-      if (excludedRoadIndices.has(idx)) excludedRoadIndices.delete(idx);
-      else excludedRoadIndices.add(idx);
+      if (wayId == null) return;
+      if (excludedWayIds.has(wayId)) excludedWayIds.delete(wayId);
+      else excludedWayIds.add(wayId);
       renderRoads();
     });
     cachedRoadLayers.push(lyr);
@@ -914,11 +929,11 @@ def detect_city_boundary(idx):
 def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _loaded_layers, _loaded_report
-    global _loaded_coverage, _elevation_path, _excluded_road_indices
+    global _loaded_coverage, _elevation_path, _excluded_way_ids
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
-    _excluded_road_indices = set()
+    _excluded_way_ids = set()
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
@@ -1063,7 +1078,7 @@ def _do_filter_p2p():
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
         build_road_graph, find_nearest_node,
-        shortest_path, collect_path_edges,
+        k_shortest_paths, collect_path_edges,
         filter_roads_to_edges,
     )
     from generator.boundaries import sample_border_points
@@ -1072,14 +1087,13 @@ def _do_filter_p2p():
         _roads_geojson.get("features", []))
 
     # Remove excluded roads before building graph
-    if _excluded_road_indices:
+    if _excluded_way_ids:
         source = {
             "type": "FeatureCollection",
             "features": [
-                f for i, f
-                in enumerate(
-                    _roads_geojson.get("features", []))
-                if i not in _excluded_road_indices
+                f for f in _roads_geojson.get("features", [])
+                if f.get("properties", {}).get("osm_way_id")
+                not in _excluded_way_ids
             ],
         }
     else:
@@ -1142,6 +1156,8 @@ def _do_filter_p2p():
         n = find_nearest_node(graph, site.lat, site.lon)
         return [n] if n is not None else []
 
+    K_PATHS = 3  # number of alternative routes per site pair
+
     used_edges = set()
     for s1, s2 in pairs:
         nodes1 = _site_nodes(s1)
@@ -1151,22 +1167,25 @@ def _do_filter_p2p():
                 "No graph nodes for %s or %s",
                 s1.name, s2.name)
             continue
-        best_path = None
-        best_len = float("inf")
+        # Collect candidate paths from all node-pair combos
+        candidates = []  # (total_distance, path)
         for n1 in nodes1:
             for n2 in nodes2:
-                p = shortest_path(graph, n1, n2)
-                if p:
+                for p in k_shortest_paths(
+                    graph, n1, n2, k=K_PATHS
+                ):
                     d = sum(
                         graph[p[i]][p[i + 1]]["distance"]
                         for i in range(len(p) - 1)
                     )
-                    if d < best_len:
-                        best_len = d
-                        best_path = p
-        if best_path:
-            used_edges.update(
-                collect_path_edges(best_path))
+                    candidates.append((d, p))
+        # Keep the K_PATHS shortest overall
+        candidates.sort(key=lambda x: x[0])
+        kept = candidates[:K_PATHS]
+        if kept:
+            for _, p in kept:
+                used_edges.update(
+                    collect_path_edges(p))
         else:
             logger.warning(
                 "No path between %s and %s",
@@ -1175,7 +1194,7 @@ def _do_filter_p2p():
     filtered = filter_roads_to_edges(source, used_edges)
     _roads_geojson = filtered
     _loaded_layers["roads"] = filtered
-    _excluded_road_indices.clear()
+    _excluded_way_ids.clear()
 
     return jsonify({
         "road_count": len(
@@ -1187,12 +1206,12 @@ def _do_filter_p2p():
 
 @app.route("/api/roads/exclude", methods=["POST"])
 def set_excluded_roads():
-    """Store excluded road feature indices."""
-    global _excluded_road_indices
+    """Store excluded road OSM way IDs."""
+    global _excluded_way_ids
     data = request.json
-    _excluded_road_indices = set(data.get("indices", []))
-    logger.info("Updated excluded roads: %d indices", len(_excluded_road_indices))
-    return jsonify({"ok": True, "count": len(_excluded_road_indices)})
+    _excluded_way_ids = set(data.get("way_ids", []))
+    logger.info("Updated excluded roads: %d way IDs", len(_excluded_way_ids))
+    return jsonify({"ok": True, "count": len(_excluded_way_ids)})
 
 
 @app.route("/api/export", methods=["POST"])
@@ -1221,13 +1240,13 @@ def export():
     # Export roads if available (filter out excluded)
     roads_export_path = ""
     if _roads_geojson:
-        if _excluded_road_indices:
+        if _excluded_way_ids:
             filtered = {
                 "type": "FeatureCollection",
                 "features": [
-                    f for i, f
-                    in enumerate(_roads_geojson.get("features", []))
-                    if i not in _excluded_road_indices
+                    f for f in _roads_geojson.get("features", [])
+                    if f.get("properties", {}).get("osm_way_id")
+                    not in _excluded_way_ids
                 ],
             }
         else:
