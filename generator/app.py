@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import threading
 import webbrowser
 
 import yaml
@@ -34,6 +35,8 @@ _excluded_way_ids = set()  # osm_way_id values of excluded roads
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
+_p2p_progress = {"current": 0, "total": 0, "phase": "", "done": False,
+                 "result": None, "error": None}
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -104,6 +107,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
+  <span id="p2p-progress" class="progress-wrap"><progress id="p2p-bar"></progress><span id="p2p-label">Computing...</span></span>
   <button id="btn-exclude" onclick="toggleExcludeMode()">Exclude Roads</button>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
@@ -419,6 +423,7 @@ function doClear() {
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       excludedWayIds.clear();
+      document.getElementById('p2p-progress').style.display = 'none';
       // Reset elevation
       elevationOverlay = null;
       elevationMeta = null;
@@ -464,18 +469,46 @@ function doFetchRoads() {
 // --- Filter roads to point-to-point shortest paths ---
 
 function doFilterP2P() {
-  setStatus('Computing shortest paths...');
   let btn = document.getElementById('btn-p2p');
+  let prog = document.getElementById('p2p-progress');
+  let bar = document.getElementById('p2p-bar');
+  let label = document.getElementById('p2p-label');
   btn.disabled = true;
+  prog.style.display = 'inline-flex';
+  bar.removeAttribute('value');
+  label.textContent = 'Starting...';
   fetch('/api/roads/filter-p2p', {method: 'POST'})
     .then(safeJson).then(data => {
-      btn.disabled = false;
-      if (data.error) { alert(data.error); setStatus(''); return; }
-      renderLayers(data.layers || {});
-      setStatus('Filtered to ' + (data.road_count || 0) + ' road segments (from ' + (data.original_count || '?') + ')');
+      if (data.error) { btn.disabled = false; prog.style.display = 'none'; alert(data.error); return; }
+      // Poll for progress
+      let pollId = setInterval(function() {
+        fetch('/api/roads/filter-p2p/progress').then(r => r.json()).then(p => {
+          if (p.total > 0) {
+            bar.max = p.total;
+            bar.value = p.current;
+            label.textContent = p.current + ' / ' + p.total + ' pairs';
+          } else {
+            label.textContent = p.phase || 'Working...';
+          }
+          if (p.done) {
+            clearInterval(pollId);
+            btn.disabled = false;
+            if (p.error) {
+              prog.style.display = 'none';
+              alert(p.error);
+              return;
+            }
+            let res = p.result || {};
+            bar.value = bar.max;
+            label.textContent = (res.road_count || 0) + ' roads (from ' + (res.original_count || '?') + ')';
+            renderLayers(res.layers || {});
+            setStatus('Filtered to ' + (res.road_count || 0) + ' road segments');
+          }
+        });
+      }, 300);
     }).catch(err => {
       btn.disabled = false;
-      setStatus('');
+      prog.style.display = 'none';
       alert('Error: ' + err);
     });
 }
@@ -1056,24 +1089,32 @@ def generate():
 
 @app.route("/api/roads/filter-p2p", methods=["POST"])
 def filter_roads_p2p():
-    """Filter roads to only shortest paths between site pairs."""
-    global _roads_geojson, _loaded_layers
+    """Start P2P filtering in background thread."""
+    global _p2p_progress
 
     if not _roads_geojson:
         return jsonify({"error": "No roads loaded. Download roads first."}), 400
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."}), 400
+    if _p2p_progress.get("phase") and not _p2p_progress.get("done"):
+        return jsonify({"error": "P2P filtering already in progress."}), 409
 
-    try:
-        return _do_filter_p2p()
-    except Exception as e:
-        logger.exception("P2P filtering failed")
-        return jsonify({"error": f"P2P filtering failed: {e}"}), 500
+    _p2p_progress = {"current": 0, "total": 0, "phase": "starting",
+                     "done": False, "result": None, "error": None}
+    thread = threading.Thread(target=_do_filter_p2p, daemon=True)
+    thread.start()
+    return jsonify({"started": True})
+
+
+@app.route("/api/roads/filter-p2p/progress", methods=["GET"])
+def filter_roads_p2p_progress():
+    """Poll P2P filtering progress."""
+    return jsonify(_p2p_progress)
 
 
 def _do_filter_p2p():
-    """Core P2P filtering logic — extracted for clean error handling."""
-    global _roads_geojson, _loaded_layers
+    """Core P2P filtering logic — runs in background thread."""
+    global _roads_geojson, _loaded_layers, _p2p_progress
 
     import time
     from math import atan2, cos, radians, sin, sqrt
@@ -1084,132 +1125,149 @@ def _do_filter_p2p():
     )
     from generator.boundaries import sample_border_points
 
-    original_count = len(
-        _roads_geojson.get("features", []))
+    try:
+        original_count = len(
+            _roads_geojson.get("features", []))
 
-    # Remove excluded roads before building graph
-    if _excluded_way_ids:
-        source = {
-            "type": "FeatureCollection",
-            "features": [
-                f for f in _roads_geojson.get("features", [])
-                if f.get("properties", {}).get("osm_way_id")
-                not in _excluded_way_ids
-            ],
-        }
-    else:
-        source = _roads_geojson
+        _p2p_progress["phase"] = "building graph"
 
-    t0 = time.monotonic()
-    graph = build_road_graph(source)
-    node_index = build_node_index(graph)
-    logger.info("Graph built in %.1fs (%d nodes, %d edges)",
-                time.monotonic() - t0,
-                graph.number_of_nodes(), graph.number_of_edges())
-
-    if graph.number_of_nodes() == 0:
-        return jsonify(
-            {"error": "Road graph is empty."}), 400
-
-    # Build site pairs from priority hierarchy
-    sites = list(store)
-    by_priority = {}
-    for s in sites:
-        by_priority.setdefault(s.priority, []).append(s)
-
-    def _dist(s1, s2):
-        R = 6_371_000
-        la1, la2 = radians(s1.lat), radians(s2.lat)
-        dlat = la2 - la1
-        dlon = radians(s2.lon - s1.lon)
-        a = (sin(dlat / 2) ** 2
-             + cos(la1) * cos(la2) * sin(dlon / 2) ** 2)
-        return R * 2 * atan2(sqrt(a), sqrt(1 - a))
-
-    pairs = []
-    # P1: full mesh
-    p1 = by_priority.get(1, [])
-    for i, s1 in enumerate(p1):
-        for s2 in p1[i + 1:]:
-            pairs.append((s1, s2))
-    # P2+: each to nearest higher-priority
-    for pri in sorted(by_priority):
-        if pri == 1:
-            continue
-        higher = [
-            s for s in sites if s.priority < pri]
-        if not higher:
-            continue
-        for s in by_priority[pri]:
-            nearest = min(
-                higher, key=lambda h: _dist(s, h))
-            pairs.append((s, nearest))
-
-    logger.info(
-        "P2P filtering: %d site pairs", len(pairs))
-
-    # Find shortest paths and collect edges
-    def _site_nodes(site):
-        if site.boundary_geojson:
-            pts = sample_border_points(
-                site.boundary_geojson, n=8)
-            nodes = []
-            for lat, lon in pts:
-                n = find_nearest_node(
-                    graph, lat, lon, _index=node_index)
-                if n is not None:
-                    nodes.append(n)
-            return nodes if nodes else []
-        n = find_nearest_node(
-            graph, site.lat, site.lon, _index=node_index)
-        return [n] if n is not None else []
-
-    K_PATHS = 3  # number of alternative routes per site pair
-
-    t1 = time.monotonic()
-    used_edges = set()
-    for s1, s2 in pairs:
-        nodes1 = _site_nodes(s1)
-        nodes2 = _site_nodes(s2)
-        if not nodes1 or not nodes2:
-            logger.warning(
-                "No graph nodes for %s or %s",
-                s1.name, s2.name)
-            continue
-        # Single Dijkstra per node-pair, keep K_PATHS best overall
-        candidates = []  # (total_distance, path)
-        for n1 in nodes1:
-            for n2 in nodes2:
-                p = shortest_path(graph, n1, n2)
-                if p is not None:
-                    d = sum(
-                        graph[p[i]][p[i + 1]]["distance"]
-                        for i in range(len(p) - 1)
-                    )
-                    candidates.append((d, p))
-        candidates.sort(key=lambda x: x[0])
-        kept = candidates[:K_PATHS]
-        if kept:
-            for _, p in kept:
-                used_edges.update(
-                    collect_path_edges(p))
+        # Remove excluded roads before building graph
+        if _excluded_way_ids:
+            source = {
+                "type": "FeatureCollection",
+                "features": [
+                    f for f in _roads_geojson.get("features", [])
+                    if f.get("properties", {}).get("osm_way_id")
+                    not in _excluded_way_ids
+                ],
+            }
         else:
-            logger.warning(
-                "No path between %s and %s",
-                s1.name, s2.name)
-    logger.info("Path finding done in %.1fs", time.monotonic() - t1)
+            source = _roads_geojson
 
-    filtered = filter_roads_to_edges(source, used_edges)
-    _roads_geojson = filtered
-    _loaded_layers["roads"] = filtered
-    _excluded_way_ids.clear()
+        t0 = time.monotonic()
+        graph = build_road_graph(source)
+        node_index = build_node_index(graph)
+        logger.info("Graph built in %.1fs (%d nodes, %d edges)",
+                    time.monotonic() - t0,
+                    graph.number_of_nodes(), graph.number_of_edges())
 
-    return jsonify({
-        "road_count": len(
-            filtered.get("features", [])),
-        "original_count": original_count,
-        "layers": {"roads": filtered},
-    })
+        if graph.number_of_nodes() == 0:
+            _p2p_progress.update(done=True,
+                                 error="Road graph is empty.")
+            return
+
+        # Build site pairs from priority hierarchy
+        sites = list(store)
+        by_priority = {}
+        for s in sites:
+            by_priority.setdefault(s.priority, []).append(s)
+
+        def _dist(s1, s2):
+            R = 6_371_000
+            la1, la2 = radians(s1.lat), radians(s2.lat)
+            dlat = la2 - la1
+            dlon = radians(s2.lon - s1.lon)
+            a = (sin(dlat / 2) ** 2
+                 + cos(la1) * cos(la2) * sin(dlon / 2) ** 2)
+            return R * 2 * atan2(sqrt(a), sqrt(1 - a))
+
+        pairs = []
+        # P1: full mesh
+        p1 = by_priority.get(1, [])
+        for i, s1 in enumerate(p1):
+            for s2 in p1[i + 1:]:
+                pairs.append((s1, s2))
+        # P2+: each to nearest higher-priority
+        for pri in sorted(by_priority):
+            if pri == 1:
+                continue
+            higher = [
+                s for s in sites if s.priority < pri]
+            if not higher:
+                continue
+            for s in by_priority[pri]:
+                nearest = min(
+                    higher, key=lambda h: _dist(s, h))
+                pairs.append((s, nearest))
+
+        logger.info(
+            "P2P filtering: %d site pairs", len(pairs))
+
+        _p2p_progress.update(phase="finding paths",
+                             current=0, total=len(pairs))
+
+        # Find shortest paths and collect edges
+        def _site_nodes(site):
+            if site.boundary_geojson:
+                pts = sample_border_points(
+                    site.boundary_geojson, n=8)
+                nodes = []
+                for lat, lon in pts:
+                    n = find_nearest_node(
+                        graph, lat, lon, _index=node_index)
+                    if n is not None:
+                        nodes.append(n)
+                return nodes if nodes else []
+            n = find_nearest_node(
+                graph, site.lat, site.lon, _index=node_index)
+            return [n] if n is not None else []
+
+        K_PATHS = 3  # number of alternative routes per site pair
+
+        t1 = time.monotonic()
+        used_edges = set()
+        for pair_idx, (s1, s2) in enumerate(pairs):
+            _p2p_progress["current"] = pair_idx + 1
+            nodes1 = _site_nodes(s1)
+            nodes2 = _site_nodes(s2)
+            if not nodes1 or not nodes2:
+                logger.warning(
+                    "No graph nodes for %s or %s",
+                    s1.name, s2.name)
+                continue
+            # Single Dijkstra per node-pair, keep K_PATHS best overall
+            candidates = []  # (total_distance, path)
+            for n1 in nodes1:
+                for n2 in nodes2:
+                    p = shortest_path(graph, n1, n2)
+                    if p is not None:
+                        d = sum(
+                            graph[p[i]][p[i + 1]]["distance"]
+                            for i in range(len(p) - 1)
+                        )
+                        candidates.append((d, p))
+            candidates.sort(key=lambda x: x[0])
+            kept = candidates[:K_PATHS]
+            if kept:
+                for _, p in kept:
+                    used_edges.update(
+                        collect_path_edges(p))
+            else:
+                logger.warning(
+                    "No path between %s and %s",
+                    s1.name, s2.name)
+        logger.info("Path finding done in %.1fs",
+                    time.monotonic() - t1)
+
+        filtered = filter_roads_to_edges(source, used_edges)
+        _roads_geojson = filtered
+        _loaded_layers["roads"] = filtered
+        _excluded_way_ids.clear()
+
+        _p2p_progress.update(
+            done=True,
+            phase="done",
+            result={
+                "road_count": len(
+                    filtered.get("features", [])),
+                "original_count": original_count,
+                "layers": {"roads": filtered},
+            },
+        )
+    except Exception as e:
+        logger.exception("P2P filtering failed")
+        _p2p_progress.update(done=True,
+                             error=f"P2P filtering failed: {e}")
 
 
 @app.route("/api/roads/exclude", methods=["POST"])
