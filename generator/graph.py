@@ -20,32 +20,56 @@ def _haversine(lon1: float, lat1: float, lon2: float, lat2: float) -> float:
     return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
 
-def build_road_graph(roads_geojson: dict) -> nx.Graph:
+# Cost multipliers by road class — lower = preferred for routing.
+# Dijkstra will strongly prefer major roads, using minor ones only
+# when no major-road alternative exists.
+HIGHWAY_COST_MULTIPLIER = {
+    "motorway": 1.0,
+    "trunk": 1.0,
+    "primary": 1.2,
+    "secondary": 3.0,
+    "tertiary": 5.0,
+}
+_DEFAULT_COST_MULTIPLIER = 8.0
+
+
+def build_road_graph(
+    roads_geojson: dict,
+    prefer_major: bool = False,
+) -> nx.Graph:
     """Build a NetworkX graph from GeoJSON road features.
 
     Nodes are (lon, lat) tuples.  Edges connect consecutive coordinates
     within each road, weighted by haversine distance.  Each edge stores
     ``feature_idx`` — the index of the originating road feature.
+
+    If *prefer_major* is True, edge weights are scaled by a road-class
+    multiplier so that Dijkstra strongly favours highways/trunks over
+    secondary/tertiary roads.
     """
     G = nx.Graph()
     features = roads_geojson.get("features", [])
 
     for idx, feat in enumerate(features):
+        hw = feat.get("properties", {}).get("highway", "")
+        multiplier = (HIGHWAY_COST_MULTIPLIER.get(hw, _DEFAULT_COST_MULTIPLIER)
+                      if prefer_major else 1.0)
         coords = feat["geometry"]["coordinates"]
         for i in range(len(coords) - 1):
             n1 = tuple(coords[i])
             n2 = tuple(coords[i + 1])
             dist = _haversine(n1[0], n1[1], n2[0], n2[1])
+            cost = dist * multiplier
             # Keep shorter edge if duplicate (two roads sharing a segment)
             if G.has_edge(n1, n2):
-                if dist < G[n1][n2]["distance"]:
-                    G[n1][n2]["distance"] = dist
+                if cost < G[n1][n2]["distance"]:
+                    G[n1][n2]["distance"] = cost
                     G[n1][n2]["feature_idx"] = idx
             else:
-                G.add_edge(n1, n2, distance=dist, feature_idx=idx)
+                G.add_edge(n1, n2, distance=cost, feature_idx=idx)
 
-    logger.info("Road graph: %d nodes, %d edges", G.number_of_nodes(),
-                G.number_of_edges())
+    logger.info("Road graph: %d nodes, %d edges (prefer_major=%s)",
+                G.number_of_nodes(), G.number_of_edges(), prefer_major)
     return G
 
 
@@ -123,6 +147,77 @@ def k_shortest_paths(
         return paths
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return []
+
+
+def k_penalty_paths(
+    graph: nx.Graph, node1, node2, k: int = 3,
+    penalty: float = 100.0,
+) -> list[list]:
+    """Return up to *k* diverse paths using feature-level penalty.
+
+    After finding each shortest path, multiplies the weight of ALL edges
+    belonging to every OSM feature (road way) used by that path by
+    *penalty*.  This forces subsequent Dijkstra calls onto different
+    roads where alternatives exist, while still allowing reuse of shared
+    segments when no alternative corridor is available.
+
+    Paths whose feature sets overlap more than 80% with an already-found
+    path are skipped (deduplication).
+
+    Restores original weights before returning.
+    """
+    paths = []
+    path_features: list[set[int]] = []
+    saved = {}  # (u, v) -> original weight
+
+    # Build feature_idx -> list of edges for fast lookup
+    feat_edges: dict[int, list[tuple]] = {}
+    for u, v, data in graph.edges(data=True):
+        fidx = data.get("feature_idx")
+        if fidx is not None:
+            feat_edges.setdefault(fidx, []).append((u, v))
+
+    max_attempts = k * 3  # try more times to find diverse paths
+    try:
+        for _ in range(max_attempts):
+            if len(paths) >= k:
+                break
+            try:
+                p = nx.dijkstra_path(graph, node1, node2,
+                                     weight="distance")
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
+                break
+            # Collect features used by this path
+            used_features = set()
+            for i in range(len(p) - 1):
+                fidx = graph[p[i]][p[i + 1]].get("feature_idx")
+                if fidx is not None:
+                    used_features.add(fidx)
+            # Skip if >80% overlap with any existing path
+            is_dup = False
+            for prev_feats in path_features:
+                overlap = len(used_features & prev_feats)
+                bigger = max(len(used_features), len(prev_feats))
+                if bigger > 0 and overlap / bigger > 0.8:
+                    is_dup = True
+                    break
+            if not is_dup:
+                paths.append(p)
+                path_features.append(used_features)
+            # Penalise ALL edges of each used feature regardless
+            for fidx in used_features:
+                for u, v in feat_edges.get(fidx, []):
+                    if (u, v) not in saved:
+                        saved[(u, v)] = graph[u][v]["distance"]
+                    graph[u][v]["distance"] *= penalty
+    finally:
+        for (u, v), w in saved.items():
+            graph[u][v]["distance"] = w
+
+    logger.info("k_penalty_paths: %d diverse paths found "
+                "(from %d attempts)", len(paths), _ + 1
+                if paths else 0)
+    return paths
 
 
 def collect_path_edges(path: list) -> set[tuple]:

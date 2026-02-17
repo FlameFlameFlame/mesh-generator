@@ -1153,10 +1153,9 @@ def _do_filter_p2p():
     from math import atan2, cos, radians, sin, sqrt
     from generator.graph import (
         build_road_graph, build_node_index, find_nearest_node,
-        shortest_path, collect_path_feature_indices,
+        k_penalty_paths, collect_path_feature_indices,
         filter_roads_by_feature_indices,
     )
-    from generator.boundaries import sample_border_points
 
     try:
         original_count = len(
@@ -1178,7 +1177,10 @@ def _do_filter_p2p():
             source = _roads_geojson
 
         t0 = time.monotonic()
-        graph = build_road_graph(source)
+        # Build graph with major-road preference — Dijkstra will
+        # favour highways/trunks, so K shortest paths diverge along
+        # different major corridors instead of minor street variants
+        graph = build_road_graph(source, prefer_major=True)
         node_index = build_node_index(graph)
         logger.info("Graph built in %.1fs (%d nodes, %d edges)",
                     time.monotonic() - t0,
@@ -1237,52 +1239,34 @@ def _do_filter_p2p():
         _p2p_progress.update(phase="finding paths",
                              current=0, total=len(pairs))
 
-        # Find shortest paths and collect edges
-        def _site_nodes(site):
-            if site.boundary_geojson:
-                pts = sample_border_points(
-                    site.boundary_geojson, n=8)
-                nodes = []
-                for lat, lon in pts:
-                    n = find_nearest_node(
-                        graph, lat, lon, _index=node_index)
-                    if n is not None:
-                        nodes.append(n)
-                return nodes if nodes else []
+        # Find K shortest paths on the major-roads graph
+        def _site_node(site):
+            """Single nearest graph node for a site."""
             n = find_nearest_node(
                 graph, site.lat, site.lon, _index=node_index)
-            return [n] if n is not None else []
+            return n
 
-        K_PATHS = 1  # single shortest path per site pair
+        K_PATHS = 3  # number of distinct routes per site pair
 
         t1 = time.monotonic()
         used_feature_indices = set()
         for pair_idx, (s1, s2) in enumerate(pairs):
             _p2p_progress["current"] = pair_idx + 1
-            nodes1 = _site_nodes(s1)
-            nodes2 = _site_nodes(s2)
-            if not nodes1 or not nodes2:
+            n1 = _site_node(s1)
+            n2 = _site_node(s2)
+            if n1 is None or n2 is None:
                 logger.warning(
                     "No graph nodes for %s or %s",
                     s1.name, s2.name)
                 continue
-            # Single Dijkstra per node-pair, keep K_PATHS best overall
-            candidates = []  # (total_distance, path)
-            for n1 in nodes1:
-                for n2 in nodes2:
-                    p = shortest_path(graph, n1, n2)
-                    if p is not None:
-                        d = sum(
-                            graph[p[i]][p[i + 1]]["distance"]
-                            for i in range(len(p) - 1)
-                        )
-                        candidates.append((d, p))
-            candidates.sort(key=lambda x: x[0])
-            kept = candidates[:K_PATHS]
-            if kept:
-                for _, p in kept:
+            paths = k_penalty_paths(graph, n1, n2, k=K_PATHS)
+            if paths:
+                for p in paths:
                     used_feature_indices.update(
                         collect_path_feature_indices(graph, p))
+                logger.info(
+                    "%s -> %s: %d paths found",
+                    s1.name, s2.name, len(paths))
             else:
                 logger.warning(
                     "No path between %s and %s",
