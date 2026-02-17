@@ -32,6 +32,7 @@ _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
 _excluded_way_ids = set()  # osm_way_id values of excluded roads
+_route_groups = {}  # osm_way_id -> route_id (set by P2P filtering)
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
@@ -220,6 +221,9 @@ let hasElevation = false;
 let excludeMode = false;
 let excludedWayIds = new Set();  // osm_way_id values of excluded roads
 let cachedRoadLayers = null;  // store rendered road layers for re-styling
+// P2P route groups: wayId -> routeId, routeId -> Set<wayId>
+let routeGroups = {};       // osm_way_id -> route_id
+let routeMembers = {};      // route_id -> Set<osm_way_id>
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -425,6 +429,7 @@ function doClear() {
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       excludedWayIds.clear();
+      routeGroups = {}; routeMembers = {};
       document.getElementById('chk-roadhex').checked = false;
       document.getElementById('p2p-progress').style.display = 'none';
       // Reset elevation
@@ -504,6 +509,13 @@ function doFilterP2P() {
             let res = p.result || {};
             bar.value = bar.max;
             label.textContent = (res.road_count || 0) + ' roads (from ' + (res.original_count || '?') + ')';
+            // Build route group lookup for whole-route exclusion
+            routeGroups = res.route_groups || {};
+            routeMembers = {};
+            for (let [wid, rid] of Object.entries(routeGroups)) {
+              if (!routeMembers[rid]) routeMembers[rid] = new Set();
+              routeMembers[rid].add(Number(wid));
+            }
             renderLayers(res.layers || {});
             setStatus('Filtered to ' + (res.road_count || 0) + ' road segments');
           }
@@ -602,6 +614,19 @@ function doLoadProject() {
   });
 }
 
+// Toggle all way IDs in the same P2P route as wayId
+function toggleRouteExclusion(wayId) {
+  if (wayId == null) return;
+  let rid = routeGroups[wayId];
+  let members = (rid != null && routeMembers[rid]) ? routeMembers[rid] : new Set([wayId]);
+  let excluding = !excludedWayIds.has(wayId);
+  members.forEach(function(wid) {
+    if (excluding) excludedWayIds.add(wid);
+    else excludedWayIds.delete(wid);
+  });
+  renderRoads();
+}
+
 function renderRoads() {
   layerGroups.roads.clearLayers();
   cachedRoadLayers = null;
@@ -620,19 +645,13 @@ function renderRoads() {
         style: { color: 'transparent', weight: 20, opacity: 0 }
       }).addTo(layerGroups.roads).on('click', function(e) {
         L.DomEvent.stopPropagation(e);
-        if (wayId == null) return;
-        if (excludedWayIds.has(wayId)) excludedWayIds.delete(wayId);
-        else excludedWayIds.add(wayId);
-        renderRoads();
+        toggleRouteExclusion(wayId);
       });
     }
     lyr.on('click', function(e) {
       if (!excludeMode) return;
       L.DomEvent.stopPropagation(e);
-      if (wayId == null) return;
-      if (excludedWayIds.has(wayId)) excludedWayIds.delete(wayId);
-      else excludedWayIds.add(wayId);
-      renderRoads();
+      toggleRouteExclusion(wayId);
     });
     cachedRoadLayers.push(lyr);
   });
@@ -985,11 +1004,12 @@ def detect_city_boundary(idx):
 def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _loaded_layers, _loaded_report
-    global _loaded_coverage, _elevation_path, _excluded_way_ids
+    global _loaded_coverage, _elevation_path, _excluded_way_ids, _route_groups
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
     _excluded_way_ids = set()
+    _route_groups = {}
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
@@ -1147,7 +1167,7 @@ def filter_roads_p2p_progress():
 
 def _do_filter_p2p():
     """Core P2P filtering logic — runs in background thread."""
-    global _roads_geojson, _loaded_layers, _p2p_progress
+    global _roads_geojson, _loaded_layers, _p2p_progress, _route_groups
 
     import time
     from math import atan2, cos, radians, sin, sqrt
@@ -1250,6 +1270,9 @@ def _do_filter_p2p():
 
         t1 = time.monotonic()
         used_feature_indices = set()
+        # Map feature_idx -> route_id so exclude can toggle whole routes
+        feature_to_route: dict[int, int] = {}
+        route_id = 0
         for pair_idx, (s1, s2) in enumerate(pairs):
             _p2p_progress["current"] = pair_idx + 1
             n1 = _site_node(s1)
@@ -1262,8 +1285,11 @@ def _do_filter_p2p():
             paths = k_penalty_paths(graph, n1, n2, k=K_PATHS)
             if paths:
                 for p in paths:
-                    used_feature_indices.update(
-                        collect_path_feature_indices(graph, p))
+                    fi = collect_path_feature_indices(graph, p)
+                    used_feature_indices.update(fi)
+                    for fidx in fi:
+                        feature_to_route.setdefault(fidx, route_id)
+                    route_id += 1
                 logger.info(
                     "%s -> %s: %d paths found",
                     s1.name, s2.name, len(paths))
@@ -1280,6 +1306,20 @@ def _do_filter_p2p():
         _loaded_layers["roads"] = filtered
         _excluded_way_ids.clear()
 
+        # Build route_groups: osm_way_id -> route_id
+        # source features are indexed; filtered keeps a subset
+        _route_groups = {}
+        source_features = source.get("features", [])
+        for fidx, rid in feature_to_route.items():
+            if fidx < len(source_features):
+                wid = source_features[fidx].get(
+                    "properties", {}).get("osm_way_id")
+                if wid is not None:
+                    _route_groups[wid] = rid
+        logger.info("Route groups: %d way_ids across %d routes",
+                    len(_route_groups),
+                    len(set(_route_groups.values())))
+
         _p2p_progress.update(
             done=True,
             phase="done",
@@ -1288,6 +1328,7 @@ def _do_filter_p2p():
                     filtered.get("features", [])),
                 "original_count": original_count,
                 "layers": {"roads": filtered},
+                "route_groups": _route_groups,
             },
         )
     except Exception as e:
