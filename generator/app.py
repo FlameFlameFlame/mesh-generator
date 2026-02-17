@@ -528,6 +528,7 @@ function toggleExcludeMode() {
     btn.classList.add('active');
     btn.textContent = 'Done Excluding';
     hint.textContent = 'Click on a road segment to exclude/include it';
+    renderRoads();  // re-render with wide click overlays
   } else {
     btn.classList.remove('active');
     btn.textContent = 'Exclude Roads';
@@ -538,6 +539,7 @@ function toggleExcludeMode() {
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({way_ids: Array.from(excludedWayIds)})
     });
+    renderRoads();  // re-render without overlays
   }
 }
 
@@ -1203,11 +1205,19 @@ def _do_filter_p2p():
             return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
         pairs = []
-        # P1: full mesh
+        # P1: MST (minimum spanning tree) — connect all P1
+        # sites with fewest edges instead of full all-pairs mesh
         p1 = by_priority.get(1, [])
-        for i, s1 in enumerate(p1):
-            for s2 in p1[i + 1:]:
-                pairs.append((s1, s2))
+        if len(p1) >= 2:
+            import networkx as nx
+            g = nx.Graph()
+            for i, s1 in enumerate(p1):
+                for j in range(i + 1, len(p1)):
+                    s2 = p1[j]
+                    g.add_edge(i, j, weight=_dist(s1, s2))
+            mst = nx.minimum_spanning_tree(g)
+            for i, j in mst.edges():
+                pairs.append((p1[i], p1[j]))
         # P2+: each to nearest higher-priority
         for pri in sorted(by_priority):
             if pri == 1:
@@ -1243,7 +1253,7 @@ def _do_filter_p2p():
                 graph, site.lat, site.lon, _index=node_index)
             return [n] if n is not None else []
 
-        K_PATHS = 3  # number of alternative routes per site pair
+        K_PATHS = 1  # single shortest path per site pair
 
         t1 = time.monotonic()
         used_feature_indices = set()
