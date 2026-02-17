@@ -114,10 +114,10 @@ def export_config_yaml(
     """Write config.yaml for mesh-engine."""
     config = {
         "parameters": {
-            "h3_resolution": 8,
+            "h3_resolution": 11,
             "frequency_hz": 868000000.0,
-            "mast_height_m": 28.0,
-            "max_visibility_m": 70000.0,
+            "mast_height_m": 2.0,
+            "max_visibility_m": 20000.0,
             "tower_separation_m": 5000.0,
             "hop_limit": 7,
             "max_nodes_per_road": 10,

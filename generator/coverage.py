@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def roads_to_h3_cells(
-    roads_geojson: dict, resolution: int = 8,
+    roads_geojson: dict, resolution: int = 11,
 ) -> set[str]:
     """Find all H3 cells that intersect roads in a GeoJSON FeatureCollection.
 
