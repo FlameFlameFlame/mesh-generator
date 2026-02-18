@@ -154,6 +154,10 @@ HTML_PAGE = """<!DOCTYPE html>
       <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
       <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
       <label><input type="checkbox" id="chk-roadhex" onchange="toggleLayer('roadhex')"> Road Hexagons</label>
+      <label><input type="checkbox" id="chk-coveragecircles" onchange="toggleCoverageCircles()"> Coverage Circles</label>
+      <div class="sub-control" id="coverage-circles-row" style="display:none;">
+        <label>Radius <input type="number" id="coverage-radius" value="5000" min="100" max="200000" step="100" oninput="renderCoverageCircles()"> m</label>
+      </div>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons</label>
       <div class="sub-control" id="coverage-metric-row" style="display:none;">
         <select id="coverage-metric" onchange="renderCoverage()">
@@ -207,6 +211,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
                     connections: L.layerGroup().addTo(map),
+                    coverageCircles: L.layerGroup(),
                     roadhex: L.layerGroup(),
                     coverage: L.layerGroup(),
                     elevation: L.layerGroup() };
@@ -429,6 +434,9 @@ function doClear() {
       coverageFetched = false;
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
+      _cachedTowersGeojson = null;
+      document.getElementById('chk-coveragecircles').checked = false;
+      document.getElementById('coverage-circles-row').style.display = 'none';
       excludedWayIds.clear();
       routeGroups = {}; routeMembers = {};
       document.getElementById('chk-roadhex').checked = false;
@@ -679,6 +687,7 @@ function renderRoads() {
 }
 
 let _cachedRoadsGeojson = null;
+let _cachedTowersGeojson = null;
 
 function fetchRoadHexagons() {
   fetch('/api/roads/hexagons').then(r => {
@@ -706,6 +715,7 @@ function renderLayers(layers) {
   }
   // Towers (colored by source)
   layerGroups.towers.clearLayers();
+  if (layers.towers) _cachedTowersGeojson = layers.towers;
   let sourceCounts = {};
   if (layers.towers) {
     L.geoJSON(layers.towers, {
@@ -727,6 +737,7 @@ function renderLayers(layers) {
   } else {
     document.getElementById('tower-legend').style.display = 'none';
   }
+  if (document.getElementById('chk-coveragecircles').checked) renderCoverageCircles();
   // Boundary
   layerGroups.boundary.clearLayers();
   if (layers.boundary) {
@@ -828,6 +839,38 @@ function toggleCoverage() {
     metricRow.style.display = 'none';
     document.getElementById('color-legend').style.display = 'none';
   }
+}
+
+function toggleCoverageCircles() {
+  let chk = document.getElementById('chk-coveragecircles');
+  let row = document.getElementById('coverage-circles-row');
+  if (chk.checked) {
+    row.style.display = 'block';
+    renderCoverageCircles();
+    layerGroups.coverageCircles.addTo(map);
+  } else {
+    row.style.display = 'none';
+    map.removeLayer(layerGroups.coverageCircles);
+  }
+}
+
+function renderCoverageCircles() {
+  layerGroups.coverageCircles.clearLayers();
+  if (!_cachedTowersGeojson) return;
+  let radius = parseFloat(document.getElementById('coverage-radius').value) || 5000;
+  (_cachedTowersGeojson.features || []).forEach(function(feat) {
+    if (!feat.geometry || feat.geometry.type !== 'Point') return;
+    let coords = feat.geometry.coordinates;  // [lon, lat]
+    let tid = feat.properties ? (feat.properties.tower_id || '') : '';
+    L.circle([coords[1], coords[0]], {
+      radius: radius,
+      color: '#2266cc',
+      weight: 1,
+      fillColor: '#4488ff',
+      fillOpacity: 0.08,
+      interactive: false,
+    }).addTo(layerGroups.coverageCircles);
+  });
 }
 
 function renderCoverage() {
