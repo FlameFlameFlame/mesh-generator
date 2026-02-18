@@ -178,8 +178,10 @@ def k_penalty_paths(
             feat_edges.setdefault(fidx, []).append((u, v))
 
     max_attempts = k * 3  # try more times to find diverse paths
+    attempts = 0
     try:
         for _ in range(max_attempts):
+            attempts = _ + 1
             if len(paths) >= k:
                 break
             try:
@@ -215,8 +217,7 @@ def k_penalty_paths(
             graph[u][v]["distance"] = w
 
     logger.info("k_penalty_paths: %d diverse paths found "
-                "(from %d attempts)", len(paths), _ + 1
-                if paths else 0)
+                "(from %d attempts)", len(paths), attempts)
     return paths
 
 

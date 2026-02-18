@@ -1189,34 +1189,6 @@ def generate():
 
     logger.info("Fetched: %d road features", len(roads.get("features", [])))
 
-    # Filter out intra-city roads (centroid inside any city boundary)
-    from shapely.geometry import shape as _shape
-    city_polygons = [
-        _shape(s.boundary_geojson)
-        for s in sites
-        if s.boundary_geojson is not None
-    ]
-    if city_polygons:
-        original_count = len(roads.get("features", []))
-
-        def _outside_cities(feat):
-            geom = feat.get("geometry")
-            if not geom:
-                return True
-            try:
-                centroid = _shape(geom).centroid
-                return not any(poly.contains(centroid) for poly in city_polygons)
-            except Exception:
-                return True
-
-        roads["features"] = [
-            f for f in roads.get("features", []) if _outside_cities(f)
-        ]
-        filtered_count = len(roads["features"])
-        logger.info(
-            "City filter: %d → %d road features",
-            original_count, filtered_count)
-
     _roads_geojson = roads
     logger.info("Generated: %d road features", len(roads.get("features", [])))
 
