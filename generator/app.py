@@ -3,7 +3,6 @@
 import json
 import logging
 import os
-import threading
 import webbrowser
 
 import yaml
@@ -31,13 +30,9 @@ store = SiteStore()
 _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
-_excluded_way_ids = set()  # osm_way_id values of excluded roads
-_route_groups = {}  # osm_way_id -> route_id (set by P2P filtering)
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
-_p2p_progress = {"current": 0, "total": 0, "phase": "", "done": False,
-                 "result": None, "error": None}
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -62,8 +57,14 @@ HTML_PAGE = """<!DOCTYPE html>
   #toolbar button.primary { background: #e0edff; border-color: #8ab; font-weight: 600; }
   #toolbar button.primary:hover { background: #cde0f8; }
   #btn-add-site.active { background: #c00; color: #fff; border-color: #900; }
-  #btn-exclude.active { background: #c00; color: #fff; border-color: #900; }
   #toolbar .hint { margin-left: auto; color: #666; font-size: 0.9em; }
+  #route-list { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
+  .route-pair { margin: 6px 0; }
+  .route-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  .route-dot  { display: inline-block; width: 12px; height: 12px;
+                border-radius: 50%; flex-shrink: 0; }
+  .route-ref  { font-weight: bold; }
+  .route-count { color: #666; font-size: 0.85em; }
   .progress-wrap { display: none; align-items: center; gap: 6px; font-size: 0.82em; color: #555; }
   .progress-wrap progress { width: 120px; height: 14px; }
   #map.placing { cursor: crosshair !important; }
@@ -108,8 +109,6 @@ HTML_PAGE = """<!DOCTYPE html>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
-  <span id="p2p-progress" class="progress-wrap"><progress id="p2p-bar"></progress><span id="p2p-label">Computing...</span></span>
-  <button id="btn-exclude" onclick="toggleExcludeMode()">Exclude Roads</button>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
   <button onclick="doLoadProject()">Load Project</button>
@@ -181,6 +180,7 @@ HTML_PAGE = """<!DOCTYPE html>
       <strong>Report</strong>
       <table id="report-table"></table>
     </div>
+    <div id="route-list"></div>
     <div id="status-bar"></div>
   </div>
 </div>
@@ -224,12 +224,10 @@ let elevationOverlay = null;
 let elevationMeta = null;
 let elevationFetched = false;
 let hasElevation = false;
-let excludeMode = false;
-let excludedWayIds = new Set();  // osm_way_id values of excluded roads
-let cachedRoadLayers = null;  // store rendered road layers for re-styling
-// P2P route groups: wayId -> routeId, routeId -> Set<wayId>
-let routeGroups = {};       // osm_way_id -> route_id
-let routeMembers = {};      // route_id -> Set<osm_way_id>
+// palette for up to 8 pairs
+const PAIR_COLORS = ['#2266aa','#e07000','#229933','#aa2222',
+                     '#7722aa','#007799','#996600','#555555'];
+let wayIdToColor = {};  // populated after filter-p2p
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -437,10 +435,10 @@ function doClear() {
       _cachedTowersGeojson = null;
       document.getElementById('chk-coveragecircles').checked = false;
       document.getElementById('coverage-circles-row').style.display = 'none';
-      excludedWayIds.clear();
-      routeGroups = {}; routeMembers = {};
+      wayIdToColor = {};
       document.getElementById('chk-roadhex').checked = false;
-      document.getElementById('p2p-progress').style.display = 'none';
+      let rl = document.getElementById('route-list');
+      if (rl) rl.innerHTML = '';
       // Reset elevation
       elevationOverlay = null;
       elevationMeta = null;
@@ -496,92 +494,80 @@ function doFetchRoads() {
     });
 }
 
-// --- Filter roads to point-to-point shortest paths ---
+// --- Filter roads to named routes that connect site pairs ---
 
 function doFilterP2P() {
   let btn = document.getElementById('btn-p2p');
-  let prog = document.getElementById('p2p-progress');
-  let bar = document.getElementById('p2p-bar');
-  let label = document.getElementById('p2p-label');
   btn.disabled = true;
-  prog.style.display = 'inline-flex';
-  bar.removeAttribute('value');
-  label.textContent = 'Starting...';
-  fetch('/api/roads/filter-p2p', {method: 'POST'})
-    .then(safeJson).then(data => {
-      if (data.error) { btn.disabled = false; prog.style.display = 'none'; alert(data.error); return; }
-      // Poll for progress
-      let pollId = setInterval(function() {
-        fetch('/api/roads/filter-p2p/progress').then(r => r.json()).then(p => {
-          if (p.total > 0) {
-            bar.max = p.total;
-            bar.value = p.current;
-            label.textContent = p.current + ' / ' + p.total + ' pairs';
-          } else {
-            label.textContent = p.phase || 'Working...';
-          }
-          if (p.done) {
-            clearInterval(pollId);
-            btn.disabled = false;
-            if (p.error) {
-              prog.style.display = 'none';
-              alert(p.error);
-              return;
-            }
-            let res = p.result || {};
-            bar.value = bar.max;
-            label.textContent = (res.road_count || 0) + ' roads (from ' + (res.original_count || '?') + ')';
-            // Build route group lookup for whole-route exclusion
-            routeGroups = res.route_groups || {};
-            routeMembers = {};
-            for (let [wid, rid] of Object.entries(routeGroups)) {
-              if (!routeMembers[rid]) routeMembers[rid] = new Set();
-              routeMembers[rid].add(Number(wid));
-            }
-            renderLayers(res.layers || {});
-            // Draw site-to-site connection overlay
-            layerGroups.connections.clearLayers();
-            (res.pairs || []).forEach(function(p) {
-              L.polyline([[p.s1.lat, p.s1.lon], [p.s2.lat, p.s2.lon]], {
-                color: '#f90', weight: 2, opacity: 0.7, dashArray: '4 6'
-              }).bindTooltip(p.s1.name + ' \u2194 ' + p.s2.name).addTo(layerGroups.connections);
-            });
-            setStatus('Filtered to ' + (res.road_count || 0) + ' road segments');
-          }
-        });
-      }, 300);
-    }).catch(err => {
-      btn.disabled = false;
-      prog.style.display = 'none';
-      alert('Error: ' + err);
+  setStatus('Filtering roads\u2026');
+  fetch('/api/roads/filter-p2p', {method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({})
+  }).then(safeJson).then(function(res) {
+    btn.disabled = false;
+    if (res.error) { alert(res.error); return; }
+
+    // Build way → color lookup from routes
+    wayIdToColor = {};
+    (res.routes || []).forEach(function(r) {
+      let color = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
+      (r.way_ids || []).forEach(function(wid) {
+        wayIdToColor[wid] = color;
+      });
     });
+
+    renderLayers(res.layers || {});
+
+    // Show route summary in sidebar
+    renderRouteList(res.routes || []);
+
+    // Draw site-to-site connection overlay
+    layerGroups.connections.clearLayers();
+    let seen = new Set();
+    (res.routes || []).forEach(function(r) {
+      let key = r.site1.name + '|' + r.site2.name;
+      if (!seen.has(key)) {
+        seen.add(key);
+        L.polyline([[r.site1.lat, r.site1.lon], [r.site2.lat, r.site2.lon]], {
+          color: '#f90', weight: 2, opacity: 0.7, dashArray: '4 6'
+        }).bindTooltip(r.site1.name + ' \u2194 ' + r.site2.name)
+          .addTo(layerGroups.connections);
+      }
+    });
+
+    setStatus('Filtered to ' + (res.road_count || 0) + ' road segments, '
+              + (res.routes || []).length + ' routes');
+  }).catch(function(err) {
+    btn.disabled = false;
+    alert('Error: ' + err);
+  });
 }
 
-// --- Road exclusion mode ---
-
-function toggleExcludeMode() {
-  excludeMode = !excludeMode;
-  let btn = document.getElementById('btn-exclude');
-  let hint = document.getElementById('hint');
-  if (excludeMode) {
-    // Exit add-site mode if active
-    if (addMode) toggleAddMode();
-    btn.classList.add('active');
-    btn.textContent = 'Done Excluding';
-    hint.textContent = 'Click on a road segment to exclude/include it';
-    renderRoads();  // re-render with wide click overlays
-  } else {
-    btn.classList.remove('active');
-    btn.textContent = 'Exclude Roads';
-    hint.textContent = '';
-    // Sync excluded way IDs to backend
-    fetch('/api/roads/exclude', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({way_ids: Array.from(excludedWayIds)})
+function renderRouteList(routes) {
+  let el = document.getElementById('route-list');
+  if (!el) return;
+  if (!routes.length) { el.innerHTML = '<em>No routes found.</em>'; return; }
+  // Group by pair
+  let byPair = {};
+  routes.forEach(function(r) {
+    let key = r.site1.name + ' \u2194 ' + r.site2.name;
+    if (!byPair[key]) byPair[key] = [];
+    byPair[key].push(r);
+  });
+  let html = '';
+  Object.entries(byPair).forEach(function([pair, rs]) {
+    html += '<div class="route-pair"><strong>' + pair + '</strong>';
+    rs.forEach(function(r) {
+      let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
+      html += '<div class="route-item">'
+            + '<span class="route-dot" style="background:' + c + '"></span>'
+            + '<span class="route-ref">' + (r.ref || 'unnamed') + '</span>'
+            + ' <span class="route-count">(' + r.feature_indices.length + ' segments)</span>'
+            + '</div>';
     });
-    renderRoads();  // re-render without overlays
-  }
+    html += '</div>';
+  });
+  el.innerHTML = html;
 }
 
 // --- Download elevation from SRTM ---
@@ -643,51 +629,20 @@ function doLoadProject() {
   });
 }
 
-// Toggle all way IDs in the same P2P route as wayId
-function toggleRouteExclusion(wayId) {
-  if (wayId == null) return;
-  let rid = routeGroups[wayId];
-  let members = (rid != null && routeMembers[rid]) ? routeMembers[rid] : new Set([wayId]);
-  let excluding = !excludedWayIds.has(wayId);
-  members.forEach(function(wid) {
-    if (excluding) excludedWayIds.add(wid);
-    else excludedWayIds.delete(wid);
-  });
-  renderRoads();
-}
-
 function renderRoads() {
   layerGroups.roads.clearLayers();
-  cachedRoadLayers = null;
   if (!_cachedRoadsGeojson) return;
-  cachedRoadLayers = [];
-  (_cachedRoadsGeojson.features || []).forEach(function(feat, idx) {
+  (_cachedRoadsGeojson.features || []).forEach(function(feat) {
     let wayId = (feat.properties || {}).osm_way_id;
-    let excluded = wayId != null && excludedWayIds.has(wayId);
-    let baseStyle = excluded
-      ? { color: '#cc0000', weight: 3, opacity: 0.6, dashArray: '6 4' }
-      : { color: '#2266aa', weight: 2, opacity: 0.7 };
-    let lyr = L.geoJSON(feat, { style: baseStyle }).addTo(layerGroups.roads);
-    // Invisible wider overlay for easier clicking in exclude mode
-    if (excludeMode) {
-      L.geoJSON(feat, {
-        style: { color: 'transparent', weight: 20, opacity: 0 }
-      }).addTo(layerGroups.roads).on('click', function(e) {
-        L.DomEvent.stopPropagation(e);
-        toggleRouteExclusion(wayId);
-      });
-    }
-    lyr.on('click', function(e) {
-      if (!excludeMode) return;
-      L.DomEvent.stopPropagation(e);
-      toggleRouteExclusion(wayId);
-    });
-    cachedRoadLayers.push(lyr);
+    let color = wayIdToColor[wayId] || '#2266aa';
+    L.geoJSON(feat, {style: {color: color, weight: 2, opacity: 0.8}})
+      .addTo(layerGroups.roads);
   });
 }
 
 let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
+
 
 function fetchRoadHexagons() {
   fetch('/api/roads/hexagons').then(r => {
@@ -1068,12 +1023,10 @@ def detect_city_boundary(idx):
 def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _loaded_layers, _loaded_report
-    global _loaded_coverage, _elevation_path, _excluded_way_ids, _route_groups
+    global _loaded_coverage, _elevation_path
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
-    _excluded_way_ids = set()
-    _route_groups = {}
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
@@ -1239,225 +1192,103 @@ def road_hexagons():
 
 
 @app.route("/api/roads/filter-p2p", methods=["POST"])
-def filter_roads_p2p():
-    """Start P2P filtering in background thread."""
-    global _p2p_progress
+def filter_p2p():
+    """Filter roads to named routes that connect site pairs."""
+    global _roads_geojson, _loaded_layers
+
+    from generator.graph import find_p2p_roads
+    from math import atan2, cos, radians, sin, sqrt
 
     if not _roads_geojson:
-        return jsonify({"error": "No roads loaded. Download roads first."}), 400
-    if len(store) < 2:
-        return jsonify({"error": "Need at least 2 sites."}), 400
-    if _p2p_progress.get("phase") and not _p2p_progress.get("done"):
-        return jsonify({"error": "P2P filtering already in progress."}), 409
+        return jsonify({"error": "No roads loaded. Run Generate first."})
 
-    _p2p_progress = {"current": 0, "total": 0, "phase": "starting",
-                     "done": False, "result": None, "error": None}
-    thread = threading.Thread(target=_do_filter_p2p, daemon=True)
-    thread.start()
-    return jsonify({"started": True})
+    sites = list(store)
+    if len(sites) < 2:
+        return jsonify({"error": "Need at least 2 sites."})
 
+    original_count = len(_roads_geojson.get("features", []))
 
-@app.route("/api/roads/filter-p2p/progress", methods=["GET"])
-def filter_roads_p2p_progress():
-    """Poll P2P filtering progress."""
-    return jsonify(_p2p_progress)
+    # ── Build site pairs (priority hierarchy) ────────────────────────
+    def _dist(s1, s2):
+        R = 6_371_000
+        la1, la2 = radians(s1.lat), radians(s2.lat)
+        dlat, dlon = la2 - la1, radians(s2.lon - s1.lon)
+        a = sin(dlat / 2) ** 2 + cos(la1) * cos(la2) * sin(dlon / 2) ** 2
+        return R * 2 * atan2(sqrt(a), sqrt(1 - a))
 
+    by_priority = {}
+    for s in sites:
+        by_priority.setdefault(s.priority, []).append(s)
 
-def _do_filter_p2p():
-    """Core P2P filtering logic — runs in background thread."""
-    global _roads_geojson, _loaded_layers, _p2p_progress, _route_groups
+    pairs_raw = []   # list of (SiteModel, SiteModel)
+    # P1: MST
+    p1 = by_priority.get(1, [])
+    if len(p1) >= 2:
+        import networkx as nx
+        g = nx.Graph()
+        for i, s1 in enumerate(p1):
+            for j in range(i + 1, len(p1)):
+                g.add_edge(i, j, weight=_dist(s1, p1[j]))
+        for i, j in nx.minimum_spanning_tree(g).edges():
+            pairs_raw.append((p1[i], p1[j]))
+    # P2+: nearest higher-priority
+    for pri in sorted(by_priority):
+        if pri == 1:
+            continue
+        higher = [s for s in sites if s.priority < pri]
+        if not higher:
+            continue
+        for s in by_priority[pri]:
+            pairs_raw.append((s, min(higher, key=lambda h: _dist(s, h))))
 
-    import time
-    from math import atan2, cos, radians, sin, sqrt
-    from generator.graph import (
-        build_road_graph, build_node_index, find_nearest_node,
-        k_penalty_paths, collect_path_feature_indices,
-        filter_roads_by_feature_indices,
-    )
+    logger.info("filter_p2p: %d pairs", len(pairs_raw))
 
-    try:
-        original_count = len(
-            _roads_geojson.get("features", []))
-
-        _p2p_progress["phase"] = "building graph"
-
-        # Remove excluded roads before building graph
-        if _excluded_way_ids:
-            source = {
-                "type": "FeatureCollection",
-                "features": [
-                    f for f in _roads_geojson.get("features", [])
-                    if f.get("properties", {}).get("osm_way_id")
-                    not in _excluded_way_ids
-                ],
-            }
-        else:
-            source = _roads_geojson
-
-        t0 = time.monotonic()
-        # Build graph with major-road preference — Dijkstra will
-        # favour highways/trunks, so K shortest paths diverge along
-        # different major corridors instead of minor street variants
-        graph = build_road_graph(source, prefer_major=True)
-        node_index = build_node_index(graph)
-        logger.info("Graph built in %.1fs (%d nodes, %d edges)",
-                    time.monotonic() - t0,
-                    graph.number_of_nodes(), graph.number_of_edges())
-
-        if graph.number_of_nodes() == 0:
-            _p2p_progress.update(done=True,
-                                 error="Road graph is empty.")
-            return
-
-        # Build site pairs from priority hierarchy
-        sites = list(store)
-        by_priority = {}
-        for s in sites:
-            by_priority.setdefault(s.priority, []).append(s)
-
-        def _dist(s1, s2):
-            R = 6_371_000
-            la1, la2 = radians(s1.lat), radians(s2.lat)
-            dlat = la2 - la1
-            dlon = radians(s2.lon - s1.lon)
-            a = (sin(dlat / 2) ** 2
-                 + cos(la1) * cos(la2) * sin(dlon / 2) ** 2)
-            return R * 2 * atan2(sqrt(a), sqrt(1 - a))
-
-        pairs = []
-        # P1: MST (minimum spanning tree) — connect all P1
-        # sites with fewest edges instead of full all-pairs mesh
-        p1 = by_priority.get(1, [])
-        if len(p1) >= 2:
-            import networkx as nx
-            g = nx.Graph()
-            for i, s1 in enumerate(p1):
-                for j in range(i + 1, len(p1)):
-                    s2 = p1[j]
-                    g.add_edge(i, j, weight=_dist(s1, s2))
-            mst = nx.minimum_spanning_tree(g)
-            for i, j in mst.edges():
-                pairs.append((p1[i], p1[j]))
-        # P2+: each to nearest higher-priority
-        for pri in sorted(by_priority):
-            if pri == 1:
-                continue
-            higher = [
-                s for s in sites if s.priority < pri]
-            if not higher:
-                continue
-            for s in by_priority[pri]:
-                nearest = min(
-                    higher, key=lambda h: _dist(s, h))
-                pairs.append((s, nearest))
-
-        logger.info(
-            "P2P filtering: %d site pairs", len(pairs))
-
-        _p2p_progress.update(phase="finding paths",
-                             current=0, total=len(pairs))
-
-        # Find K shortest paths on the major-roads graph
-        def _site_node(site):
-            """Single nearest graph node for a site."""
-            n = find_nearest_node(
-                graph, site.lat, site.lon, _index=node_index)
-            return n
-
-        K_PATHS = 3  # number of distinct routes per site pair
-
-        t1 = time.monotonic()
-        used_feature_indices = set()
-        pair_features: dict[int, set[int]] = {}
-        used_pairs = []
-        for pair_idx, (s1, s2) in enumerate(pairs):
-            _p2p_progress["current"] = pair_idx + 1
-            n1 = _site_node(s1)
-            n2 = _site_node(s2)
-            if n1 is None or n2 is None:
-                logger.warning(
-                    "No graph nodes for %s or %s",
-                    s1.name, s2.name)
-                continue
-            paths = k_penalty_paths(graph, n1, n2, k=K_PATHS)
-            if paths:
-                pair_features[pair_idx] = set()
-                for p in paths:
-                    fi = collect_path_feature_indices(graph, p)
-                    used_feature_indices.update(fi)
-                    pair_features[pair_idx].update(fi)
-                used_pairs.append({
-                    "s1": {"name": s1.name, "lat": s1.lat, "lon": s1.lon},
-                    "s2": {"name": s2.name, "lat": s2.lat, "lon": s2.lon},
-                })
-                logger.info(
-                    "%s -> %s: %d paths found",
-                    s1.name, s2.name, len(paths))
-            else:
-                logger.warning(
-                    "No path between %s and %s",
-                    s1.name, s2.name)
-        logger.info("Path finding done in %.1fs, %d features used",
-                    time.monotonic() - t1, len(used_feature_indices))
-
-        # Only exclusive features (used by exactly one pair) belong to a route
-        feature_use_count: dict[int, int] = {}
-        for fidx_set in pair_features.values():
-            for fidx in fidx_set:
-                feature_use_count[fidx] = feature_use_count.get(fidx, 0) + 1
-
-        feature_to_route: dict[int, int] = {}
-        for pair_idx, fidx_set in pair_features.items():
-            for fidx in fidx_set:
-                if feature_use_count[fidx] == 1:
-                    feature_to_route[fidx] = pair_idx
-
-        filtered = filter_roads_by_feature_indices(
-            source, used_feature_indices)
-        _roads_geojson = filtered
-        _loaded_layers["roads"] = filtered
-        _excluded_way_ids.clear()
-
-        # Build route_groups: osm_way_id -> route_id
-        # source features are indexed; filtered keeps a subset
-        _route_groups = {}
-        source_features = source.get("features", [])
-        for fidx, rid in feature_to_route.items():
-            if fidx < len(source_features):
-                wid = source_features[fidx].get(
-                    "properties", {}).get("osm_way_id")
-                if wid is not None:
-                    _route_groups[wid] = rid
-        logger.info("Route groups: %d way_ids across %d routes",
-                    len(_route_groups),
-                    len(set(_route_groups.values())))
-
-        _p2p_progress.update(
-            done=True,
-            phase="done",
-            result={
-                "road_count": len(
-                    filtered.get("features", [])),
-                "original_count": original_count,
-                "layers": {"roads": filtered},
-                "route_groups": _route_groups,
-                "pairs": used_pairs,
-            },
+    # Convert to plain dicts for find_p2p_roads
+    site_pairs = [
+        (
+            {"name": s1.name, "lat": s1.lat, "lon": s1.lon},
+            {"name": s2.name, "lat": s2.lat, "lon": s2.lon},
         )
-    except Exception as e:
-        logger.exception("P2P filtering failed")
-        _p2p_progress.update(done=True,
-                             error=f"P2P filtering failed: {e}")
+        for s1, s2 in pairs_raw
+    ]
 
+    # ── Find named routes ────────────────────────────────────────────
+    proximity_km = float(request.json.get("proximity_km", 30)) \
+        if request.json else 30.0
+    routes, used_indices = find_p2p_roads(
+        _roads_geojson, site_pairs, proximity_km=proximity_km)
 
-@app.route("/api/roads/exclude", methods=["POST"])
-def set_excluded_roads():
-    """Store excluded road OSM way IDs."""
-    global _excluded_way_ids
-    data = request.json
-    _excluded_way_ids = set(data.get("way_ids", []))
-    logger.info("Updated excluded roads: %d way IDs", len(_excluded_way_ids))
-    return jsonify({"ok": True, "count": len(_excluded_way_ids)})
+    # ── Filter roads GeoJSON to used features only ───────────────────
+    all_features = _roads_geojson.get("features", [])
+    filtered_features = [f for i, f in enumerate(all_features)
+                         if i in used_indices]
+    filtered = {"type": "FeatureCollection", "features": filtered_features}
+    _roads_geojson = filtered
+    _loaded_layers["roads"] = filtered
+
+    # Build way_id -> route_id mapping for frontend coloring
+    route_groups = {}
+    for r in routes:
+        for wid in r["way_ids"]:
+            if wid not in route_groups:   # first-match wins
+                route_groups[wid] = r["route_id"]
+
+    pairs_out = [
+        {"s1": r["site1"], "s2": r["site2"]}
+        for r in routes
+    ]
+
+    logger.info("filter_p2p done: %d routes, %d road features",
+                len(routes), len(filtered_features))
+
+    return jsonify({
+        "road_count":     len(filtered_features),
+        "original_count": original_count,
+        "layers":         {"roads": filtered},
+        "routes":         routes,
+        "route_groups":   route_groups,
+        "pairs":          pairs_out,
+    })
 
 
 @app.route("/api/export", methods=["POST"])
@@ -1483,21 +1314,10 @@ def export():
     export_sites_geojson(sites, sites_path)
     export_boundary_geojson(sites, boundary_path, roads_geojson=_roads_geojson)
 
-    # Export roads if available (filter out excluded)
+    # Export roads if available
     roads_export_path = ""
     if _roads_geojson:
-        if _excluded_way_ids:
-            filtered = {
-                "type": "FeatureCollection",
-                "features": [
-                    f for f in _roads_geojson.get("features", [])
-                    if f.get("properties", {}).get("osm_way_id")
-                    not in _excluded_way_ids
-                ],
-            }
-        else:
-            filtered = _roads_geojson
-        export_roads_geojson(filtered, roads_path)
+        export_roads_geojson(_roads_geojson, roads_path)
         roads_export_path = roads_path
 
     # Copy pre-downloaded elevation to output directory
