@@ -27,10 +27,10 @@ def _min_dist_km(geom, lat, lon):
     return min(_haversine_km(c[1], c[0], lat, lon) for c in coords)
 
 
-def find_p2p_roads(roads_geojson, site_pairs, proximity_km=30.0):
+def find_p2p_roads(roads_geojson, site_pairs, proximity_km=10.0):
     """
-    For each (site1, site2) pair find named roads (grouped by OSM ``ref``,
-    falling back to ``name``) that pass within proximity_km of BOTH sites.
+    For each (site1, site2) pair find named roads (grouped by OSM ``ref``)
+    that pass within proximity_km of BOTH sites.
 
     Args:
         roads_geojson: GeoJSON FeatureCollection
