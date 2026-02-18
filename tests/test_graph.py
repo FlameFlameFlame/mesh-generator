@@ -1,217 +1,94 @@
-"""Tests for generator.graph — road graph construction and routing."""
-
-from generator.graph import (
-    build_road_graph,
-    collect_path_edges,
-    collect_path_feature_indices,
-    filter_roads_by_feature_indices,
-    filter_roads_to_edges,
-    find_nearest_node,
-    k_shortest_paths,
-    shortest_path,
-)
+"""Tests for find_p2p_roads proximity-based route finder."""
+import pytest
+from generator.graph import find_p2p_roads
 
 
-def _make_roads(*segments):
-    """Helper: build a GeoJSON FeatureCollection from coordinate lists."""
-    features = []
-    for coords in segments:
-        features.append({
+# Helpers to build minimal GeoJSON FeatureCollections
+def _roads(*lines):
+    """lines: list of (ref, name, [(lon,lat)...]) tuples"""
+    feats = []
+    for ref, name, coords in lines:
+        feats.append({
             "type": "Feature",
+            "properties": {"ref": ref, "name": name, "osm_way_id": len(feats) + 1},
             "geometry": {"type": "LineString", "coordinates": coords},
-            "properties": {},
         })
-    return {"type": "FeatureCollection", "features": features}
+    return {"type": "FeatureCollection", "features": feats}
 
 
-# --- Two-point road:  A ------ B
-SIMPLE = _make_roads([[0.0, 0.0], [1.0, 0.0]])
-
-# --- Triangle:  A--B--C--A  (three separate roads)
-TRIANGLE = _make_roads(
-    [[0.0, 0.0], [1.0, 0.0]],          # A-B
-    [[1.0, 0.0], [0.5, 0.866]],        # B-C
-    [[0.5, 0.866], [0.0, 0.0]],        # C-A
-)
-
-# --- Fork:  A--B--C  and  B--D  (B is junction)
-FORK = _make_roads(
-    [[0.0, 0.0], [1.0, 0.0], [2.0, 0.0]],  # A-B-C
-    [[1.0, 0.0], [1.0, 1.0]],                # B-D
-)
+# Sites near 40°N 44°E
+S_A = {"name": "A", "lat": 40.0, "lon": 44.0}
+S_B = {"name": "B", "lat": 40.5, "lon": 44.5}
+S_C = {"name": "C", "lat": 41.0, "lon": 44.0}
 
 
-class TestBuildRoadGraph:
-    def test_simple_nodes_and_edges(self):
-        G = build_road_graph(SIMPLE)
-        assert G.number_of_nodes() == 2
-        assert G.number_of_edges() == 1
-
-    def test_triangle_nodes_and_edges(self):
-        G = build_road_graph(TRIANGLE)
-        assert G.number_of_nodes() == 3
-        assert G.number_of_edges() == 3
-
-    def test_fork_junction(self):
-        G = build_road_graph(FORK)
-        # A(0,0) B(1,0) C(2,0) D(1,1) — 4 nodes, 3 edges
-        assert G.number_of_nodes() == 4
-        assert G.number_of_edges() == 3
-
-    def test_edge_has_distance(self):
-        G = build_road_graph(SIMPLE)
-        a, b = (0.0, 0.0), (1.0, 0.0)
-        assert G[a][b]["distance"] > 0
-
-    def test_empty_roads(self):
-        G = build_road_graph({"type": "FeatureCollection", "features": []})
-        assert G.number_of_nodes() == 0
+def test_single_road_connects_pair():
+    # Road runs close to both A and B
+    roads = _roads(("A-1", "Highway A1", [(44.0, 40.0), (44.5, 40.5)]))
+    routes, used = find_p2p_roads(roads, [(S_A, S_B)])
+    assert len(routes) == 1
+    assert routes[0]["ref"] == "A-1"
+    assert routes[0]["pair_idx"] == 0
+    assert 0 in used
 
 
-class TestFindNearestNode:
-    def test_exact_match(self):
-        G = build_road_graph(FORK)
-        node = find_nearest_node(G, lat=0.0, lon=0.0)
-        assert node == (0.0, 0.0)
-
-    def test_close_point(self):
-        G = build_road_graph(FORK)
-        node = find_nearest_node(G, lat=0.01, lon=0.99)
-        assert node == (1.0, 0.0)
+def test_road_not_close_enough_excluded():
+    # Road far from both sites (10°+ away)
+    roads = _roads(("A-1", "", [(55.0, 50.0), (56.0, 51.0)]))
+    routes, used = find_p2p_roads(roads, [(S_A, S_B)])
+    assert routes == []
+    assert used == set()
 
 
-class TestShortestPath:
-    def test_direct_path(self):
-        G = build_road_graph(SIMPLE)
-        path = shortest_path(G, (0.0, 0.0), (1.0, 0.0))
-        assert path == [(0.0, 0.0), (1.0, 0.0)]
-
-    def test_multi_hop_path(self):
-        G = build_road_graph(FORK)
-        path = shortest_path(G, (0.0, 0.0), (1.0, 1.0))
-        assert path is not None
-        assert path[0] == (0.0, 0.0)
-        assert path[-1] == (1.0, 1.0)
-        assert (1.0, 0.0) in path  # must go through junction
-
-    def test_no_path(self):
-        # Two disconnected roads
-        roads = _make_roads(
-            [[0.0, 0.0], [1.0, 0.0]],
-            [[10.0, 10.0], [11.0, 10.0]],
-        )
-        G = build_road_graph(roads)
-        path = shortest_path(G, (0.0, 0.0), (10.0, 10.0))
-        assert path is None
+def test_road_close_to_only_one_site_excluded():
+    # Road near A but far from B
+    roads = _roads(("A-1", "", [(44.0, 40.0), (44.01, 40.01)]))
+    routes, used = find_p2p_roads(roads, [(S_A, S_B)], proximity_km=1.0)
+    assert routes == []
 
 
-class TestKShortestPaths:
-    def test_returns_single_path_on_simple(self):
-        G = build_road_graph(SIMPLE)
-        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
-        assert len(paths) == 1
-        assert paths[0] == [(0.0, 0.0), (1.0, 0.0)]
-
-    def test_triangle_returns_two_paths(self):
-        G = build_road_graph(TRIANGLE)
-        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
-        # Direct A-B and indirect A-C-B
-        assert len(paths) == 2
-
-    def test_no_path_returns_empty(self):
-        roads = _make_roads(
-            [[0.0, 0.0], [1.0, 0.0]],
-            [[10.0, 10.0], [11.0, 10.0]],
-        )
-        G = build_road_graph(roads)
-        paths = k_shortest_paths(G, (0.0, 0.0), (10.0, 10.0), k=3)
-        assert paths == []
-
-    def test_paths_sorted_by_distance(self):
-        G = build_road_graph(TRIANGLE)
-        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=3)
-        dists = []
-        for p in paths:
-            d = sum(G[p[i]][p[i + 1]]["distance"] for i in range(len(p) - 1))
-            dists.append(d)
-        assert dists == sorted(dists)
+def test_two_roads_both_connect_pair():
+    roads = _roads(
+        ("A-1",   "Road1", [(44.0, 40.0), (44.5, 40.5)]),
+        ("AH-81", "Road2", [(44.0, 40.0), (44.5, 40.5)]),
+    )
+    routes, used = find_p2p_roads(roads, [(S_A, S_B)])
+    assert len(routes) == 2
+    refs = {r["ref"] for r in routes}
+    assert refs == {"A-1", "AH-81"}
+    assert used == {0, 1}
 
 
-class TestCollectPathEdges:
-    def test_single_edge(self):
-        edges = collect_path_edges([(0.0, 0.0), (1.0, 0.0)])
-        assert len(edges) == 1
-
-    def test_multi_edge(self):
-        edges = collect_path_edges([(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)])
-        assert len(edges) == 2
-
-    def test_normalized_order(self):
-        # Same path in both directions should yield same edge set
-        fwd = collect_path_edges([(0.0, 0.0), (1.0, 0.0)])
-        rev = collect_path_edges([(1.0, 0.0), (0.0, 0.0)])
-        assert fwd == rev
+def test_two_pairs_separate_routes():
+    roads = _roads(
+        ("A-1", "", [(44.0, 40.0), (44.5, 40.5)]),   # A↔B
+        ("M3",  "", [(44.0, 40.0), (44.0, 41.0)]),   # A↔C
+    )
+    routes, _ = find_p2p_roads(roads, [(S_A, S_B), (S_A, S_C)])
+    pair_route_map = {r["pair_idx"]: r["ref"] for r in routes}
+    assert 0 in pair_route_map
+    assert 1 in pair_route_map
 
 
-class TestFilterRoadsToEdges:
-    def test_keep_matching_feature(self):
-        edges = {((0.0, 0.0), (1.0, 0.0))}
-        result = filter_roads_to_edges(TRIANGLE, edges)
-        assert len(result["features"]) == 1
-
-    def test_keep_none_if_no_match(self):
-        edges = {((99.0, 99.0), (100.0, 100.0))}
-        result = filter_roads_to_edges(TRIANGLE, edges)
-        assert len(result["features"]) == 0
-
-    def test_fork_filter_to_branch(self):
-        # Only keep edges on the B-D branch
-        edges = {((1.0, 0.0), (1.0, 1.0))}
-        result = filter_roads_to_edges(FORK, edges)
-        # The B-D road is the second feature
-        assert len(result["features"]) == 1
+def test_empty_roads_returns_no_routes():
+    roads = {"type": "FeatureCollection", "features": []}
+    routes, used = find_p2p_roads(roads, [(S_A, S_B)])
+    assert routes == []
+    assert used == set()
 
 
-class TestCollectPathFeatureIndices:
-    def test_single_road(self):
-        G = build_road_graph(SIMPLE)
-        path = shortest_path(G, (0.0, 0.0), (1.0, 0.0))
-        indices = collect_path_feature_indices(G, path)
-        assert indices == {0}
-
-    def test_multi_road_path(self):
-        G = build_road_graph(FORK)
-        path = shortest_path(G, (0.0, 0.0), (1.0, 1.0))
-        indices = collect_path_feature_indices(G, path)
-        # Path goes A-B (feature 0) then B-D (feature 1)
-        assert indices == {0, 1}
-
-    def test_triangle_both_features(self):
-        G = build_road_graph(TRIANGLE)
-        # Indirect path A-C-B uses features 1 and 2
-        paths = k_shortest_paths(G, (0.0, 0.0), (1.0, 0.0), k=2)
-        all_indices = set()
-        for p in paths:
-            all_indices.update(collect_path_feature_indices(G, p))
-        # Should include all 3 features (direct + indirect)
-        assert len(all_indices) >= 2
+def test_route_contains_way_ids():
+    roads = _roads(("A-1", "", [(44.0, 40.0), (44.5, 40.5)]))
+    routes, _ = find_p2p_roads(roads, [(S_A, S_B)])
+    assert routes[0]["way_ids"] == [1]
 
 
-class TestFilterRoadsByFeatureIndices:
-    def test_keep_one(self):
-        result = filter_roads_by_feature_indices(FORK, {1})
-        assert len(result["features"]) == 1
-
-    def test_keep_all(self):
-        result = filter_roads_by_feature_indices(TRIANGLE, {0, 1, 2})
-        assert len(result["features"]) == 3
-
-    def test_keep_none(self):
-        result = filter_roads_by_feature_indices(TRIANGLE, set())
-        assert len(result["features"]) == 0
-
-    def test_preserves_correct_features(self):
-        # Feature 0 is A-B-C, Feature 1 is B-D
-        result = filter_roads_by_feature_indices(FORK, {0})
-        coords = result["features"][0]["geometry"]["coordinates"]
-        assert len(coords) == 3  # A-B-C has 3 points
+def test_proximity_km_respected():
+    # Road is offset ~7 km from each site (> 1 km threshold, < 100 km threshold)
+    roads = _roads(("A-1", "", [(44.05, 40.05), (44.45, 40.45)]))
+    # tight 1 km threshold → should miss
+    routes_miss, _ = find_p2p_roads(roads, [(S_A, S_B)], proximity_km=1.0)
+    assert routes_miss == []
+    # generous 100 km → should hit
+    routes_hit, _ = find_p2p_roads(roads, [(S_A, S_B)], proximity_km=100.0)
+    assert len(routes_hit) == 1
