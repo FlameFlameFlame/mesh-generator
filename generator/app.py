@@ -206,6 +206,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     boundary: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
+                    connections: L.layerGroup().addTo(map),
                     roadhex: L.layerGroup(),
                     coverage: L.layerGroup(),
                     elevation: L.layerGroup() };
@@ -466,6 +467,19 @@ function doFetchRoads() {
       bar.value = 1; bar.max = 1;
       label.textContent = (data.road_count || 0) + ' roads loaded';
       renderLayers(data.layers || {});
+      // Render any auto-detected city boundaries
+      (data.city_boundaries || []).forEach(function(cb) {
+        if (cb.geometry) {
+          L.geoJSON(cb.geometry, {
+            style: { color: '#8800aa', weight: 2, dashArray: '6 4',
+                     fillColor: '#cc88ff', fillOpacity: 0.1 }
+          }).bindTooltip(cb.boundary_name || cb.name).addTo(layerGroups.cities);
+        }
+        // Sync boundary_name into local sites array so sidebar shows it
+        let idx = sites.findIndex(function(s) { return s.name === cb.name; });
+        if (idx >= 0 && cb.boundary_name) sites[idx].boundary_name = cb.boundary_name;
+      });
+      if ((data.city_boundaries || []).length > 0) refresh();
       if (data.bounds) map.fitBounds(data.bounds, {padding: [30, 30]});
     }).catch(err => {
       btn.disabled = false;
@@ -517,6 +531,13 @@ function doFilterP2P() {
               routeMembers[rid].add(Number(wid));
             }
             renderLayers(res.layers || {});
+            // Draw site-to-site connection overlay
+            layerGroups.connections.clearLayers();
+            (res.pairs || []).forEach(function(p) {
+              L.polyline([[p.s1.lat, p.s1.lon], [p.s2.lat, p.s2.lon]], {
+                color: '#f90', weight: 2, opacity: 0.7, dashArray: '4 6'
+              }).bindTooltip(p.s1.name + ' \u2194 ' + p.s2.name).addTo(layerGroups.connections);
+            });
             setStatus('Filtered to ' + (res.road_count || 0) + ' road segments');
           }
         });
@@ -1091,6 +1112,26 @@ def generate():
 
     # Compute bounding box with buffer for road fetching
     sites = list(store)
+
+    # Auto-detect city boundaries for sites that don't have one yet
+    from generator.boundaries import detect_city as _detect_city
+    newly_detected = []
+    for site in sites:
+        if site.boundary_geojson is None:
+            try:
+                result = _detect_city(site.lat, site.lon)
+                if result:
+                    site.boundary_geojson = result["geometry"]
+                    site.boundary_name = result["name"]
+                    newly_detected.append(site.name)
+                    logger.info(
+                        "Auto-detected city '%s' for site %s",
+                        result["name"], site.name)
+            except Exception as e:
+                logger.warning(
+                    "City auto-detection failed for site %s: %s",
+                    site.name, e)
+
     lats = [s.lat for s in sites]
     lons = [s.lon for s in sites]
     buffer = 0.15  # ~16 km buffer around sites
@@ -1102,6 +1143,36 @@ def generate():
     except Exception as e:
         logger.error("Failed to fetch roads: %s", e)
         return jsonify({"error": f"Failed to fetch roads: {e}"})
+
+    logger.info("Fetched: %d road features", len(roads.get("features", [])))
+
+    # Filter out intra-city roads (centroid inside any city boundary)
+    from shapely.geometry import shape as _shape
+    city_polygons = [
+        _shape(s.boundary_geojson)
+        for s in sites
+        if s.boundary_geojson is not None
+    ]
+    if city_polygons:
+        original_count = len(roads.get("features", []))
+
+        def _outside_cities(feat):
+            geom = feat.get("geometry")
+            if not geom:
+                return True
+            try:
+                centroid = _shape(geom).centroid
+                return not any(poly.contains(centroid) for poly in city_polygons)
+            except Exception:
+                return True
+
+        roads["features"] = [
+            f for f in roads.get("features", []) if _outside_cities(f)
+        ]
+        filtered_count = len(roads["features"])
+        logger.info(
+            "City filter: %d → %d road features",
+            original_count, filtered_count)
 
     _roads_geojson = roads
     logger.info("Generated: %d road features", len(roads.get("features", [])))
@@ -1123,10 +1194,22 @@ def generate():
 
     bounds = _compute_bounds(layers, store)
 
+    # Include all detected city boundaries in response
+    city_boundaries = [
+        {
+            "name": s.name,
+            "boundary_name": s.boundary_name,
+            "geometry": s.boundary_geojson,
+        }
+        for s in sites
+        if s.boundary_geojson is not None
+    ]
+
     return jsonify({
         "road_count": len(roads.get("features", [])),
         "layers": layers,
         "bounds": bounds,
+        "city_boundaries": city_boundaries,
     })
 
 
@@ -1270,8 +1353,8 @@ def _do_filter_p2p():
 
         t1 = time.monotonic()
         used_feature_indices = set()
-        # Map feature_idx -> route_id so exclude can toggle whole routes
-        feature_to_route: dict[int, int] = {}
+        pair_features: dict[int, set[int]] = {}
+        used_pairs = []
         for pair_idx, (s1, s2) in enumerate(pairs):
             _p2p_progress["current"] = pair_idx + 1
             n1 = _site_node(s1)
@@ -1283,11 +1366,15 @@ def _do_filter_p2p():
                 continue
             paths = k_penalty_paths(graph, n1, n2, k=K_PATHS)
             if paths:
+                pair_features[pair_idx] = set()
                 for p in paths:
                     fi = collect_path_feature_indices(graph, p)
                     used_feature_indices.update(fi)
-                    for fidx in fi:
-                        feature_to_route.setdefault(fidx, pair_idx)
+                    pair_features[pair_idx].update(fi)
+                used_pairs.append({
+                    "s1": {"name": s1.name, "lat": s1.lat, "lon": s1.lon},
+                    "s2": {"name": s2.name, "lat": s2.lat, "lon": s2.lon},
+                })
                 logger.info(
                     "%s -> %s: %d paths found",
                     s1.name, s2.name, len(paths))
@@ -1297,6 +1384,18 @@ def _do_filter_p2p():
                     s1.name, s2.name)
         logger.info("Path finding done in %.1fs, %d features used",
                     time.monotonic() - t1, len(used_feature_indices))
+
+        # Only exclusive features (used by exactly one pair) belong to a route
+        feature_use_count: dict[int, int] = {}
+        for fidx_set in pair_features.values():
+            for fidx in fidx_set:
+                feature_use_count[fidx] = feature_use_count.get(fidx, 0) + 1
+
+        feature_to_route: dict[int, int] = {}
+        for pair_idx, fidx_set in pair_features.items():
+            for fidx in fidx_set:
+                if feature_use_count[fidx] == 1:
+                    feature_to_route[fidx] = pair_idx
 
         filtered = filter_roads_by_feature_indices(
             source, used_feature_indices)
@@ -1327,6 +1426,7 @@ def _do_filter_p2p():
                 "original_count": original_count,
                 "layers": {"roads": filtered},
                 "route_groups": _route_groups,
+                "pairs": used_pairs,
             },
         )
     except Exception as e:
