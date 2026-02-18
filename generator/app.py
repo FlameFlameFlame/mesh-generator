@@ -1272,7 +1272,6 @@ def _do_filter_p2p():
         used_feature_indices = set()
         # Map feature_idx -> route_id so exclude can toggle whole routes
         feature_to_route: dict[int, int] = {}
-        route_id = 0
         for pair_idx, (s1, s2) in enumerate(pairs):
             _p2p_progress["current"] = pair_idx + 1
             n1 = _site_node(s1)
@@ -1288,8 +1287,7 @@ def _do_filter_p2p():
                     fi = collect_path_feature_indices(graph, p)
                     used_feature_indices.update(fi)
                     for fidx in fi:
-                        feature_to_route.setdefault(fidx, route_id)
-                    route_id += 1
+                        feature_to_route.setdefault(fidx, pair_idx)
                 logger.info(
                     "%s -> %s: %d paths found",
                     s1.name, s2.name, len(paths))
