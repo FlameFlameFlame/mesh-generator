@@ -53,16 +53,18 @@ def find_p2p_roads(roads_geojson, site_pairs, proximity_km=30.0):
     """
     features = roads_geojson.get("features", [])
 
-    # Group features by ref tag (fall back to name, then unnamed bucket)
-    groups = {}   # key -> {"ref", "name", "indices"}
+    # Group features by ref tag only — skip roads without one (city streets,
+    # unnamed segments) because they are not named through-routes.
+    groups = {}   # ref -> {"ref", "name", "indices"}
     for idx, feat in enumerate(features):
         props = feat.get("properties", {})
         ref  = (props.get("ref")  or "").strip()
+        if not ref:
+            continue  # skip — not a named through-route
         name = (props.get("name") or "").strip()
-        key  = ref or name or "unnamed"
-        if key not in groups:
-            groups[key] = {"ref": ref, "name": name, "indices": []}
-        groups[key]["indices"].append(idx)
+        if ref not in groups:
+            groups[ref] = {"ref": ref, "name": name, "indices": []}
+        groups[ref]["indices"].append(idx)
 
     logger.info("find_p2p_roads: %d road groups from %d features",
                 len(groups), len(features))
