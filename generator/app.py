@@ -33,6 +33,8 @@ _roads_geojson = None  # stored roads from Generate or Load
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
+_p2p_routes = []             # list of route dicts from find_p2p_roads
+_p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -59,8 +61,11 @@ HTML_PAGE = """<!DOCTYPE html>
   #btn-add-site.active { background: #c00; color: #fff; border-color: #900; }
   #toolbar .hint { margin-left: auto; color: #666; font-size: 0.9em; }
   #route-list { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
-  .route-pair { margin: 6px 0; }
-  .route-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+  #route-list strong { display: block; margin-bottom: 2px; }
+  .route-pair { margin: 8px 0 4px; }
+  .route-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
+  .route-item:hover { background: #f5f5f5; }
+  .route-chk  { flex-shrink: 0; cursor: pointer; }
   .route-dot  { display: inline-block; width: 12px; height: 12px;
                 border-radius: 50%; flex-shrink: 0; }
   .route-ref  { font-weight: bold; }
@@ -228,6 +233,7 @@ let hasElevation = false;
 const PAIR_COLORS = ['#2266aa','#e07000','#229933','#aa2222',
                      '#7722aa','#007799','#996600','#555555'];
 let wayIdToColor = {};  // populated after filter-p2p
+let _allRoutes = [];    // stored after filter-p2p for checkbox rendering
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -436,6 +442,7 @@ function doClear() {
       document.getElementById('chk-coveragecircles').checked = false;
       document.getElementById('coverage-circles-row').style.display = 'none';
       wayIdToColor = {};
+      _allRoutes = [];
       document.getElementById('chk-roadhex').checked = false;
       let rl = document.getElementById('route-list');
       if (rl) rl.innerHTML = '';
@@ -544,6 +551,7 @@ function doFilterP2P() {
 }
 
 function renderRouteList(routes) {
+  _allRoutes = routes;
   let el = document.getElementById('route-list');
   if (!el) return;
   if (!routes.length) { el.innerHTML = '<em>No routes found.</em>'; return; }
@@ -554,20 +562,38 @@ function renderRouteList(routes) {
     if (!byPair[key]) byPair[key] = [];
     byPair[key].push(r);
   });
-  let html = '';
+  let html = '<strong>Routes</strong>';
   Object.entries(byPair).forEach(function([pair, rs]) {
-    html += '<div class="route-pair"><strong>' + pair + '</strong>';
+    html += '<div class="route-pair"><em>' + pair + '</em>';
     rs.forEach(function(r) {
       let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
-      html += '<div class="route-item">'
+      html += '<label class="route-item">'
+            + '<input type="checkbox" class="route-chk" data-route-id="' + r.route_id + '" checked onchange="doSelectRoutes()">'
             + '<span class="route-dot" style="background:' + c + '"></span>'
             + '<span class="route-ref">' + (r.ref || 'unnamed') + '</span>'
             + ' <span class="route-count">(' + r.feature_indices.length + ' segments)</span>'
-            + '</div>';
+            + '</label>';
     });
     html += '</div>';
   });
   el.innerHTML = html;
+}
+
+function doSelectRoutes() {
+  let checks = document.querySelectorAll('.route-chk');
+  let selected = [];
+  checks.forEach(function(chk) {
+    if (chk.checked) selected.push(chk.dataset.routeId);
+  });
+  fetch('/api/roads/select-routes', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({route_ids: selected})
+  }).then(safeJson).then(function(res) {
+    if (res.error) { alert(res.error); return; }
+    renderLayers(res.layers || {});
+    setStatus(selected.length + ' route(s) selected, ' + (res.road_count || 0) + ' road segments');
+  }).catch(function(err) { alert('Error: ' + err); });
 }
 
 // --- Download elevation from SRTM ---
@@ -1023,13 +1049,15 @@ def detect_city_boundary(idx):
 def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _loaded_layers, _loaded_report
-    global _loaded_coverage, _elevation_path
+    global _loaded_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
+    _p2p_routes = []
+    _p2p_all_route_features = {}
     if _elevation_path and os.path.isfile(_elevation_path):
         try:
             os.unlink(_elevation_path)
@@ -1194,7 +1222,7 @@ def road_hexagons():
 @app.route("/api/roads/filter-p2p", methods=["POST"])
 def filter_p2p():
     """Filter roads to named routes that connect site pairs."""
-    global _roads_geojson, _loaded_layers
+    global _roads_geojson, _loaded_layers, _p2p_routes, _p2p_all_route_features
 
     from generator.graph import find_p2p_roads
     from math import atan2, cos, radians, sin, sqrt
@@ -1258,8 +1286,15 @@ def filter_p2p():
     routes, used_indices = find_p2p_roads(
         _roads_geojson, site_pairs, proximity_km=proximity_km)
 
-    # ── Filter roads GeoJSON to used features only ───────────────────
+    # ── Store routes for later selection ────────────────────────────
     all_features = _roads_geojson.get("features", [])
+    _p2p_routes = routes
+    _p2p_all_route_features = {
+        r["route_id"]: [all_features[i] for i in r["feature_indices"]]
+        for r in routes
+    }
+
+    # ── Filter roads GeoJSON to used features only (all selected initially) ──
     filtered_features = [f for i, f in enumerate(all_features)
                          if i in used_indices]
     filtered = {"type": "FeatureCollection", "features": filtered_features}
@@ -1289,6 +1324,27 @@ def filter_p2p():
         "route_groups":   route_groups,
         "pairs":          pairs_out,
     })
+
+
+@app.route("/api/roads/select-routes", methods=["POST"])
+def select_routes():
+    """Update roads layer to include only the selected routes."""
+    global _roads_geojson, _loaded_layers
+    data = request.json or {}
+    selected_ids = set(data.get("route_ids", []))
+
+    selected_features = []
+    for r in _p2p_routes:
+        if r["route_id"] in selected_ids:
+            selected_features.extend(_p2p_all_route_features.get(r["route_id"], []))
+
+    filtered = {"type": "FeatureCollection", "features": selected_features}
+    _roads_geojson = filtered
+    _loaded_layers["roads"] = filtered
+
+    logger.info("select_routes: %d routes selected, %d features",
+                len(selected_ids), len(selected_features))
+    return jsonify({"layers": {"roads": filtered}, "road_count": len(selected_features)})
 
 
 @app.route("/api/export", methods=["POST"])
