@@ -1,4 +1,4 @@
-"""Named-road proximity filter for P2P route finding."""
+"""P2P road route finder — proximity-based named-road grouping."""
 
 import logging
 import math
@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 def _haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
+    R = 6_371.0
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat / 2) ** 2
@@ -19,52 +19,41 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 def _min_dist_km(geom, lat, lon):
-    """Minimum haversine distance from any coordinate in geom to (lat, lon)."""
-    coords = list(geom.coords) if hasattr(geom, "coords") else []
-    if not coords:
-        # MultiLineString / GeometryCollection
+    """Minimum haversine distance from any vertex in geom to (lat, lon)."""
+    if hasattr(geom, "coords"):
+        coords = list(geom.coords)
+    else:
         return min(_min_dist_km(part, lat, lon) for part in geom.geoms)
     return min(_haversine_km(c[1], c[0], lat, lon) for c in coords)
 
 
-def find_p2p_roads(roads_geojson, site_pairs, proximity_km=10.0):
+def find_p2p_roads(roads_geojson, site_pairs, proximity_km=30.0):
     """
-    For each (site1, site2) pair find named roads (grouped by OSM ``ref``)
-    that pass within proximity_km of BOTH sites.
+    For each (site1, site2) pair find named roads (grouped by OSM `ref`,
+    falling back to `name`) that pass within proximity_km of BOTH sites.
 
     Args:
         roads_geojson: GeoJSON FeatureCollection
         site_pairs: list of (site1_dict, site2_dict) — each dict has lat/lon/name
-        proximity_km: max km from a site to a road to count as "connected"
+        proximity_km: max km from a site to any vertex of a road to count it
 
     Returns:
-        routes   — list of dicts:
-            {
-              "route_id":        str,
-              "ref":             str,   # OSM ref tag (e.g. "A-1")
-              "road_name":       str,   # OSM name tag (human label)
-              "pair_idx":        int,
-              "site1":           {"name", "lat", "lon"},
-              "site2":           {"name", "lat", "lon"},
-              "feature_indices": [int, ...],   # indices in roads_geojson
-              "way_ids":         [int, ...],   # osm_way_id values
-            }
+        routes       — list of dicts: {route_id, ref, road_name, pair_idx,
+                        site1, site2, feature_indices, way_ids}
         used_indices — set of feature indices appearing in any route
     """
     features = roads_geojson.get("features", [])
 
-    # Group features by ref tag only — skip roads without one (city streets,
-    # unnamed segments) because they are not named through-routes.
-    groups = {}   # ref -> {"ref", "name", "indices"}
+    # Group features by ref tag (fall back to name, then unnamed bucket)
+    groups = {}
     for idx, feat in enumerate(features):
-        props = feat.get("properties", {})
+        props = feat.get("properties") or {}
         ref  = (props.get("ref")  or "").strip()
-        if not ref:
-            continue  # skip — not a named through-route
         name = (props.get("name") or "").strip()
-        if ref not in groups:
-            groups[ref] = {"ref": ref, "name": name, "indices": []}
-        groups[ref]["indices"].append(idx)
+        key  = ref or name or "unnamed"
+        if key not in groups:
+            groups[key] = {"ref": ref, "name": name, "indices": []}
+        groups[key]["indices"].append(idx)
 
     logger.info("find_p2p_roads: %d road groups from %d features",
                 len(groups), len(features))
@@ -104,8 +93,10 @@ def find_p2p_roads(roads_geojson, site_pairs, proximity_km=10.0):
                     "ref":             grp["ref"] or grp["name"] or key,
                     "road_name":       grp["name"] or grp["ref"] or key,
                     "pair_idx":        pair_idx,
-                    "site1":           {"name": s1["name"], "lat": s1["lat"], "lon": s1["lon"]},
-                    "site2":           {"name": s2["name"], "lat": s2["lat"], "lon": s2["lon"]},
+                    "site1":           {"name": s1["name"], "lat": s1["lat"],
+                                        "lon": s1["lon"]},
+                    "site2":           {"name": s2["name"], "lat": s2["lat"],
+                                        "lon": s2["lon"]},
                     "feature_indices": grp["indices"],
                     "way_ids":         [w for w in way_ids if w is not None],
                 })
