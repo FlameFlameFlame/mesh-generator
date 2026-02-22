@@ -63,9 +63,12 @@ HTML_PAGE = """<!DOCTYPE html>
   #route-list { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
   #route-list strong { display: block; margin-bottom: 2px; }
   .route-pair { margin: 8px 0 4px; }
-  .route-item { display: flex; align-items: center; gap: 6px; padding: 2px 0; cursor: pointer; }
-  .route-item:hover { background: #f5f5f5; }
-  .route-chk  { flex-shrink: 0; cursor: pointer; }
+  .route-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+                margin: 3px 0; border: 2px solid #ccc; border-radius: 6px;
+                cursor: pointer; background: #fafafa;
+                transition: border-color 0.15s, background 0.15s; }
+  .route-card:hover  { border-color: #888; background: #f0f4ff; }
+  .route-card.active { border-color: #2266aa; background: #e0edff; font-weight: 600; }
   .route-dot  { display: inline-block; width: 12px; height: 12px;
                 border-radius: 50%; flex-shrink: 0; }
   .route-ref  { font-weight: bold; }
@@ -236,8 +239,12 @@ let hasElevation = false;
 // palette for up to 8 pairs
 const PAIR_COLORS = ['#2266aa','#e07000','#229933','#aa2222',
                      '#7722aa','#007799','#996600','#555555'];
-let wayIdToColor = {};  // populated after filter-p2p
-let _allRoutes = [];    // stored after filter-p2p for checkbox rendering
+let wayIdToColor = {};          // way_id -> hex color for active routes
+let _allRoutes = [];            // all routes from last filter-p2p
+let _activeRoutePerPair = {};   // pair_key -> route_id (one active per pair)
+let _wayIdToRouteId = {};       // way_id -> route_id (for map click)
+let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
+let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering)
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -519,18 +526,13 @@ function doFilterP2P() {
     btn.disabled = false;
     if (res.error) { alert(res.error); return; }
 
-    // Build way → color lookup from routes
-    wayIdToColor = {};
+    // Cache inline features per route for map rendering
+    _allRouteFeaturesMap = {};
     (res.routes || []).forEach(function(r) {
-      let color = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
-      (r.way_ids || []).forEach(function(wid) {
-        wayIdToColor[wid] = color;
-      });
+      _allRouteFeaturesMap[r.route_id] = r.features || [];
     });
 
-    renderLayers(res.layers || {});
-
-    // Show route summary in sidebar
+    // renderRouteList handles coloring + map rendering via applyRouteSelection
     renderRouteList(res.routes || []);
 
     // Draw site-to-site connection overlay
@@ -546,13 +548,14 @@ function doFilterP2P() {
           .addTo(layerGroups.connections);
       }
     });
-
-    setStatus('Filtered to ' + (res.road_count || 0) + ' road segments, '
-              + (res.routes || []).length + ' routes');
   }).catch(function(err) {
     btn.disabled = false;
     alert('Error: ' + err);
   });
+}
+
+function escHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;');
 }
 
 function renderRouteList(routes) {
@@ -560,6 +563,16 @@ function renderRouteList(routes) {
   let el = document.getElementById('route-list');
   if (!el) return;
   if (!routes.length) { el.innerHTML = '<em>No routes found.</em>'; return; }
+
+  // Build lookup tables for map-click handling
+  _wayIdToRouteId = {};
+  _routeIdToPairKey = {};
+  routes.forEach(function(r) {
+    let pk = r.site1.name + '\u2194' + r.site2.name;
+    _routeIdToPairKey[r.route_id] = pk;
+    (r.way_ids || []).forEach(function(wid) { _wayIdToRouteId[wid] = r.route_id; });
+  });
+
   // Group by pair
   let byPair = {};
   routes.forEach(function(r) {
@@ -567,38 +580,96 @@ function renderRouteList(routes) {
     if (!byPair[key]) byPair[key] = [];
     byPair[key].push(r);
   });
+
+  // Default: first route per pair is active
+  _activeRoutePerPair = {};
+  Object.entries(byPair).forEach(function([pair, rs]) {
+    _activeRoutePerPair[pair] = rs[0].route_id;
+  });
+
   let html = '<strong>Routes</strong>';
   Object.entries(byPair).forEach(function([pair, rs]) {
-    html += '<div class="route-pair"><em>' + pair + '</em>';
+    html += '<div class="route-pair"><em>' + escHtml(pair) + '</em>';
     rs.forEach(function(r) {
       let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
-      html += '<label class="route-item">'
-            + '<input type="checkbox" class="route-chk" data-route-id="' + r.route_id + '" checked onchange="doSelectRoutes()">'
+      let isActive = (_activeRoutePerPair[pair] === r.route_id);
+      html += '<div class="route-card' + (isActive ? ' active' : '') + '"'
+            + ' data-pair="' + escHtml(pair) + '"'
+            + ' data-route-id="' + escHtml(r.route_id) + '"'
+            + ' onclick="selectRoute(this.dataset.pair, this.dataset.routeId)">'
             + '<span class="route-dot" style="background:' + c + '"></span>'
-            + '<span class="route-ref">' + (r.ref || 'unnamed') + '</span>'
-            + ' <span class="route-count">(' + r.feature_indices.length + ' segments)</span>'
-            + '</label>';
+            + '<span class="route-ref">' + escHtml(r.ref || 'unnamed') + '</span>'
+            + ' <span class="route-count">(' + r.feature_indices.length + ' segs)</span>'
+            + '</div>';
     });
     html += '</div>';
   });
   el.innerHTML = html;
+
+  // Apply initial selection
+  applyRouteSelection();
 }
 
-function doSelectRoutes() {
-  let checks = document.querySelectorAll('.route-chk');
-  let selected = [];
-  checks.forEach(function(chk) {
-    if (chk.checked) selected.push(chk.dataset.routeId);
+function selectRoute(pairKey, routeId) {
+  _activeRoutePerPair[pairKey] = routeId;
+  // Update card highlights for this pair
+  document.querySelectorAll('.route-card').forEach(function(card) {
+    if (card.dataset.pair === pairKey) {
+      card.classList.toggle('active', card.dataset.routeId === routeId);
+    }
   });
+  applyRouteSelection();
+}
+
+function applyRouteSelection() {
+  let activeIds = new Set(Object.values(_activeRoutePerPair));
+  wayIdToColor = {};
+  (_allRoutes || []).forEach(function(r) {
+    if (!activeIds.has(r.route_id)) return;
+    let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
+    (r.way_ids || []).forEach(function(wid) { wayIdToColor[wid] = c; });
+  });
+
+  renderAllRoutesOnMap(activeIds);
+
+  // Sync backend for export
+  let selected = Array.from(activeIds);
   fetch('/api/roads/select-routes', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({route_ids: selected})
   }).then(safeJson).then(function(res) {
     if (res.error) { alert(res.error); return; }
-    renderLayers(res.layers || {});
     setStatus(selected.length + ' route(s) selected, ' + (res.road_count || 0) + ' road segments');
   }).catch(function(err) { alert('Error: ' + err); });
+}
+
+function renderAllRoutesOnMap(activeIds) {
+  layerGroups.roads.clearLayers();
+  if (!_allRoutes || !_allRoutes.length) { renderRoads(); return; }
+
+  let seen = new Set();
+  _allRoutes.forEach(function(r) {
+    let isActive = activeIds.has(r.route_id);
+    let feats = _allRouteFeaturesMap[r.route_id] || [];
+    feats.forEach(function(feat) {
+      let wid = (feat.properties || {}).osm_way_id;
+      let key = wid != null ? wid : JSON.stringify(feat.geometry);
+      if (seen.has(key)) return;
+      seen.add(key);
+      let color   = isActive ? (wayIdToColor[wid] || '#2266aa') : '#999';
+      let weight  = isActive ? 3 : 1.5;
+      let opacity = isActive ? 0.9 : 0.35;
+      let layer = L.geoJSON(feat, {style: {color, weight, opacity}});
+      layer.on('click', function() {
+        let rid = _wayIdToRouteId[wid];
+        if (!rid) return;
+        let pk = _routeIdToPairKey[rid];
+        if (pk) selectRoute(pk, rid);
+      });
+      layer.addTo(layerGroups.roads);
+    });
+  });
 }
 
 // --- Download elevation from SRTM ---
@@ -1298,6 +1369,10 @@ def filter_p2p():
         r["route_id"]: [all_features[i] for i in r["feature_indices"]]
         for r in routes
     }
+
+    # Embed features inline so frontend can render all routes without re-fetching
+    for r in routes:
+        r["features"] = [all_features[i] for i in r["feature_indices"]]
 
     # ── Filter roads GeoJSON to used features only (all selected initially) ──
     filtered_features = [f for i, f in enumerate(all_features)
