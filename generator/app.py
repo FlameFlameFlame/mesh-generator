@@ -117,10 +117,6 @@ HTML_PAGE = """<!DOCTYPE html>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
-  <label title="Max km a road must come within of each site to count as a candidate route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
-    <input id="p2p-proximity" type="number" value="10" min="1" max="200" step="1"
-           style="width:48px;padding:3px 4px;"> km proximity
-  </label>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
   <button onclick="doLoadProject()">Load Project</button>
@@ -523,10 +519,9 @@ function doFilterP2P() {
   let btn = document.getElementById('btn-p2p');
   btn.disabled = true;
   setStatus('Filtering roads\u2026');
-  let proximityKm = parseFloat(document.getElementById('p2p-proximity').value) || 10;
   fetch('/api/roads/filter-p2p', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({proximity_km: proximityKm})
+    body: JSON.stringify({})
   }).then(safeJson).then(function(res) {
     btn.disabled = false;
     if (res.error) { alert(res.error); return; }
@@ -1463,10 +1458,7 @@ def filter_p2p():
     site_pairs = [(_site_dict(s1), _site_dict(s2)) for s1, s2 in pairs_raw]
 
     # ── Find named routes ────────────────────────────────────────────
-    proximity_km = float(request.json.get("proximity_km", 30)) \
-        if request.json else 30.0
-    routes, used_indices = find_p2p_roads(
-        _roads_geojson, site_pairs, proximity_km=proximity_km)
+    routes, used_indices = find_p2p_roads(_roads_geojson, site_pairs)
 
     # ── Store routes for later selection ────────────────────────────
     all_features = _roads_geojson.get("features", [])
