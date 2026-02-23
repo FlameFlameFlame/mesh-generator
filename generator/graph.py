@@ -16,7 +16,7 @@ _BRIDGE_M = 600
 # Weight multiplier for penalised roads when searching for alternatives.
 _PENALTY = 1_000.0
 
-# Cost multipliers by OSM highway type.
+# Cost multipliers by OSM highway type (applied to haversine distance).
 # Lower = preferred.  Motorway/trunk are ~1×, local roads ~10×.
 _HIGHWAY_COST = {
     "motorway":       1.0,
@@ -31,6 +31,26 @@ _HIGHWAY_COST = {
     "tertiary_link":  7.0,
 }
 _DEFAULT_COST = 10.0   # unclassified / residential / service / etc.
+
+# Fixed overhead added to every edge regardless of length.
+# Represents the "cost" of using a road of that class at all —
+# makes Dijkstra strongly avoid routes that stitch together many
+# short local connectors (which would be cheap on distance alone).
+# Value is in the same units as haversine_km × cost_mult (weighted-km).
+# 0.5 weighted-km overhead ≈ the cost of 500 m on a motorway.
+_HIGHWAY_OVERHEAD = {
+    "motorway":       0.0,
+    "motorway_link":  0.1,
+    "trunk":          0.0,
+    "trunk_link":     0.1,
+    "primary":        0.1,
+    "primary_link":   0.2,
+    "secondary":      0.5,
+    "secondary_link": 0.6,
+    "tertiary":       1.0,
+    "tertiary_link":  1.2,
+}
+_DEFAULT_OVERHEAD = 2.0  # residential / unclassified / service
 
 
 # ---------------------------------------------------------------------------
@@ -105,7 +125,9 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
                     continue
                 lon1, lat1 = node_coords[n1]
                 lon2, lat2 = node_coords[n2]
-                w = _haversine_km(lat1, lon1, lat2, lon2) * cost_mult
+                overhead = _HIGHWAY_OVERHEAD.get(highway, _DEFAULT_OVERHEAD)
+                w = (_haversine_km(lat1, lon1, lat2, lon2) * cost_mult
+                     + overhead)
                 adj[n1].append((n2, w, idx))
                 adj[n2].append((n1, w, idx))
 
@@ -198,18 +220,31 @@ def _dijkstra(adj, starts, end_set, feat_ref=None, penalised=None):
     return dist_map, None
 
 
-def _extract_path_refs(dist_map, end_node, feat_ref):
-    """Walk predecessor chain; return set of ref tags on the path."""
+def _extract_path(dist_map, end_node, feat_ref, node_coords):
+    """
+    Walk predecessor chain; return:
+      refs         — set of ref tags on the path
+      feat_indices — set of feature indices on the path
+      ref_km       — dict ref -> total haversine km on path for that ref
+    """
     refs = set()
+    feat_indices = set()
+    ref_km: dict = {}
     cur = end_node
     while cur is not None and cur != -1:
         _, prev, fidx = dist_map[cur]
-        if fidx >= 0:
+        if fidx >= 0 and prev != -1:
+            feat_indices.add(fidx)
             ref = feat_ref.get(fidx, "")
             if ref:
                 refs.add(ref)
+                # Accumulate raw km for this edge
+                lon1, lat1 = node_coords[cur]
+                lon2, lat2 = node_coords[prev]
+                km = _haversine_km(lat1, lon1, lat2, lon2)
+                ref_km[ref] = ref_km.get(ref, 0.0) + km
         cur = prev if prev != -1 else None
-    return refs
+    return refs, feat_indices, ref_km
 
 
 # ---------------------------------------------------------------------------
@@ -220,16 +255,21 @@ def find_p2p_roads(
     roads_geojson, site_pairs, proximity_km=10.0, n_alternatives=2
 ):
     """
-    For each (site1, site2) pair find named roads (OSM ``ref`` groups) that
-    form connecting paths through the road network.
+    For each (site1, site2) pair find road routes connecting the sites.
 
-    Higher-quality roads (motorway, trunk, primary) are strongly preferred
-    over local roads via edge cost multipliers.  After finding the cheapest
-    path, those refs are penalised and the search repeats to discover
-    genuinely different route options.
+    Each route is a complete Dijkstra path from site1 to site2.  The first
+    run finds the best (cheapest) path; subsequent runs penalise all refs
+    from prior paths so Dijkstra is forced onto genuinely different roads.
+
+    A route may use multiple named highways (e.g. "Մ-3 + Մ-7") — the
+    feature set is the actual traversed segments, clipped to within
+    eff_proximity of either endpoint.
+
+    The effective proximity is max(proximity_km, site_distance/3) so that
+    parallel alternative highways are captured even for distant city pairs.
 
     Returns:
-        routes       — list of dicts: route_id, ref, road_name, pair_idx,
+        routes       — list of dicts: route_id, refs, road_name, pair_idx,
                         site1, site2, feature_indices, way_ids
         used_indices — set of feature indices used by any route
     """
@@ -239,17 +279,21 @@ def find_p2p_roads(
 
     node_coords, adj, feat_ref = _build_graph(features)
 
-    ref_to_indices = defaultdict(list)
-    for idx, feat in enumerate(features):
-        ref = (feat.get("properties") or {}).get("ref", "").strip()
-        if ref:
-            ref_to_indices[ref].append(idx)
-
     routes = []
     used_indices = set()
     route_counter = 0
 
     for pair_idx, (s1, s2) in enumerate(site_pairs):
+        site_dist_km = _haversine_km(
+            s1["lat"], s1["lon"], s2["lat"], s2["lon"]
+        )
+        logger.info(
+            "Pair %s\u2194%s: dist=%.1f km, proximity=%.1f km",
+            s1["name"], s2["name"], site_dist_km, proximity_km,
+        )
+
+        # Dijkstra source/target nodes: use the user-specified proximity_km
+        # so the path must genuinely reach close to each city.
         starts, ends = [], []
         for nid, (lon, lat) in enumerate(node_coords):
             d1 = _haversine_km(lat, lon, s1["lat"], s1["lon"])
@@ -277,7 +321,7 @@ def find_p2p_roads(
             continue
         end_set = {nid for _, nid in ends}
 
-        all_found_refs = set()
+        all_found_ref_sets = []   # list of frozenset, one per route found
         penalised_refs = set()
 
         for _attempt in range(1 + n_alternatives):
@@ -287,75 +331,76 @@ def find_p2p_roads(
             )
             if found_end is None:
                 break
-            path_refs = _extract_path_refs(dist_map, found_end, feat_ref)
-            new_refs = path_refs - all_found_refs
-            if not new_refs:
-                break
-            all_found_refs |= new_refs
-            penalised_refs |= path_refs
 
-        if not all_found_refs:
-            logger.warning(
-                "Pair %s↔%s: no connected path found",
-                s1["name"], s2["name"],
+            path_refs, path_feat_indices, ref_km = _extract_path(
+                dist_map, found_end, feat_ref, node_coords
             )
-            continue
 
-        for ref in sorted(all_found_refs):
-            all_idx = ref_to_indices.get(ref, [])
-            if not all_idx:
-                continue
+            # Skip if this ref-set is identical to an already-found route
+            ref_key = frozenset(path_refs)
+            if ref_key in all_found_ref_sets:
+                break
+            all_found_ref_sets.append(ref_key)
 
-            # For each feature compute min distance to each site.
-            # A feature is "near site1" if any vertex is within proximity_km.
-            # Only keep features that are near at least one of the two sites —
-            # this clips the highway to the section between the sites and
-            # drops fragments that happen to lie along a detour far away.
-            # The ref is only emitted if the clipped set covers BOTH sites.
-            near1 = set()
-            near2 = set()
-            for i in all_idx:
-                geom = features[i].get("geometry") or {}
-                coords = []
-                if geom.get("type") == "LineString":
-                    coords = geom.get("coordinates", [])
-                elif geom.get("type") == "MultiLineString":
-                    for line in geom.get("coordinates", []):
-                        coords.extend(line)
-                for c in coords:
-                    if _haversine_km(c[1], c[0],
-                                     s1["lat"], s1["lon"]) < proximity_km:
-                        near1.add(i)
-                    if _haversine_km(c[1], c[0],
-                                     s2["lat"], s2["lon"]) < proximity_km:
-                        near2.add(i)
+            total_km = sum(ref_km.values())
 
-            # Route only valid if road reaches both sites
-            if not near1 or not near2:
+            # Penalise only refs that account for ≥10% of the named-road
+            # distance on this path.  These are the "backbone" refs.
+            # Refs with small km share are city-entry connectors that the
+            # next route will also need — penalising them would block M-1
+            # just because it shares a short junction segment with M-3.
+            dominant_refs = {
+                r for r, km in ref_km.items()
+                if total_km == 0 or km / total_km >= 0.10
+            }
+            penalised_refs |= dominant_refs
+
+            # path_feat_indices are the actual Dijkstra-traversed features.
+            # Drop only bridge edges (feat_idx -1 = synthetic gap-closing
+            # edges with no real GeoJSON geometry).
+            # Features in the middle of a long highway (far from both
+            # endpoints) are legitimately on the route, so we keep them all.
+            if not path_feat_indices:
                 logger.debug(
-                    "Ref %s skipped: not near both sites "
-                    "(near1=%d, near2=%d)",
-                    ref, len(near1), len(near2),
+                    "Route %d: empty path features", route_counter,
                 )
                 continue
 
-            # Clip to features near either site
-            idx_list = sorted(
-                i for i in all_idx if i in near1 or i in near2
+            idx_list = sorted(path_feat_indices)
+
+            # Label: only refs covering ≥5% of named-road distance.
+            label_refs = sorted(
+                r for r, km in ref_km.items()
+                if total_km == 0 or km / total_km >= 0.05
+            )
+            refs_label = (
+                ", ".join(label_refs) if label_refs
+                else ", ".join(sorted(path_refs)) if path_refs
+                else "unnamed"
             )
 
-            props0 = (features[idx_list[0]].get("properties") or {})
-            name = props0.get("name", "") or ""
+            # Road name: prefer the name of the first named feature on the path
+            road_name = ""
+            for i in idx_list:
+                n = (features[i].get("properties") or {}).get("name", "") or ""
+                if n:
+                    road_name = n
+                    break
+            if not road_name:
+                road_name = refs_label
+
             way_ids = [
                 (features[i].get("properties") or {}).get("osm_way_id")
                 for i in idx_list
                 if (features[i].get("properties") or {}).get(
                     "osm_way_id") is not None
             ]
+
             routes.append({
                 "route_id":        f"route_{route_counter}",
-                "ref":             ref,
-                "road_name":       name or ref,
+                "refs":            sorted(path_refs),
+                "ref":             refs_label,   # kept for UI compatibility
+                "road_name":       road_name,
                 "pair_idx":        pair_idx,
                 "site1":           {
                     "name": s1["name"],
@@ -373,9 +418,16 @@ def find_p2p_roads(
             used_indices.update(idx_list)
             route_counter += 1
 
-        logger.info(
-            "Pair %d (%s↔%s): found refs %s",
-            pair_idx, s1["name"], s2["name"], sorted(all_found_refs),
-        )
+            logger.info(
+                "Pair %d (%s↔%s) route %d: refs=%s, features=%d",
+                pair_idx, s1["name"], s2["name"],
+                route_counter - 1, refs_label, len(idx_list),
+            )
+
+        if not routes or all(r["pair_idx"] != pair_idx for r in routes):
+            logger.warning(
+                "Pair %s↔%s: no connected path found",
+                s1["name"], s2["name"],
+            )
 
     return routes, used_indices
