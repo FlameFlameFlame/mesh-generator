@@ -302,9 +302,48 @@ def find_p2p_roads(
             continue
 
         for ref in sorted(all_found_refs):
-            idx_list = ref_to_indices.get(ref, [])
-            if not idx_list:
+            all_idx = ref_to_indices.get(ref, [])
+            if not all_idx:
                 continue
+
+            # For each feature compute min distance to each site.
+            # A feature is "near site1" if any vertex is within proximity_km.
+            # Only keep features that are near at least one of the two sites —
+            # this clips the highway to the section between the sites and
+            # drops fragments that happen to lie along a detour far away.
+            # The ref is only emitted if the clipped set covers BOTH sites.
+            near1 = set()
+            near2 = set()
+            for i in all_idx:
+                geom = features[i].get("geometry") or {}
+                coords = []
+                if geom.get("type") == "LineString":
+                    coords = geom.get("coordinates", [])
+                elif geom.get("type") == "MultiLineString":
+                    for line in geom.get("coordinates", []):
+                        coords.extend(line)
+                for c in coords:
+                    if _haversine_km(c[1], c[0],
+                                     s1["lat"], s1["lon"]) < proximity_km:
+                        near1.add(i)
+                    if _haversine_km(c[1], c[0],
+                                     s2["lat"], s2["lon"]) < proximity_km:
+                        near2.add(i)
+
+            # Route only valid if road reaches both sites
+            if not near1 or not near2:
+                logger.debug(
+                    "Ref %s skipped: not near both sites "
+                    "(near1=%d, near2=%d)",
+                    ref, len(near1), len(near2),
+                )
+                continue
+
+            # Clip to features near either site
+            idx_list = sorted(
+                i for i in all_idx if i in near1 or i in near2
+            )
+
             props0 = (features[idx_list[0]].get("properties") or {})
             name = props0.get("name", "") or ""
             way_ids = [
