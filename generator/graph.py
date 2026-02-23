@@ -251,6 +251,33 @@ def _extract_path(dist_map, end_node, feat_ref, node_coords):
 # Public API
 # ---------------------------------------------------------------------------
 
+def _boundary_proximity_nodes(node_coords, boundary_geojson, proximity_km):
+    """
+    Return (dist, nid) pairs for road nodes that are within proximity_km of
+    any point on the city boundary perimeter.  Falls back to an empty list
+    if the boundary cannot be processed.
+    """
+    try:
+        from generator.boundaries import sample_border_points
+        border_pts = sample_border_points(boundary_geojson, n=32)
+    except Exception as e:
+        logger.warning("Failed to sample border points: %s", e)
+        return []
+
+    if not border_pts:
+        return []
+
+    result = []
+    for nid, (lon, lat) in enumerate(node_coords):
+        min_d = min(
+            _haversine_km(lat, lon, blat, blon)
+            for blat, blon in border_pts
+        )
+        if min_d < proximity_km:
+            result.append((min_d, nid))
+    return result
+
+
 def find_p2p_roads(
     roads_geojson, site_pairs, proximity_km=10.0, n_alternatives=2
 ):
@@ -265,8 +292,11 @@ def find_p2p_roads(
     feature set is the actual traversed segments, clipped to within
     eff_proximity of either endpoint.
 
-    The effective proximity is max(proximity_km, site_distance/3) so that
-    parallel alternative highways are captured even for distant city pairs.
+    site_pairs entries may contain an optional ``boundary_geojson`` key.
+    When present, Dijkstra endpoints are road nodes near the city boundary
+    perimeter rather than nodes near the site centre coordinate.  This
+    ensures the route actually exits/enters the city at a road, not at the
+    site pin dropped somewhere inside the city.
 
     Returns:
         routes       — list of dicts: route_id, refs, road_name, pair_idx,
@@ -292,16 +322,38 @@ def find_p2p_roads(
             s1["name"], s2["name"], site_dist_km, proximity_km,
         )
 
-        # Dijkstra source/target nodes: use the user-specified proximity_km
-        # so the path must genuinely reach close to each city.
-        starts, ends = [], []
-        for nid, (lon, lat) in enumerate(node_coords):
-            d1 = _haversine_km(lat, lon, s1["lat"], s1["lon"])
-            d2 = _haversine_km(lat, lon, s2["lat"], s2["lon"])
-            if d1 < proximity_km:
-                starts.append((d1, nid))
-            if d2 < proximity_km:
-                ends.append((d2, nid))
+        # Dijkstra source/target nodes.
+        # If a city boundary is available, use nodes near the boundary
+        # perimeter so the path enters/exits the city at a real road.
+        # Otherwise fall back to nodes within proximity_km of the site pin.
+        starts: list[tuple[float, int]] = []
+        ends: list[tuple[float, int]] = []
+
+        if s1.get("boundary_geojson"):
+            starts = _boundary_proximity_nodes(
+                node_coords, s1["boundary_geojson"], proximity_km)
+            logger.info(
+                "Site %s: using boundary-proximity nodes, found %d",
+                s1["name"], len(starts),
+            )
+        if not starts:
+            for nid, (lon, lat) in enumerate(node_coords):
+                d1 = _haversine_km(lat, lon, s1["lat"], s1["lon"])
+                if d1 < proximity_km:
+                    starts.append((d1, nid))
+
+        if s2.get("boundary_geojson"):
+            ends = _boundary_proximity_nodes(
+                node_coords, s2["boundary_geojson"], proximity_km)
+            logger.info(
+                "Site %s: using boundary-proximity nodes, found %d",
+                s2["name"], len(ends),
+            )
+        if not ends:
+            for nid, (lon, lat) in enumerate(node_coords):
+                d2 = _haversine_km(lat, lon, s2["lat"], s2["lon"])
+                if d2 < proximity_km:
+                    ends.append((d2, nid))
 
         if not starts or not ends:
             logger.warning(
@@ -367,6 +419,37 @@ def find_p2p_roads(
                 continue
 
             idx_list = sorted(path_feat_indices)
+
+            # Sanity check: discard routes whose total road distance is more
+            # than 3× the straight-line site-to-site distance.  This catches
+            # degenerate "third alternative" paths that Dijkstra finds by
+            # stitching together distant residential roads after all the real
+            # highway refs have been penalised.
+            route_km = 0.0
+            for fi in idx_list:
+                geom = (features[fi].get("geometry") or {})
+                gtype = geom.get("type", "")
+                if gtype == "LineString":
+                    segs = [geom.get("coordinates", [])]
+                elif gtype == "MultiLineString":
+                    segs = geom.get("coordinates", [])
+                else:
+                    segs = []
+                for seg in segs:
+                    for k in range(len(seg) - 1):
+                        route_km += _haversine_km(
+                            seg[k][1], seg[k][0],
+                            seg[k + 1][1], seg[k + 1][0],
+                        )
+            max_detour_km = max(site_dist_km * 3.0, site_dist_km + 50.0)
+            if site_dist_km > 0 and route_km > max_detour_km:
+                logger.info(
+                    "Pair %d (%s↔%s) attempt %d: route too long "
+                    "(%.1f km > %.1f km limit), discarding",
+                    pair_idx, s1["name"], s2["name"],
+                    _attempt, route_km, max_detour_km,
+                )
+                continue
 
             # Label: only refs covering ≥5% of named-road distance.
             label_refs = sorted(

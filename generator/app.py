@@ -1081,7 +1081,7 @@ function doRunOptimization() {
           let marker = L.circleMarker(latlng, {
             radius: 7, color: '#000', weight: 1.5, fillColor: color, fillOpacity: 0.9
           });
-          let cityLink = feature.properties.city_link ? ' \u{1F3D9} City link' : '';
+          let cityLink = feature.properties.city_link ? ' 🏙 City link' : '';
           marker.bindTooltip(
             '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
             'Route: ' + src + cityLink + '<br>' +
@@ -1451,14 +1451,16 @@ def filter_p2p():
 
     logger.info("filter_p2p: %d pairs", len(pairs_raw))
 
-    # Convert to plain dicts for find_p2p_roads
-    site_pairs = [
-        (
-            {"name": s1.name, "lat": s1.lat, "lon": s1.lon},
-            {"name": s2.name, "lat": s2.lat, "lon": s2.lon},
-        )
-        for s1, s2 in pairs_raw
-    ]
+    # Convert to plain dicts for find_p2p_roads.
+    # Include boundary_geojson so the router can use city border nodes
+    # as Dijkstra endpoints instead of the site centre coordinate.
+    def _site_dict(s):
+        d = {"name": s.name, "lat": s.lat, "lon": s.lon}
+        if s.boundary_geojson:
+            d["boundary_geojson"] = s.boundary_geojson
+        return d
+
+    site_pairs = [(_site_dict(s1), _site_dict(s2)) for s1, s2 in pairs_raw]
 
     # ── Find named routes ────────────────────────────────────────────
     proximity_km = float(request.json.get("proximity_km", 30)) \
