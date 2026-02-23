@@ -293,7 +293,7 @@ def _nearest_node(node_coords, lat, lon):
 
 
 def find_p2p_roads(
-    roads_geojson, site_pairs, n_alternatives=2
+    roads_geojson, site_pairs, n_alternatives=1
 ):
     """
     For each (site1, site2) pair find road routes connecting the sites.
@@ -418,27 +418,21 @@ def find_p2p_roads(
 
             idx_list = sorted(path_feat_indices)
 
-            # Sanity check: discard routes whose total road distance is more
-            # than 3× the straight-line site-to-site distance.  This catches
-            # degenerate "third alternative" paths that Dijkstra finds by
-            # stitching together distant residential roads after all the real
-            # highway refs have been penalised.
+            # Sanity check: discard routes whose actual traversed distance is
+            # more than 3× the straight-line site-to-site distance.
+            # Measure by walking the predecessor chain (actual Dijkstra path),
+            # NOT by summing up feature geometries (which can be much longer
+            # since a highway feature spans many kilometres).
             route_km = 0.0
-            for fi in idx_list:
-                geom = (features[fi].get("geometry") or {})
-                gtype = geom.get("type", "")
-                if gtype == "LineString":
-                    segs = [geom.get("coordinates", [])]
-                elif gtype == "MultiLineString":
-                    segs = geom.get("coordinates", [])
-                else:
-                    segs = []
-                for seg in segs:
-                    for k in range(len(seg) - 1):
-                        route_km += _haversine_km(
-                            seg[k][1], seg[k][0],
-                            seg[k + 1][1], seg[k + 1][0],
-                        )
+            cur = found_end
+            while cur is not None and cur != -1:
+                dist_entry = dist_map[cur]
+                prev = dist_entry[1]
+                if prev != -1:
+                    c_lon, c_lat = node_coords[cur]
+                    p_lon, p_lat = node_coords[prev]
+                    route_km += _haversine_km(c_lat, c_lon, p_lat, p_lon)
+                cur = prev if prev != -1 else None
             max_detour_km = site_dist_km * 3.0
             if site_dist_km > 0 and route_km > max_detour_km:
                 logger.info(
