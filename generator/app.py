@@ -127,6 +127,11 @@ HTML_PAGE = """<!DOCTYPE html>
   <button class="danger" onclick="doClear()">Clear</button>
   <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
   <button class="primary" onclick="doExport()">Export</button>
+  <button class="primary" id="btn-optimize" onclick="doRunOptimization()">Run Optimization</button>
+  <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
+    <input id="opt-max-towers" type="number" value="8" min="1" max="50" step="1"
+           style="width:44px;padding:3px 4px;"> towers/route
+  </label>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
 </div>
 
@@ -1040,6 +1045,105 @@ function setStatus(msg) {
   if (msg) { el.style.display = 'block'; el.textContent = msg; }
   else { el.style.display = 'none'; }
 }
+
+// --- Run mesh_calculator optimization on selected routes ---
+
+function doRunOptimization() {
+  let btn = document.getElementById('btn-optimize');
+  let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
+  btn.disabled = true;
+  setStatus('Running optimization\u2026 (this may take a minute)');
+
+  fetch('/api/run-optimization', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({max_towers_per_route: maxTowers})
+  }).then(safeJson).then(function(res) {
+    btn.disabled = false;
+    if (res.error) { alert('Optimization failed: ' + res.error); setStatus(''); return; }
+
+    let s = res.summary || {};
+    setStatus(
+      'Optimization complete: ' + (s.total_towers || 0) + ' towers, ' +
+      (s.visibility_edges || 0) + ' links'
+    );
+
+    // Render towers layer
+    layerGroups.towers.clearLayers();
+    let sourceCounts = {};
+    if (res.towers) {
+      _cachedTowersGeojson = res.towers;
+      L.geoJSON(res.towers, {
+        pointToLayer: function(feature, latlng) {
+          let src = feature.properties.route_id || feature.properties.source || 'route';
+          sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+          let color = PAIR_COLORS[Object.keys(sourceCounts).indexOf(src) % PAIR_COLORS.length];
+          let marker = L.circleMarker(latlng, {
+            radius: 7, color: '#000', weight: 1.5, fillColor: color, fillOpacity: 0.9
+          });
+          let cityLink = feature.properties.city_link ? ' \u{1F3D9} City link' : '';
+          marker.bindTooltip(
+            '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
+            'Route: ' + src + cityLink + '<br>' +
+            'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026',
+            {direction: 'top'}
+          );
+          return marker;
+        }
+      }).addTo(layerGroups.towers);
+      showTowerLegend(sourceCounts);
+    }
+
+    // Render visibility edges
+    layerGroups.edges.clearLayers();
+    if (res.edges) {
+      L.geoJSON(res.edges, {
+        style: function(feature) {
+          let d = feature.properties.distance_m || 0;
+          return { color: edgeColor(d), weight: 2, opacity: 0.75 };
+        },
+        onEachFeature: function(feature, layer) {
+          let p = feature.properties;
+          let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(1) : '?';
+          let loss = p.path_loss_db != null ? p.path_loss_db.toFixed(1) : 'N/A';
+          let clr  = p.clearance_m  != null ? p.clearance_m.toFixed(1)  : 'N/A';
+          layer.bindTooltip(
+            '<b>Link ' + p.source_id + ' \u2194 ' + p.target_id + '</b><br>' +
+            'Distance: ' + distKm + ' km<br>' +
+            'Path loss: ' + loss + ' dB<br>' +
+            'Clearance: ' + clr + ' m',
+            {sticky: true}
+          );
+        }
+      }).addTo(layerGroups.edges);
+      document.getElementById('chk-edges').checked = true;
+    }
+
+    // Cache coverage for the hexagon overlay toggle
+    if (res.coverage) {
+      coverageData = res.coverage;
+      coverageFetched = true;
+    }
+
+    // Show report panel
+    if (s.total_towers != null) {
+      showReport({
+        total_cells: s.total_cells || 0,
+        cells_with_towers: s.total_towers || 0,
+        total_towers: s.total_towers || 0,
+        num_clusters: 1,
+        towers_by_source: (s.route_summaries || []).reduce(function(acc, r) {
+          acc[r.route_id] = (r.towers_new || 0) + (r.towers_reused || 0);
+          return acc;
+        }, {}),
+      });
+    }
+  }).catch(function(err) {
+    btn.disabled = false;
+    setStatus('');
+    alert('Optimization error: ' + err);
+  });
+}
 </script>
 </body>
 </html>"""
@@ -1427,6 +1531,117 @@ def select_routes():
     return jsonify({"layers": {"roads": filtered}, "road_count": len(selected_features)})
 
 
+@app.route("/api/run-optimization", methods=["POST"])
+def run_optimization():
+    """
+    Run the mesh_calculator route pipeline on the currently selected routes.
+
+    Body (JSON, all optional):
+        max_towers_per_route: int  (default 8)
+        parameters: dict           (MeshConfig overrides, e.g. h3_resolution, mast_height_m)
+
+    Returns JSON:
+        { towers: GeoJSON FeatureCollection,
+          edges:  GeoJSON FeatureCollection,
+          coverage: GeoJSON FeatureCollection,
+          summary: { total_towers, visibility_edges, total_cells, ... } }
+
+    mesh_calculator must be importable (install it in the same venv).
+    Elevation must have been downloaded first.
+    """
+    try:
+        from mesh_calculator.core.config import MeshConfig, RouteSpec
+        from mesh_calculator.optimization.route_pipeline import run_route_pipeline
+    except ImportError as exc:
+        return jsonify({
+            "error": (
+                "mesh_calculator is not installed in this Python environment. "
+                f"Install it with: cd mesh_calculator && poetry install  ({exc})"
+            )
+        }), 500
+
+    if not _p2p_routes:
+        return jsonify({"error": "No routes found. Run Filter P2P first."}), 400
+
+    if not _elevation_path or not os.path.isfile(_elevation_path):
+        return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+
+    body = request.json or {}
+    max_towers = int(body.get("max_towers_per_route", 8))
+    param_overrides = body.get("parameters", {})
+
+    # Build MeshConfig (with optional overrides from request body)
+    from mesh_calculator.core.config import MeshConfig
+    valid_fields = MeshConfig.__dataclass_fields__
+    mesh_config = MeshConfig(**{k: v for k, v in param_overrides.items() if k in valid_fields})
+
+    # Build RouteSpec list from currently selected routes + their features
+    all_features = _roads_geojson.get("features", []) if _roads_geojson else []
+    route_specs = []
+    for r in _p2p_routes:
+        # Only include routes whose features are in the currently selected roads
+        feats = _p2p_all_route_features.get(r["route_id"], [])
+        if not feats:
+            continue
+        route_specs.append(RouteSpec(
+            route_id=r["route_id"],
+            features=feats,
+            site1=r.get("site1", {}),
+            site2=r.get("site2", {}),
+            max_towers=max_towers,
+        ))
+
+    if not route_specs:
+        return jsonify({"error": "No route features available. Run Filter P2P and select routes first."}), 400
+
+    # Collect city boundaries from sites that have boundary_geojson
+    city_boundaries_geojson = None
+    city_features = [
+        {"type": "Feature", "geometry": s.boundary_geojson, "properties": {"name": s.boundary_name}}
+        for s in store
+        if s.boundary_geojson is not None
+    ]
+    if city_features:
+        city_boundaries_geojson = {"type": "FeatureCollection", "features": city_features}
+
+    import tempfile
+    tmp_dir = tempfile.mkdtemp(prefix="mesh_opt_")
+
+    try:
+        logger.info(
+            "run_optimization: %d routes, max_towers=%d, output=%s",
+            len(route_specs), max_towers, tmp_dir,
+        )
+        summary = run_route_pipeline(
+            routes=route_specs,
+            mesh_config=mesh_config,
+            elevation_path=_elevation_path,
+            city_boundaries_geojson=city_boundaries_geojson,
+            output_dir=tmp_dir,
+        )
+
+        # Load and return the output GeoJSON files
+        import json as _json
+        result = {"summary": summary}
+        for key, fname in [("towers", "towers.geojson"),
+                           ("edges", "visibility_edges.geojson"),
+                           ("coverage", "coverage.geojson")]:
+            fpath = os.path.join(tmp_dir, fname)
+            if os.path.isfile(fpath):
+                with open(fpath) as f:
+                    result[key] = _json.load(f)
+
+        logger.info(
+            "run_optimization complete: %d towers, %d edges",
+            summary.get("total_towers", 0), summary.get("visibility_edges", 0),
+        )
+        return jsonify(result)
+
+    except Exception as exc:
+        logger.exception("run_optimization failed")
+        return jsonify({"error": str(exc)}), 500
+
+
 @app.route("/api/export", methods=["POST"])
 def export():
     if len(store) == 0:
@@ -1479,12 +1694,41 @@ def export():
         city_boundaries_path=city_boundaries_path,
     )
 
+    # Export routes.json for standalone CLI use with mesh-calculator-routes
+    routes_path = ""
+    if _p2p_routes:
+        routes_path = os.path.join(output_dir, "routes.json")
+        all_feats = _roads_geojson.get("features", []) if _roads_geojson else []
+        routes_export = {
+            "parameters": {
+                "h3_resolution": 8,
+                "frequency_hz": 868_000_000,
+                "mast_height_m": 28,
+                "max_visibility_m": 70_000,
+                "tower_separation_m": 5_000,
+            },
+            "routes": [
+                {
+                    "route_id": r["route_id"],
+                    "site1": r.get("site1", {}),
+                    "site2": r.get("site2", {}),
+                    "max_towers": 8,
+                    "features": _p2p_all_route_features.get(r["route_id"], []),
+                }
+                for r in _p2p_routes
+            ],
+        }
+        with open(routes_path, "w") as f:
+            json.dump(routes_export, f, indent=2)
+        logger.info("Exported routes to %s (%d routes)", routes_path, len(_p2p_routes))
+
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
         "files": [sites_path, boundary_path, roads_path,
-                  elevation_export_path, os.path.join(output_dir, "config.yaml")],
+                  elevation_export_path, os.path.join(output_dir, "config.yaml"),
+                  routes_path],
     })
 
 
