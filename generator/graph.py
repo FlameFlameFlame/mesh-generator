@@ -251,31 +251,33 @@ def _extract_path(dist_map, end_node, feat_ref, node_coords):
 # Public API
 # ---------------------------------------------------------------------------
 
-def _boundary_perimeter_nodes(node_coords, boundary_geojson, band_km=5.0):
+def _nearest_node_outside_boundary(
+        node_coords, boundary_geojson, site_lat, site_lon):
     """
-    Return (dist, nid) pairs for road nodes within band_km of the city
-    boundary perimeter.  Uses 64 sample points along the perimeter.
-    Returns empty list if the boundary cannot be processed.
+    Return (dist_km, nid) for the nearest road node that lies outside
+    the given boundary polygon.  Falls back to absolute nearest node if
+    shapely is unavailable or no outside node exists.
     """
     try:
-        from generator.boundaries import sample_border_points
-        border_pts = sample_border_points(boundary_geojson, n=64)
-    except Exception as e:
-        logger.warning("Failed to sample border points: %s", e)
-        return []
+        from shapely.geometry import Point, shape
+        poly = shape(boundary_geojson)
+    except Exception:
+        return _nearest_node(node_coords, site_lat, site_lon)
 
-    if not border_pts:
-        return []
-
-    result = []
+    best_d = float("inf")
+    best_nid = 0
     for nid, (lon, lat) in enumerate(node_coords):
-        min_d = min(
-            _haversine_km(lat, lon, blat, blon)
-            for blat, blon in border_pts
-        )
-        if min_d <= band_km:
-            result.append((min_d, nid))
-    return result
+        if poly.contains(Point(lon, lat)):
+            continue
+        d = _haversine_km(site_lat, site_lon, lat, lon)
+        if d < best_d:
+            best_d = d
+            best_nid = nid
+
+    if best_d == float("inf"):
+        # All nodes inside boundary — fall back to absolute nearest
+        return _nearest_node(node_coords, site_lat, site_lon)
+    return best_d, best_nid
 
 
 def _nearest_node(node_coords, lat, lon):
@@ -301,10 +303,10 @@ def find_p2p_roads(
     from prior paths so Dijkstra is forced onto genuinely different roads.
 
     Endpoint selection:
-      - Site with ``boundary_geojson``: use all road nodes within 5 km of
-        the city boundary perimeter (ensures routes enter/exit the city at
-        a real road, not at the site pin inside the city).
-      - Site without boundary: use the single nearest road node to the pin.
+      - Site with ``boundary_geojson``: nearest road node outside that
+        site's own boundary polygon (so Dijkstra starts outside the city).
+      - Site without boundary: absolute nearest road node to the pin.
+      Other cities along the route are irrelevant and not filtered.
 
     Returns:
         routes       — list of dicts: route_id, refs, road_name, pair_idx,
@@ -331,52 +333,39 @@ def find_p2p_roads(
         )
 
         # Dijkstra source/target nodes.
+        # Sites with a boundary: snap to nearest node OUTSIDE their own
+        # boundary so Dijkstra doesn't start inside the city.
+        # Sites without a boundary: snap to absolute nearest node.
+        # Intermediate/other cities are completely ignored.
         if s1.get("boundary_geojson"):
-            starts = _boundary_perimeter_nodes(
-                node_coords, s1["boundary_geojson"])
-            logger.info(
-                "Site %s: boundary perimeter nodes: %d",
-                s1["name"], len(starts),
-            )
-            if not starts:
-                logger.warning(
-                    "Site %s: no perimeter nodes found, "
-                    "falling back to nearest node",
-                    s1["name"],
-                )
-                starts = [_nearest_node(node_coords, s1["lat"], s1["lon"])]
+            start = _nearest_node_outside_boundary(
+                node_coords, s1["boundary_geojson"],
+                s1["lat"], s1["lon"])
         else:
-            starts = [_nearest_node(node_coords, s1["lat"], s1["lon"])]
+            start = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
         if s2.get("boundary_geojson"):
-            ends = _boundary_perimeter_nodes(
-                node_coords, s2["boundary_geojson"])
-            logger.info(
-                "Site %s: boundary perimeter nodes: %d",
-                s2["name"], len(ends),
-            )
-            if not ends:
-                logger.warning(
-                    "Site %s: no perimeter nodes found, "
-                    "falling back to nearest node",
-                    s2["name"],
-                )
-                ends = [_nearest_node(node_coords, s2["lat"], s2["lon"])]
+            end = _nearest_node_outside_boundary(
+                node_coords, s2["boundary_geojson"],
+                s2["lat"], s2["lon"])
         else:
-            ends = [_nearest_node(node_coords, s2["lat"], s2["lon"])]
+            end = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
-        if not starts or not ends:
-            logger.warning(
-                "Pair %s↔%s: could not find endpoint nodes",
-                s1["name"], s2["name"],
-            )
-            continue
+        logger.info(
+            "Site %s → node %d (%.2f km away)",
+            s1["name"], start[1], start[0],
+        )
+        logger.info(
+            "Site %s → node %d (%.2f km away)",
+            s2["name"], end[1], end[0],
+        )
 
-        start_node_set = {nid for _, nid in starts}
-        ends = [(d, nid) for d, nid in ends if nid not in start_node_set]
-        if not ends:
+        starts = [start]
+        ends = [end]
+
+        if start[1] == end[1]:
             logger.warning(
-                "Pair %s↔%s: all end nodes overlap with start nodes",
+                "Pair %s↔%s: start and end snap to same node",
                 s1["name"], s2["name"],
             )
             continue
