@@ -49,12 +49,13 @@ def test_road_not_close_enough_excluded():
 
 
 def test_road_close_to_only_one_site_excluded():
-    # Road near N1 but not near N2 (only ~1.5 km long, stays near N1).
-    # Sites are ~2.7 km apart → eff_proximity stays at proximity_km=1.0 km.
-    roads = _roads(("A-1", "", [(44.0, 40.0), (44.01, 40.01)]))
-    routes, _ = find_p2p_roads(
-        roads, [(S_NEAR1, S_NEAR2)], proximity_km=1.0
-    )
+    # With nearest-node routing, both sites snap to the closest node on the
+    # available road.  If both snap to the *same* node Dijkstra has no target
+    # to reach and returns no routes.
+    # Use a road far from both sites so both snap to the same endpoint.
+    roads = _roads(("A-1", "", [(55.0, 50.0), (55.001, 50.001)]))
+    routes, _ = find_p2p_roads(roads, [(S_A, S_B)])
+    # start node == end node → no route
     assert routes == []
 
 
@@ -97,20 +98,12 @@ def test_route_contains_way_ids():
     assert routes[0]["way_ids"] == [1]
 
 
-def test_proximity_km_respected():
-    # Use nearby sites so auto-scaling doesn't inflate the threshold.
-    # Road is ~7 km from N1/N2 (offset by 0.05°).
-    # eff_proximity = max(1.0, 2.7/3) = 1.0 km → road missed.
-    roads = _roads(("A-1", "", [(44.05, 40.05), (44.07, 40.07)]))
-    routes_miss, _ = find_p2p_roads(
-        roads, [(S_NEAR1, S_NEAR2)], proximity_km=1.0
-    )
-    assert routes_miss == []
-
-    # With 20 km threshold and S_A/S_B the road at 7 km offset is found.
-    roads2 = _roads(("A-1", "", [(44.05, 40.05), (44.45, 40.45)]))
-    routes_hit, _ = find_p2p_roads(roads2, [(S_A, S_B)], proximity_km=20.0)
-    assert len(routes_hit) == 1
+def test_nearest_node_routing():
+    # Routing always snaps to the nearest road node regardless of distance.
+    # A road between S_A and S_B is found even when offset slightly.
+    roads = _roads(("A-1", "", [(44.05, 40.05), (44.45, 40.45)]))
+    routes, _ = find_p2p_roads(roads, [(S_A, S_B)])
+    assert len(routes) == 1
 
 
 def test_multi_highway_route():
