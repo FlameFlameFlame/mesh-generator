@@ -57,6 +57,7 @@ store = SiteStore()
 _counter = 0
 _loaded_layers = {}  # key -> geojson dict (roads, towers, boundary, edges)
 _roads_geojson = None  # stored roads from Generate or Load
+_full_roads_geojson = None  # full downloaded roads (never filtered by P2P)
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
@@ -1456,12 +1457,13 @@ def detect_city_boundary(idx):
 @app.route("/api/clear", methods=["POST"])
 def clear_project():
     """Clear all sites and loaded layers."""
-    global _counter, _roads_geojson, _loaded_layers, _loaded_report
+    global _counter, _roads_geojson, _full_roads_geojson, _loaded_layers, _loaded_report
     global _loaded_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
     global _p2p_display_features, _forced_waypoints
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
+    _full_roads_geojson = None
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
@@ -1557,7 +1559,7 @@ def get_elevation_image():
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """Compute boundary from sites, fetch roads from OSM, return layers for visualization."""
-    global _roads_geojson, _loaded_layers
+    global _roads_geojson, _full_roads_geojson, _loaded_layers
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."})
 
@@ -1647,6 +1649,7 @@ def generate():
     logger.info("Fetched: %d road features", len(roads.get("features", [])))
 
     _roads_geojson = roads
+    _full_roads_geojson = roads
     logger.info("Generated: %d road features", len(roads.get("features", [])))
 
     # Build boundary from the road fetch bbox (encompasses all roads)
@@ -1877,7 +1880,7 @@ def select_routes():
 def reroute_with_waypoints():
     """Re-route a site pair's roads via forced waypoint segments."""
     global _p2p_routes, _p2p_all_route_features, _p2p_display_features
-    global _roads_geojson, _loaded_layers, _forced_waypoints
+    global _roads_geojson, _full_roads_geojson, _loaded_layers, _forced_waypoints
 
     from generator.graph import find_route_via_waypoints
 
@@ -1887,7 +1890,8 @@ def reroute_with_waypoints():
 
     if not _p2p_routes:
         return jsonify({"error": "No routes. Run Filter P2P first."}), 400
-    if not _roads_geojson:
+    routing_roads = _full_roads_geojson or _roads_geojson
+    if not routing_roads:
         return jsonify({"error": "No roads loaded."}), 400
 
     # Find s1, s2 and pair_idx for this pair_key
@@ -1928,7 +1932,7 @@ def reroute_with_waypoints():
             sd["boundary_geojson"] = site.boundary_geojson
 
     new_route = find_route_via_waypoints(
-        _roads_geojson, s1, s2, forced_way_ids,
+        routing_roads, s1, s2, forced_way_ids,
         pair_idx=pair_idx, route_id=route_id,
     )
 
@@ -1939,8 +1943,8 @@ def reroute_with_waypoints():
     _p2p_routes = [r for r in _p2p_routes
                    if r["site1"]["name"] + "\u2194" + r["site2"]["name"] != pair_key]
 
-    # Build features for the new route
-    all_features = _roads_geojson.get("features", [])
+    # Build features for the new route (indices refer to routing_roads, the full set)
+    all_features = routing_roads.get("features", [])
     raw_feats = [all_features[i] for i in new_route["feature_indices"]
                  if i < len(all_features)]
     _p2p_all_route_features[new_route["route_id"]] = raw_feats
@@ -2177,7 +2181,7 @@ def export():
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers, _roads_geojson, _loaded_report, _loaded_coverage, _elevation_path
+    global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson, _loaded_report, _loaded_coverage, _elevation_path
     data = request.json
     path = data.get("path", "").strip()
 
@@ -2242,6 +2246,7 @@ def load_project():
 
     _loaded_layers = layers
     _roads_geojson = layers.get("roads")
+    _full_roads_geojson = layers.get("roads")
 
     # Load report
     _loaded_report = None
