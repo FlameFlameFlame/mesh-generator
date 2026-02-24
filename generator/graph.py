@@ -52,6 +52,23 @@ _HIGHWAY_OVERHEAD = {
 }
 _DEFAULT_OVERHEAD = 2.0  # residential / unclassified / service
 
+# Penalty multipliers applied to distance when selecting boundary exit node.
+# Biases the snap toward major roads so Dijkstra starts on a trunk/motorway
+# rather than a nearby tertiary road that happens to be slightly closer.
+_SNAP_HIGHWAY_PENALTY = {
+    "motorway":       1.0,
+    "motorway_link":  1.0,
+    "trunk":          1.0,
+    "trunk_link":     1.1,
+    "primary":        1.5,
+    "primary_link":   2.0,
+    "secondary":      4.0,
+    "secondary_link": 5.0,
+    "tertiary":       8.0,
+    "tertiary_link":  9.0,
+}
+_DEFAULT_SNAP_PENALTY = 12.0  # unclassified / residential / service
+
 
 # ---------------------------------------------------------------------------
 # Geometry helpers
@@ -80,15 +97,17 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
     naturally prefers motorways/trunks over local roads.
 
     Returns:
-        node_coords : list of (lon, lat)
-        adj         : dict  node_id -> [(neighbor_id, weight, feat_idx)]
-        feat_ref    : dict  feat_idx -> ref_str
+        node_coords  : list of (lon, lat)
+        adj          : dict  node_id -> [(neighbor_id, weight, feat_idx)]
+        feat_ref     : dict  feat_idx -> ref_str
+        node_highway : dict  node_id -> best highway type string
     """
     snap_deg = snap_m / 111_000.0
     node_coords = []
     node_map = {}
     adj = defaultdict(list)
     feat_ref = {}
+    node_highway = {}  # node_id -> best (lowest _HIGHWAY_COST) highway type
 
     def get_node(lon, lat):
         key = (round(lon / snap_deg), round(lat / snap_deg))
@@ -130,6 +149,11 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
                      + overhead)
                 adj[n1].append((n2, w, idx))
                 adj[n2].append((n1, w, idx))
+                # Track best highway type per node (lower cost_mult = better)
+                for nid in (n1, n2):
+                    existing = node_highway.get(nid)
+                    if existing is None or cost_mult < _HIGHWAY_COST.get(existing, _DEFAULT_COST):
+                        node_highway[nid] = highway
 
     n_nodes = len(node_coords)
     logger.info(
@@ -139,7 +163,7 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
     if bridge_m > snap_m and n_nodes > 0:
         _bridge_components(node_coords, adj, bridge_m)
 
-    return node_coords, adj, feat_ref
+    return node_coords, adj, feat_ref, node_highway
 
 
 def _find_components(node_coords, adj):
@@ -253,12 +277,17 @@ def _extract_path(dist_map, end_node, feat_ref, node_coords):
 
 def _nearest_node_outside_boundary(
         node_coords, boundary_geojson, site_lat, site_lon,
-        target_lat=None, target_lon=None):
+        target_lat=None, target_lon=None, node_highway=None):
     """
     Return (dist_km, nid) for the road node that lies outside the boundary
-    polygon and is closest to the *target* (the other site).  This picks the
-    boundary exit point that faces the destination rather than the one that
-    happens to be closest to the city centre.
+    polygon and is best positioned as a Dijkstra start/end point.
+
+    Selection criteria (in order of importance):
+    1. Node must be outside the boundary polygon.
+    2. Minimise effective_distance = haversine_to_target × road_type_penalty,
+       where major roads (trunk/motorway) get penalty 1.0 and minor roads get
+       up to 12×.  This ensures the exit node is on a major road facing the
+       destination rather than a nearby local road node.
 
     Falls back to absolute nearest node if shapely is unavailable or no
     outside node exists.  dist_km is distance from the site pin (for logging).
@@ -274,21 +303,32 @@ def _nearest_node_outside_boundary(
     measure_lat = target_lat if target_lat is not None else site_lat
     measure_lon = target_lon if target_lon is not None else site_lon
 
-    best_d = float("inf")
+    best_score = float("inf")
     best_nid = 0
+    found_any = False
     for nid, (lon, lat) in enumerate(node_coords):
         if poly.contains(Point(lon, lat)):
             continue
+        found_any = True
         d = _haversine_km(measure_lat, measure_lon, lat, lon)
-        if d < best_d:
-            best_d = d
+        hw = (node_highway or {}).get(nid, "")
+        penalty = _SNAP_HIGHWAY_PENALTY.get(hw, _DEFAULT_SNAP_PENALTY)
+        score = d * penalty
+        if score < best_score:
+            best_score = score
             best_nid = nid
 
-    if best_d == float("inf"):
+    if not found_any:
         # All nodes inside boundary — fall back to absolute nearest
         return _nearest_node(node_coords, site_lat, site_lon)
     # Return distance from site pin (not target) for logging consistency
     nlon, nlat = node_coords[best_nid]
+    hw = (node_highway or {}).get(best_nid, "unknown")
+    logger.debug(
+        "_nearest_node_outside_boundary: nid=%d hw=%s dist_to_target=%.2f km",
+        best_nid, hw,
+        _haversine_km(measure_lat, measure_lon, nlat, nlon),
+    )
     return _haversine_km(site_lat, site_lon, nlat, nlon), best_nid
 
 
@@ -329,7 +369,7 @@ def find_p2p_roads(
     if not features:
         return [], set()
 
-    node_coords, adj, feat_ref = _build_graph(features)
+    node_coords, adj, feat_ref, node_highway = _build_graph(features)
 
     routes = []
     used_indices = set()
@@ -353,7 +393,8 @@ def find_p2p_roads(
             start = _nearest_node_outside_boundary(
                 node_coords, s1["boundary_geojson"],
                 s1["lat"], s1["lon"],
-                target_lat=s2["lat"], target_lon=s2["lon"])
+                target_lat=s2["lat"], target_lon=s2["lon"],
+                node_highway=node_highway)
         else:
             start = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
@@ -361,7 +402,8 @@ def find_p2p_roads(
             end = _nearest_node_outside_boundary(
                 node_coords, s2["boundary_geojson"],
                 s2["lat"], s2["lon"],
-                target_lat=s1["lat"], target_lon=s1["lon"])
+                target_lat=s1["lat"], target_lon=s1["lon"],
+                node_highway=node_highway)
         else:
             end = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
