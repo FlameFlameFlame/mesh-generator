@@ -13,6 +13,11 @@ _SNAP_M = 100
 # Bridge endpoints across different connected components within this distance.
 _BRIDGE_M = 600
 
+# Bridge nodes that share the same road ref (e.g. M-1) within this distance.
+# This reconnects fragmented OSM highway designations (e.g. the 3.67 km gap
+# in Armenian M-1) without creating spurious cross-road bridges.
+_REF_BRIDGE_M = 5_000
+
 # Weight multiplier for penalised roads when searching for alternatives.
 _PENALTY = 1_000.0
 
@@ -108,6 +113,7 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
     adj = defaultdict(list)
     feat_ref = {}
     node_highway = {}  # node_id -> best (lowest _HIGHWAY_COST) highway type
+    node_ref = {}      # node_id -> set of road refs (for ref-based bridging)
 
     def get_node(lon, lat):
         key = (round(lon / snap_deg), round(lat / snap_deg))
@@ -154,6 +160,10 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
                     existing = node_highway.get(nid)
                     if existing is None or cost_mult < _HIGHWAY_COST.get(existing, _DEFAULT_COST):
                         node_highway[nid] = highway
+                    if ref:
+                        if nid not in node_ref:
+                            node_ref[nid] = set()
+                        node_ref[nid].add(ref)
 
     n_nodes = len(node_coords)
     logger.info(
@@ -162,6 +172,12 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
 
     if bridge_m > snap_m and n_nodes > 0:
         _bridge_components(node_coords, adj, bridge_m)
+        # Second pass: bridge nodes that share a road ref across larger gaps.
+        # This reconnects fragmented highway designations (e.g. M-1 in OSM
+        # has a 3.67 km gap) without creating spurious cross-road shortcuts.
+        if _REF_BRIDGE_M > bridge_m and node_ref:
+            _bridge_components(node_coords, adj, _REF_BRIDGE_M,
+                               node_ref=node_ref)
 
     return node_coords, adj, feat_ref, node_highway
 
@@ -184,8 +200,13 @@ def _find_components(node_coords, adj):
     return comp_id
 
 
-def _bridge_components(node_coords, adj, bridge_m):
-    """Connect nodes in different components within bridge_m metres."""
+def _bridge_components(node_coords, adj, bridge_m, node_ref=None):
+    """Connect nodes in different components within bridge_m metres.
+
+    If node_ref is provided (dict node_id -> set of ref strings), only bridge
+    pairs that share at least one ref.  This reconnects fragmented highway
+    designations without creating spurious cross-road shortcuts.
+    """
     bridge_deg = bridge_m / 111_000.0
     comp_id = _find_components(node_coords, adj)
 
@@ -202,6 +223,11 @@ def _bridge_components(node_coords, adj, bridge_m):
                 for other in grid.get((gx + dx, gy + dy), []):
                     if other <= nid or comp_id[other] == comp_id[nid]:
                         continue
+                    if node_ref is not None:
+                        refs_a = node_ref.get(nid)
+                        refs_b = node_ref.get(other)
+                        if not refs_a or not refs_b or refs_a.isdisjoint(refs_b):
+                            continue
                     o_lon, o_lat = node_coords[other]
                     d_km = _haversine_km(lat, lon, o_lat, o_lon)
                     if d_km * 1_000 <= bridge_m:
@@ -210,7 +236,9 @@ def _bridge_components(node_coords, adj, bridge_m):
                         added += 1
 
     if added:
-        logger.info("_bridge_components: added %d bridge edges", added)
+        label = "ref-bridge" if node_ref is not None else "bridge"
+        logger.info("_bridge_components(%s): added %d edges (max %.0f m)",
+                    label, added, bridge_m)
 
 
 # ---------------------------------------------------------------------------
