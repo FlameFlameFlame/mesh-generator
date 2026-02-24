@@ -1458,7 +1458,9 @@ def filter_p2p():
     site_pairs = [(_site_dict(s1), _site_dict(s2)) for s1, s2 in pairs_raw]
 
     # ── Find named routes ────────────────────────────────────────────
-    routes, used_indices = find_p2p_roads(_roads_geojson, site_pairs)
+    routes, used_indices = find_p2p_roads(
+        _roads_geojson, site_pairs, n_alternatives=3
+    )
 
     # ── Store routes for later selection ────────────────────────────
     all_features = _roads_geojson.get("features", [])
