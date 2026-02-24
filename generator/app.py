@@ -840,6 +840,33 @@ function renderAllRoutesOnMap(activeIds) {
       layer.addTo(layerGroups.roads);
     });
   });
+
+  // Render full road network as faint background for roads not in any route
+  if (_cachedRoadsGeojson) {
+    (_cachedRoadsGeojson.features || []).forEach(function(feat) {
+      let wid = (feat.properties || {}).osm_way_id;
+      let key = wid != null ? wid : JSON.stringify(feat.geometry);
+      if (seen.has(key)) return;
+      let bgLayer = L.geoJSON(feat, {
+        style: { color: '#aaa', weight: 1, opacity: 0.25 }
+      });
+      bgLayer.on('click', function(e) {
+        L.DomEvent.stopPropagation(e);
+        let pairKeys = Object.keys(_activeRoutePerPair);
+        if (pairKeys.length === 0) return;
+        let pk = pairKeys[0];
+        if (!_forcedWaypoints[pk]) _forcedWaypoints[pk] = new Set();
+        if (_forcedWaypoints[pk].has(wid)) {
+          _forcedWaypoints[pk].delete(wid);
+        } else {
+          _forcedWaypoints[pk].add(wid);
+        }
+        _rebuildPinnedSet();
+        _rerouteWithWaypoints(pk);
+      });
+      bgLayer.addTo(layerGroups.roads);
+    });
+  }
 }
 
 function _rebuildPinnedSet() {
