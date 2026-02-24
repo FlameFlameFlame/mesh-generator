@@ -155,7 +155,7 @@ HTML_PAGE = """<!DOCTYPE html>
   <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
     title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
   <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
-    <input id="opt-max-towers" type="number" value="8" min="1" max="50" step="1"
+    <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1"
            style="width:44px;padding:3px 4px;"> towers/route
   </label>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
