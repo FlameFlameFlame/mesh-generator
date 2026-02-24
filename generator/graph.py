@@ -528,6 +528,156 @@ def _nearest_node(node_coords, lat, lon):
 # Public API
 # ---------------------------------------------------------------------------
 
+def find_route_via_waypoints(
+    roads_geojson,
+    s1,
+    s2,
+    forced_way_ids,
+    pair_idx=0,
+    route_id="route_waypoint",
+):
+    """
+    Find a single route between s1 and s2 that passes through all forced_way_ids.
+
+    Routes through forced segments by chaining Dijkstra sub-paths:
+    src → waypoint_1 → waypoint_2 → ... → tgt
+
+    Parameters
+    ----------
+    roads_geojson  : GeoJSON FeatureCollection of road segments
+    s1, s2         : site dicts with keys name, lat, lon, optional boundary_geojson
+    forced_way_ids : list of osm_way_id ints that must be traversed
+    pair_idx       : pair index for coloring
+    route_id       : route_id string for the returned dict
+
+    Returns
+    -------
+    route_dict or None if routing fails
+    """
+    features = roads_geojson.get("features", [])
+    if not features:
+        return None
+
+    node_coords, G, feat_ref, node_highway, edge_to_feat = _build_digraph(features)
+
+    # Build waypoint nodes from forced_way_ids
+    # For each way_id, find the feature index, then pick a representative node
+    way_id_to_feat_idx = {}
+    for fi, feat in enumerate(features):
+        wid = (feat.get("properties") or {}).get("osm_way_id")
+        if wid is not None and wid not in way_id_to_feat_idx:
+            way_id_to_feat_idx[wid] = fi
+
+    # Invert edge_to_feat: feat_idx -> list of (u, v) edges
+    feat_idx_to_edges = {}
+    for (u, v), fi in edge_to_feat.items():
+        feat_idx_to_edges.setdefault(fi, []).append((u, v))
+
+    # Resolve each forced way_id to a graph node (midpoint of its edges)
+    waypoint_nodes = []
+    for wid in forced_way_ids:
+        fi = way_id_to_feat_idx.get(wid)
+        if fi is None:
+            logger.warning("find_route_via_waypoints: way_id %s not found in features", wid)
+            continue
+        edges = feat_idx_to_edges.get(fi, [])
+        if not edges:
+            logger.warning("find_route_via_waypoints: feat_idx %d has no graph edges", fi)
+            continue
+        # Pick the node that is the midpoint of these edges (the median node)
+        all_nodes = []
+        for u, v in edges:
+            all_nodes.append(u)
+            all_nodes.append(v)
+        # Use the node closest to the geometric midpoint of the feature
+        geom = (features[fi].get("geometry") or {})
+        coords = geom.get("coordinates", [])
+        if coords and geom.get("type") == "LineString" and len(coords) >= 2:
+            mid_idx = len(coords) // 2
+            mid_lon, mid_lat = coords[mid_idx]
+            best_node = min(set(all_nodes), key=lambda n: _haversine_km(
+                mid_lat, mid_lon, node_coords[n][1], node_coords[n][0]
+            ))
+        else:
+            best_node = edges[0][0]
+        waypoint_nodes.append(best_node)
+
+    # Snap site endpoints
+    if s1.get("boundary_geojson"):
+        _, src = _nearest_node_outside_boundary(
+            node_coords, s1["boundary_geojson"], s1["lat"], s1["lon"],
+            node_highway=node_highway)
+    else:
+        _, src = _nearest_node(node_coords, s1["lat"], s1["lon"])
+
+    if s2.get("boundary_geojson"):
+        _, tgt = _nearest_node_outside_boundary(
+            node_coords, s2["boundary_geojson"], s2["lat"], s2["lon"],
+            node_highway=node_highway)
+    else:
+        _, tgt = _nearest_node(node_coords, s2["lat"], s2["lon"])
+
+    # Chain: src → wp0 → wp1 → ... → tgt
+    chain = [src] + waypoint_nodes + [tgt]
+    full_path = []
+    try:
+        for i in range(len(chain) - 1):
+            segment = nx.shortest_path(G, chain[i], chain[i + 1], weight="weight")
+            if full_path:
+                segment = segment[1:]  # avoid duplicating the junction node
+            full_path.extend(segment)
+    except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
+        logger.warning("find_route_via_waypoints: routing failed — %s", e)
+        return None
+
+    if len(full_path) < 2:
+        return None
+
+    # Collect feature indices along the path
+    feat_indices_set = set()
+    for u, v in zip(full_path, full_path[1:]):
+        fi = edge_to_feat.get((u, v), -1)
+        if fi >= 0:
+            feat_indices_set.add(fi)
+    feat_indices = sorted(feat_indices_set)
+
+    # Build refs label
+    ref_km = {}
+    for u, v in zip(full_path, full_path[1:]):
+        fi = edge_to_feat.get((u, v), -1)
+        if fi < 0:
+            continue
+        ref = feat_ref.get(fi, "")
+        lon1, lat1 = node_coords[u]
+        lon2, lat2 = node_coords[v]
+        km = _haversine_km(lat1, lon1, lat2, lon2)
+        if ref:
+            ref_km[ref] = ref_km.get(ref, 0.0) + km
+
+    total_km = sum(ref_km.values())
+    label_refs = sorted(r for r, km in ref_km.items()
+                        if total_km == 0 or km / total_km >= 0.05)
+    refs_label = ", ".join(label_refs) if label_refs else "waypoint-route"
+
+    way_ids = [
+        (features[fi].get("properties") or {}).get("osm_way_id")
+        for fi in feat_indices
+        if (features[fi].get("properties") or {}).get("osm_way_id") is not None
+    ]
+
+    return {
+        "route_id":        route_id,
+        "refs":            sorted(ref_km.keys()),
+        "ref":             refs_label,
+        "road_name":       refs_label,
+        "pair_idx":        pair_idx,
+        "site1":           {"name": s1["name"], "lat": s1["lat"], "lon": s1["lon"]},
+        "site2":           {"name": s2["name"], "lat": s2["lat"], "lon": s2["lon"]},
+        "feature_indices": feat_indices,
+        "way_ids":         way_ids,
+    }
+
+
 def find_p2p_roads(
     roads_geojson,
     site_pairs,
