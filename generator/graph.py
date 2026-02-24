@@ -252,11 +252,16 @@ def _extract_path(dist_map, end_node, feat_ref, node_coords):
 # ---------------------------------------------------------------------------
 
 def _nearest_node_outside_boundary(
-        node_coords, boundary_geojson, site_lat, site_lon):
+        node_coords, boundary_geojson, site_lat, site_lon,
+        target_lat=None, target_lon=None):
     """
-    Return (dist_km, nid) for the nearest road node that lies outside
-    the given boundary polygon.  Falls back to absolute nearest node if
-    shapely is unavailable or no outside node exists.
+    Return (dist_km, nid) for the road node that lies outside the boundary
+    polygon and is closest to the *target* (the other site).  This picks the
+    boundary exit point that faces the destination rather than the one that
+    happens to be closest to the city centre.
+
+    Falls back to absolute nearest node if shapely is unavailable or no
+    outside node exists.  dist_km is distance from the site pin (for logging).
     """
     try:
         from shapely.geometry import Point, shape
@@ -264,12 +269,17 @@ def _nearest_node_outside_boundary(
     except Exception:
         return _nearest_node(node_coords, site_lat, site_lon)
 
+    # Use target location to pick exit direction; fall back to site pin if
+    # no target given.
+    measure_lat = target_lat if target_lat is not None else site_lat
+    measure_lon = target_lon if target_lon is not None else site_lon
+
     best_d = float("inf")
     best_nid = 0
     for nid, (lon, lat) in enumerate(node_coords):
         if poly.contains(Point(lon, lat)):
             continue
-        d = _haversine_km(site_lat, site_lon, lat, lon)
+        d = _haversine_km(measure_lat, measure_lon, lat, lon)
         if d < best_d:
             best_d = d
             best_nid = nid
@@ -277,7 +287,9 @@ def _nearest_node_outside_boundary(
     if best_d == float("inf"):
         # All nodes inside boundary — fall back to absolute nearest
         return _nearest_node(node_coords, site_lat, site_lon)
-    return best_d, best_nid
+    # Return distance from site pin (not target) for logging consistency
+    nlon, nlat = node_coords[best_nid]
+    return _haversine_km(site_lat, site_lon, nlat, nlon), best_nid
 
 
 def _nearest_node(node_coords, lat, lon):
@@ -340,14 +352,16 @@ def find_p2p_roads(
         if s1.get("boundary_geojson"):
             start = _nearest_node_outside_boundary(
                 node_coords, s1["boundary_geojson"],
-                s1["lat"], s1["lon"])
+                s1["lat"], s1["lon"],
+                target_lat=s2["lat"], target_lon=s2["lon"])
         else:
             start = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
         if s2.get("boundary_geojson"):
             end = _nearest_node_outside_boundary(
                 node_coords, s2["boundary_geojson"],
-                s2["lat"], s2["lon"])
+                s2["lat"], s2["lon"],
+                target_lat=s1["lat"], target_lon=s1["lon"])
         else:
             end = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
