@@ -125,7 +125,8 @@ HTML_PAGE = """<!DOCTYPE html>
   <button class="danger" onclick="doClear()">Clear</button>
   <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
   <button class="primary" onclick="doExport()">Export</button>
-  <button class="primary" id="btn-optimize" onclick="doRunOptimization()">Run Optimization</button>
+  <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
+    title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
   <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
     <input id="opt-max-towers" type="number" value="8" min="1" max="50" step="1"
            style="width:44px;padding:3px 4px;"> towers/route
@@ -253,6 +254,17 @@ let _activeRoutePerPair = {};   // pair_key -> route_id (one active per pair)
 let _wayIdToRouteId = {};       // way_id -> route_id (for map click)
 let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
 let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering)
+// Prerequisite tracking for Run Optimization button
+let _hasRoutes = false;
+let _hasElevation = false;
+function _updateOptimizeBtn() {
+  let btn = document.getElementById('btn-optimize');
+  let ready = _hasRoutes && _hasElevation;
+  btn.disabled = !ready;
+  btn.title = ready
+    ? 'Run mesh_calculator optimization'
+    : 'Requires: Filter P2P + Download Elevation';
+}
 
 // Viridis-like 5-stop color scale
 const VIRIDIS = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];
@@ -561,6 +573,9 @@ function doClear() {
       document.getElementById('tower-legend').style.display = 'none';
       document.getElementById('report-panel').style.display = 'none';
       setStatus('');
+      _hasRoutes = false;
+      _hasElevation = false;
+      _updateOptimizeBtn();
     });
 }
 
@@ -632,6 +647,8 @@ function doFilterP2P() {
 
     // renderRouteList handles coloring + map rendering via applyRouteSelection
     renderRouteList(res.routes || []);
+    _hasRoutes = (res.routes || []).length > 0;
+    _updateOptimizeBtn();
 
     // Draw site-to-site connection overlay
     layerGroups.connections.clearLayers();
@@ -782,14 +799,19 @@ function doFetchElevation() {
   prog.style.display = 'inline-flex';
   bar.removeAttribute('value');
   label.textContent = 'Downloading SRTM tiles...';
-  fetch('/api/elevation', {method: 'POST'})
-    .then(safeJson).then(data => {
+  fetch('/api/elevation', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(_bboxBounds ? {bbox: _bboxBounds} : {})
+  }).then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
       bar.value = 1; bar.max = 1;
       label.textContent = data.tiles + ' tile(s), ' + data.size_mb + ' MB';
       hasElevation = true;
       document.getElementById('chk-elevation').disabled = false;
+      _hasElevation = true;
+      _updateOptimizeBtn();
     }).catch(err => {
       btn.disabled = false;
       prog.style.display = 'none';
@@ -1153,7 +1175,7 @@ function doRunOptimization() {
     body: JSON.stringify({max_towers_per_route: maxTowers})
   }).then(safeJson).then(function(res) {
     btn.disabled = false;
-    if (res.error) { alert('Optimization failed: ' + res.error); setStatus(''); return; }
+    if (res.error) { setStatus('Optimization failed: ' + res.error); return; }
 
     let s = res.summary || {};
     setStatus(
@@ -1357,12 +1379,28 @@ def download_elevation():
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."})
 
-    sites = list(store)
-    lats = [s.lat for s in sites]
-    lons = [s.lon for s in sites]
-    buffer = 0.15
-    south, north = min(lats) - buffer, max(lats) + buffer
-    west, east = min(lons) - buffer, max(lons) + buffer
+    payload = request.get_json(silent=True) or {}
+    user_bbox = payload.get("bbox")
+    if user_bbox and isinstance(user_bbox, list) and len(user_bbox) == 2:
+        south = float(user_bbox[0][0])
+        west = float(user_bbox[0][1])
+        north = float(user_bbox[1][0])
+        east = float(user_bbox[1][1])
+        logger.info(
+            "Elevation: using user-drawn bbox S=%.4f W=%.4f N=%.4f E=%.4f",
+            south, west, north, east,
+        )
+    else:
+        sites = list(store)
+        lats = [s.lat for s in sites]
+        lons = [s.lon for s in sites]
+        buffer = 0.15
+        south, north = min(lats) - buffer, max(lats) + buffer
+        west, east = min(lons) - buffer, max(lons) + buffer
+        logger.info(
+            "Elevation: auto bbox S=%.4f W=%.4f N=%.4f E=%.4f",
+            south, west, north, east,
+        )
 
     try:
         fd, path = tempfile.mkstemp(suffix=".tif", prefix="elevation_")
