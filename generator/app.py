@@ -729,7 +729,7 @@ function renderRouteList(routes) {
   // Group by pair
   let byPair = {};
   routes.forEach(function(r) {
-    let key = r.site1.name + ' \u2194 ' + r.site2.name;
+    let key = r.site1.name + '\u2194' + r.site2.name;
     if (!byPair[key]) byPair[key] = [];
     byPair[key].push(r);
   });
@@ -742,7 +742,7 @@ function renderRouteList(routes) {
 
   let html = '<strong>Routes</strong>';
   Object.entries(byPair).forEach(function([pair, rs]) {
-    html += '<div class="route-pair"><em>' + escHtml(pair) + '</em>';
+    html += '<div class="route-pair"><em>' + escHtml(pair.replace('\u2194', ' \u2194 ')) + '</em>';
     rs.forEach(function(r) {
       let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
       let isActive = (_activeRoutePerPair[pair] === r.route_id);
