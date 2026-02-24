@@ -1424,16 +1424,11 @@ def filter_p2p():
         by_priority.setdefault(s.priority, []).append(s)
 
     pairs_raw = []   # list of (SiteModel, SiteModel)
-    # P1: MST
+    # P1: full mesh (all-pairs)
     p1 = by_priority.get(1, [])
-    if len(p1) >= 2:
-        import networkx as nx
-        g = nx.Graph()
-        for i, s1 in enumerate(p1):
-            for j in range(i + 1, len(p1)):
-                g.add_edge(i, j, weight=_dist(s1, p1[j]))
-        for i, j in nx.minimum_spanning_tree(g).edges():
-            pairs_raw.append((p1[i], p1[j]))
+    for i, s1 in enumerate(p1):
+        for j in range(i + 1, len(p1)):
+            pairs_raw.append((s1, p1[j]))
     # P2+: nearest higher-priority
     for pri in sorted(by_priority):
         if pri == 1:
