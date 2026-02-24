@@ -139,7 +139,7 @@ class TestExportConfigYaml:
         assert config["inputs"]["roads"] == "/data/roads.geojson"
         assert config["inputs"]["elevation"] == "/data/elevation.tif"
 
-        assert config["parameters"]["h3_resolution"] == 11
+        assert config["parameters"]["h3_resolution"] == 8
         assert config["parameters"]["frequency_hz"] == 868000000.0
 
         assert config["outputs"]["towers"].endswith("towers.geojson")
