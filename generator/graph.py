@@ -1,9 +1,14 @@
-"""P2P road route finder — Dijkstra with highway-quality weighting."""
+"""P2P road route finder.
 
-import heapq
+Uses NetworkX DiGraph + Yen's k-shortest paths + Jaccard diversity filter.
+"""
+
+import itertools
 import logging
 import math
 from collections import defaultdict
+
+import networkx as nx
 
 logger = logging.getLogger(__name__)
 
@@ -17,9 +22,6 @@ _BRIDGE_M = 600
 # This reconnects fragmented OSM highway designations (e.g. the 3.67 km gap
 # in Armenian M-1) without creating spurious cross-road bridges.
 _REF_BRIDGE_M = 5_000
-
-# Weight multiplier for penalised roads when searching for alternatives.
-_PENALTY = 1_000.0
 
 # Cost multipliers by OSM highway type (applied to haversine distance).
 # Lower = preferred.  Motorway/trunk are ~1×, local roads ~10×.
@@ -39,10 +41,9 @@ _DEFAULT_COST = 10.0   # unclassified / residential / service / etc.
 
 # Fixed overhead added to every edge regardless of length.
 # Represents the "cost" of using a road of that class at all —
-# makes Dijkstra strongly avoid routes that stitch together many
+# makes routing strongly avoid routes that stitch together many
 # short local connectors (which would be cheap on distance alone).
 # Value is in the same units as haversine_km × cost_mult (weighted-km).
-# 0.5 weighted-km overhead ≈ the cost of 500 m on a motorway.
 _HIGHWAY_OVERHEAD = {
     "motorway":       0.0,
     "motorway_link":  0.1,
@@ -58,7 +59,7 @@ _HIGHWAY_OVERHEAD = {
 _DEFAULT_OVERHEAD = 2.0  # residential / unclassified / service
 
 # Penalty multipliers applied to distance when selecting boundary exit node.
-# Biases the snap toward major roads so Dijkstra starts on a trunk/motorway
+# Biases the snap toward major roads so routing starts on a trunk/motorway
 # rather than a nearby tertiary road that happens to be slightly closer.
 _SNAP_HIGHWAY_PENALTY = {
     "motorway":       1.0,
@@ -94,23 +95,30 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 # Graph construction
 # ---------------------------------------------------------------------------
 
-def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
+def _build_digraph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
     """
-    Build an undirected road graph from GeoJSON features.
+    Build a directed road graph (nx.DiGraph) from GeoJSON features.
 
-    Edge weight = haversine_km × highway_cost_multiplier, so Dijkstra
-    naturally prefers motorways/trunks over local roads.
+    Edge weight = haversine_km × highway_cost_multiplier + overhead, so
+    routing naturally prefers motorways/trunks over local roads.
+
+    Oneway OSM tags are respected:
+      oneway=yes/true/1  → forward direction only
+      oneway=-1          → reverse direction only
+      (default)          → bidirectional
 
     Returns:
         node_coords  : list of (lon, lat)
-        adj          : dict  node_id -> [(neighbor_id, weight, feat_idx)]
+        G            : nx.DiGraph with weight and feat_idx edge attributes
         feat_ref     : dict  feat_idx -> ref_str
         node_highway : dict  node_id -> best highway type string
+        edge_to_feat : dict  (u, v) -> feat_idx
     """
     snap_deg = snap_m / 111_000.0
     node_coords = []
     node_map = {}
-    adj = defaultdict(list)
+    G = nx.DiGraph()
+    edge_to_feat = {}
     feat_ref = {}
     node_highway = {}  # node_id -> best (lowest _HIGHWAY_COST) highway type
     node_ref = {}      # node_id -> set of road refs (for ref-based bridging)
@@ -118,9 +126,22 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
     def get_node(lon, lat):
         key = (round(lon / snap_deg), round(lat / snap_deg))
         if key not in node_map:
-            node_map[key] = len(node_coords)
+            nid = len(node_coords)
+            node_map[key] = nid
             node_coords.append((lon, lat))
+            G.add_node(nid)
         return node_map[key]
+
+    def _add_directed_edge(u, v, w, idx):
+        """Add directed edge u→v; keep cheaper weight if already exists."""
+        if G.has_edge(u, v):
+            if G[u][v]["weight"] > w:
+                G[u][v]["weight"] = w
+                G[u][v]["feat_idx"] = idx
+                edge_to_feat[(u, v)] = idx
+        else:
+            G.add_edge(u, v, weight=w, feat_idx=idx)
+            edge_to_feat[(u, v)] = idx
 
     for idx, feat in enumerate(features):
         props = feat.get("properties") or {}
@@ -130,6 +151,11 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
 
         highway = (props.get("highway") or "").strip()
         cost_mult = _HIGHWAY_COST.get(highway, _DEFAULT_COST)
+        overhead = _HIGHWAY_OVERHEAD.get(highway, _DEFAULT_OVERHEAD)
+
+        oneway_val = (props.get("oneway") or "").strip()
+        oneway_fwd = oneway_val in ("yes", "true", "1")
+        oneway_rev = oneway_val == "-1"
 
         geom = feat.get("geometry") or {}
         gtype = geom.get("type", "")
@@ -150,66 +176,65 @@ def _build_graph(features, snap_m=_SNAP_M, bridge_m=_BRIDGE_M):
                     continue
                 lon1, lat1 = node_coords[n1]
                 lon2, lat2 = node_coords[n2]
-                overhead = _HIGHWAY_OVERHEAD.get(highway, _DEFAULT_OVERHEAD)
-                w = (_haversine_km(lat1, lon1, lat2, lon2) * cost_mult
-                     + overhead)
-                adj[n1].append((n2, w, idx))
-                adj[n2].append((n1, w, idx))
+                w = (
+                    _haversine_km(lat1, lon1, lat2, lon2) * cost_mult
+                    + overhead
+                )
+
+                if oneway_rev:
+                    _add_directed_edge(n2, n1, w, idx)
+                elif oneway_fwd:
+                    _add_directed_edge(n1, n2, w, idx)
+                else:
+                    _add_directed_edge(n1, n2, w, idx)
+                    _add_directed_edge(n2, n1, w, idx)
+
                 # Track best highway type per node (lower cost_mult = better)
                 for nid in (n1, n2):
                     existing = node_highway.get(nid)
-                    if existing is None or cost_mult < _HIGHWAY_COST.get(existing, _DEFAULT_COST):
+                    if (existing is None
+                            or cost_mult < _HIGHWAY_COST.get(
+                                existing, _DEFAULT_COST)):
                         node_highway[nid] = highway
                     if ref:
-                        if nid not in node_ref:
-                            node_ref[nid] = set()
-                        node_ref[nid].add(ref)
+                        node_ref.setdefault(nid, set()).add(ref)
 
-    n_nodes = len(node_coords)
+    n_nodes = G.number_of_nodes()
     logger.info(
-        "_build_graph: %d nodes from %d features", n_nodes, len(features)
+        "_build_digraph: %d nodes, %d edges from %d features",
+        n_nodes, G.number_of_edges(), len(features),
     )
 
     if bridge_m > snap_m and n_nodes > 0:
-        _bridge_components(node_coords, adj, bridge_m)
-        # Second pass: bridge nodes that share a road ref across larger gaps.
-        # This reconnects fragmented highway designations (e.g. M-1 in OSM
-        # has a 3.67 km gap) without creating spurious cross-road shortcuts.
+        _bridge_components(node_coords, G, bridge_m)
         if _REF_BRIDGE_M > bridge_m and node_ref:
-            _bridge_components(node_coords, adj, _REF_BRIDGE_M,
-                               node_ref=node_ref)
+            _bridge_components(
+                node_coords, G, _REF_BRIDGE_M, node_ref=node_ref
+            )
 
-    return node_coords, adj, feat_ref, node_highway
-
-
-def _find_components(node_coords, adj):
-    n = len(node_coords)
-    comp_id = [-1] * n
-    c = 0
-    for start in range(n):
-        if comp_id[start] >= 0:
-            continue
-        stack = [start]
-        while stack:
-            node = stack.pop()
-            if comp_id[node] >= 0:
-                continue
-            comp_id[node] = c
-            stack.extend(nb for nb, _w, _f in adj[node] if comp_id[nb] < 0)
-        c += 1
-    return comp_id
+    return node_coords, G, feat_ref, node_highway, edge_to_feat
 
 
-def _bridge_components(node_coords, adj, bridge_m, node_ref=None):
-    """Connect nodes in different components within bridge_m metres.
+def _bridge_components(node_coords, G, bridge_m, node_ref=None):
+    """Connect nodes in different weakly-connected components within bridge_m.
 
     If node_ref is provided (dict node_id -> set of ref strings), only bridge
     pairs that share at least one ref.  This reconnects fragmented highway
     designations without creating spurious cross-road shortcuts.
+
+    Bridge edges are added as bidirectional pairs with weight=haversine
+    distance and feat_idx=-1 (synthetic, no real GeoJSON geometry).
     """
     bridge_deg = bridge_m / 111_000.0
-    comp_id = _find_components(node_coords, adj)
 
+    # Build component map: node_id -> component_id
+    comp_map = {}
+    for comp_id, comp_nodes in enumerate(
+            nx.weakly_connected_components(G)):
+        for nid in comp_nodes:
+            comp_map[nid] = comp_id
+
+    # Spatial grid for fast neighbour lookup
     grid = defaultdict(list)
     for nid, (lon, lat) in enumerate(node_coords):
         grid[(int(lon / bridge_deg), int(lat / bridge_deg))].append(nid)
@@ -221,100 +246,235 @@ def _bridge_components(node_coords, adj, bridge_m, node_ref=None):
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 for other in grid.get((gx + dx, gy + dy), []):
-                    if other <= nid or comp_id[other] == comp_id[nid]:
+                    if other <= nid:
+                        continue
+                    if comp_map.get(other) == comp_map.get(nid):
                         continue
                     if node_ref is not None:
                         refs_a = node_ref.get(nid)
                         refs_b = node_ref.get(other)
-                        if not refs_a or not refs_b or refs_a.isdisjoint(refs_b):
+                        if (not refs_a or not refs_b
+                                or refs_a.isdisjoint(refs_b)):
                             continue
                     o_lon, o_lat = node_coords[other]
                     d_km = _haversine_km(lat, lon, o_lat, o_lon)
                     if d_km * 1_000 <= bridge_m:
-                        adj[nid].append((other, d_km, -1))
-                        adj[other].append((nid, d_km, -1))
+                        G.add_edge(nid, other, weight=d_km, feat_idx=-1)
+                        G.add_edge(other, nid, weight=d_km, feat_idx=-1)
+                        # Update component map so later pairs see merged comp
+                        merged = comp_map[nid]
+                        old = comp_map[other]
+                        for n, c in comp_map.items():
+                            if c == old:
+                                comp_map[n] = merged
                         added += 1
 
     if added:
         label = "ref-bridge" if node_ref is not None else "bridge"
-        logger.info("_bridge_components(%s): added %d edges (max %.0f m)",
-                    label, added, bridge_m)
+        logger.info(
+            "_bridge_components(%s): added %d edge pairs (max %.0f m)",
+            label, added, bridge_m,
+        )
 
 
 # ---------------------------------------------------------------------------
-# Dijkstra
+# Route-finding helpers
 # ---------------------------------------------------------------------------
 
-def _dijkstra(adj, starts, end_set, feat_ref=None, penalised=None):
-    """
-    Multi-source Dijkstra.  Edges whose road ref is in *penalised* get
-    weight × _PENALTY to push alternatives onto different named roads.
+def _path_to_edge_set(path, edge_to_feat):
+    """Return frozenset of feat_idx for edges along path (skip bridge edges)."""
+    result = set()
+    for u, v in zip(path, path[1:]):
+        fi = edge_to_feat.get((u, v), -1)
+        if fi >= 0:
+            result.add(fi)
+    return frozenset(result)
 
-    Returns (dist_map, found_end_node_or_None).
-    dist_map: node_id -> (dist, prev_node_id, feat_idx)
+
+def _path_km(path, node_coords):
+    """Total haversine distance along the node-list path in km."""
+    total = 0.0
+    for u, v in zip(path, path[1:]):
+        lon1, lat1 = node_coords[u]
+        lon2, lat2 = node_coords[v]
+        total += _haversine_km(lat1, lon1, lat2, lon2)
+    return total
+
+
+def _jaccard_similarity(a, b):
+    """Jaccard similarity between two frozensets."""
+    if not a and not b:
+        return 1.0
+    union = len(a | b)
+    return len(a & b) / union if union > 0 else 0.0
+
+
+def _find_routes_for_pair(
+    G, node_coords, feat_ref, edge_to_feat, features,
+    source, target, site_dist_km, s1, s2, pair_idx,
+    route_counter_start, max_candidates=10, max_routes=4,
+    min_diversity=0.4, max_detour_factor=3.0,
+):
     """
-    dist_map = {}
-    pq = [(d, nid, -1, -1) for d, nid in starts]
-    heapq.heapify(pq)
-    while pq:
-        d, cur, prev, fidx = heapq.heappop(pq)
-        if cur in dist_map:
+    Find up to max_routes diverse routes between source and target nodes.
+
+    Uses Yen's k-shortest paths (via nx.shortest_simple_paths) as candidates,
+    then applies a Jaccard diversity filter to return routes that genuinely
+    use different road corridors.
+
+    Returns (routes_list, new_route_counter).
+    """
+    routes = []
+    route_counter = route_counter_start
+
+    try:
+        path_gen = nx.shortest_simple_paths(
+            G, source, target, weight="weight"
+        )
+        candidates = list(itertools.islice(path_gen, max_candidates))
+    except nx.NetworkXNoPath:
+        logger.warning(
+            "Pair %s\u2194%s: no path found in graph",
+            s1["name"], s2["name"],
+        )
+        return [], route_counter
+    except nx.NodeNotFound as e:
+        logger.warning(
+            "Pair %s\u2194%s: node not found \u2014 %s",
+            s1["name"], s2["name"], e,
+        )
+        return [], route_counter
+
+    selected_edge_sets = []  # frozensets for already-selected routes
+
+    for path in candidates:
+        if len(routes) >= max_routes:
+            break
+
+        # Detour check
+        route_km = _path_km(path, node_coords)
+        if site_dist_km > 0 and route_km > site_dist_km * max_detour_factor:
+            logger.debug(
+                "Pair %s\u2194%s: candidate too long "
+                "(%.1f km > %.1f km limit), skipping",
+                s1["name"], s2["name"],
+                route_km, site_dist_km * max_detour_factor,
+            )
             continue
-        dist_map[cur] = (d, prev, fidx)
-        if cur in end_set:
-            return dist_map, cur
-        for nb, w, fidx2 in adj[cur]:
-            if nb not in dist_map:
-                ref2 = feat_ref.get(fidx2, "")
-                if penalised and feat_ref and ref2 in penalised:
-                    w = w * _PENALTY
-                heapq.heappush(pq, (d + w, nb, cur, fidx2))
-    return dist_map, None
 
+        edge_set = _path_to_edge_set(path, edge_to_feat)
+        if not edge_set:
+            logger.debug(
+                "Pair %s\u2194%s: candidate has empty edge set, skipping",
+                s1["name"], s2["name"],
+            )
+            continue
 
-def _extract_path(dist_map, end_node, feat_ref, node_coords):
-    """
-    Walk predecessor chain; return:
-      refs         — set of ref tags on the path
-      feat_indices — set of feature indices on the path
-      ref_km       — dict ref -> total haversine km on path for that ref
-    """
-    refs = set()
-    feat_indices = set()
-    ref_km: dict = {}
-    cur = end_node
-    while cur is not None and cur != -1:
-        _, prev, fidx = dist_map[cur]
-        if fidx >= 0 and prev != -1:
-            feat_indices.add(fidx)
-            ref = feat_ref.get(fidx, "")
+        # Jaccard diversity: reject if too similar to any already-selected
+        too_similar = any(
+            _jaccard_similarity(edge_set, sel) >= (1.0 - min_diversity)
+            for sel in selected_edge_sets
+        )
+        if too_similar:
+            logger.debug(
+                "Pair %s\u2194%s: candidate rejected by diversity filter",
+                s1["name"], s2["name"],
+            )
+            continue
+
+        selected_edge_sets.append(edge_set)
+
+        # Accumulate ref_km for labelling
+        feat_indices = sorted(fi for fi in edge_set if fi >= 0)
+        ref_km = {}
+        for u, v in zip(path, path[1:]):
+            fi = edge_to_feat.get((u, v), -1)
+            if fi < 0:
+                continue
+            ref = feat_ref.get(fi, "")
+            lon1, lat1 = node_coords[u]
+            lon2, lat2 = node_coords[v]
+            km = _haversine_km(lat1, lon1, lat2, lon2)
             if ref:
-                refs.add(ref)
-                # Accumulate raw km for this edge
-                lon1, lat1 = node_coords[cur]
-                lon2, lat2 = node_coords[prev]
-                km = _haversine_km(lat1, lon1, lat2, lon2)
                 ref_km[ref] = ref_km.get(ref, 0.0) + km
-        cur = prev if prev != -1 else None
-    return refs, feat_indices, ref_km
+
+        path_refs = set(ref_km.keys())
+        total_km = sum(ref_km.values())
+
+        # Label: only refs covering ≥5% of named-road distance
+        label_refs = sorted(
+            r for r, km in ref_km.items()
+            if total_km == 0 or km / total_km >= 0.05
+        )
+        refs_label = (
+            ", ".join(label_refs) if label_refs
+            else ", ".join(sorted(path_refs)) if path_refs
+            else "unnamed"
+        )
+
+        # Road name: prefer first named feature on the path
+        road_name = ""
+        for fi in feat_indices:
+            n = (features[fi].get("properties") or {}).get("name", "") or ""
+            if n:
+                road_name = n
+                break
+        if not road_name:
+            road_name = refs_label
+
+        way_ids = [
+            (features[fi].get("properties") or {}).get("osm_way_id")
+            for fi in feat_indices
+            if (features[fi].get("properties") or {}).get(
+                "osm_way_id") is not None
+        ]
+
+        routes.append({
+            "route_id":        f"route_{route_counter}",
+            "refs":            sorted(path_refs),
+            "ref":             refs_label,
+            "road_name":       road_name,
+            "pair_idx":        pair_idx,
+            "site1":           {
+                "name": s1["name"],
+                "lat":  s1["lat"],
+                "lon":  s1["lon"],
+            },
+            "site2":           {
+                "name": s2["name"],
+                "lat":  s2["lat"],
+                "lon":  s2["lon"],
+            },
+            "feature_indices": feat_indices,
+            "way_ids":         way_ids,
+        })
+        route_counter += 1
+
+        logger.info(
+            "Pair %d (%s\u2194%s) route %d: refs=%s, features=%d, km=%.1f",
+            pair_idx, s1["name"], s2["name"],
+            route_counter - 1, refs_label, len(feat_indices), route_km,
+        )
+
+    return routes, route_counter
 
 
 # ---------------------------------------------------------------------------
-# Public API
+# Snapping helpers (unchanged from original)
 # ---------------------------------------------------------------------------
 
 def _nearest_node_outside_boundary(
         node_coords, boundary_geojson, site_lat, site_lon,
         node_highway=None):
     """
-    Return (dist_km, nid) for the road node that lies outside the boundary
-    polygon and is the best Dijkstra start/end point for this site.
+    Return (dist_km, nid) for the road node outside the boundary polygon
+    that is the best routing start/end point for this site.
 
     Selection: minimise distance_from_site × road_type_penalty.
-    Major roads (trunk/motorway) get penalty 1.0; minor roads get up to 12×.
+    Major roads (trunk/motorway) get penalty 1.0; minor roads up to 12×.
     This picks the nearest outside-boundary major-road exit, not the node
-    closest to the other site (which would select nodes near the destination
-    and cause start==end when both sites snap to the same node).
+    closest to the other site (which would cause start==end when both sites
+    snap to the same node).
 
     Falls back to absolute nearest node if shapely is unavailable or all
     nodes are inside the boundary.
@@ -341,12 +501,11 @@ def _nearest_node_outside_boundary(
             best_nid = nid
 
     if not found_any:
-        # All nodes inside boundary — fall back to absolute nearest
         return _nearest_node(node_coords, site_lat, site_lon)
     nlon, nlat = node_coords[best_nid]
     hw = (node_highway or {}).get(best_nid, "unknown")
     logger.debug(
-        "_nearest_node_outside_boundary: nid=%d hw=%s dist_from_site=%.2f km",
+        "_nearest_node_outside_boundary: nid=%d hw=%s dist=%.2f km",
         best_nid, hw,
         _haversine_km(site_lat, site_lon, nlat, nlon),
     )
@@ -365,32 +524,59 @@ def _nearest_node(node_coords, lat, lon):
     return best_d, best_nid
 
 
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
 def find_p2p_roads(
-    roads_geojson, site_pairs, n_alternatives=1
+    roads_geojson,
+    site_pairs,
+    n_alternatives=3,
+    max_candidates=10,
+    min_diversity=0.4,
+    max_detour_factor=3.0,
 ):
     """
-    For each (site1, site2) pair find road routes connecting the sites.
+    For each (site1, site2) pair find up to n_alternatives road routes.
 
-    Each route is a complete Dijkstra path from site1 to site2.  The first
-    run finds the best (cheapest) path; subsequent runs penalise all refs
-    from prior paths so Dijkstra is forced onto genuinely different roads.
+    Routes are found using Yen's k-shortest paths algorithm (via
+    nx.shortest_simple_paths) and filtered by Jaccard edge-set diversity so
+    that returned routes represent genuinely different road corridors rather
+    than near-identical variants.
 
-    Endpoint selection:
-      - Site with ``boundary_geojson``: nearest road node outside that
-        site's own boundary polygon (so Dijkstra starts outside the city).
-      - Site without boundary: absolute nearest road node to the pin.
-      Other cities along the route are irrelevant and not filtered.
+    Parameters
+    ----------
+    roads_geojson   : GeoJSON FeatureCollection of road segments
+    site_pairs      : list of (site1_dict, site2_dict) pairs
+    n_alternatives  : max routes to return per pair (default 3)
+    max_candidates  : how many Yen's paths to generate per pair before
+                      diversity filtering (default 10)
+    min_diversity   : minimum fraction of edges that must differ between
+                      any two selected routes — routes with Jaccard >=
+                      (1 - min_diversity) are rejected as too similar
+                      (default 0.4)
+    max_detour_factor : routes longer than site_dist × factor are discarded
+                        (default 3.0)
 
-    Returns:
-        routes       — list of dicts: route_id, refs, road_name, pair_idx,
-                        site1, site2, feature_indices, way_ids
-        used_indices — set of feature indices used by any route
+    Endpoint selection
+    ------------------
+    Sites with boundary_geojson: nearest road node OUTSIDE that boundary,
+    biased toward major roads (motorway/trunk).
+    Sites without boundary: absolute nearest road node to the pin.
+
+    Returns
+    -------
+    routes       : list of dicts with keys route_id, refs, ref, road_name,
+                   pair_idx, site1, site2, feature_indices, way_ids
+    used_indices : set of feature indices used by any route
     """
     features = roads_geojson.get("features", [])
     if not features:
         return [], set()
 
-    node_coords, adj, feat_ref, node_highway = _build_graph(features)
+    node_coords, G, feat_ref, node_highway, edge_to_feat = _build_digraph(
+        features
+    )
 
     routes = []
     used_indices = set()
@@ -405,11 +591,6 @@ def find_p2p_roads(
             s1["name"], s2["name"], site_dist_km,
         )
 
-        # Dijkstra source/target nodes.
-        # Sites with a boundary: snap to nearest node OUTSIDE their own
-        # boundary so Dijkstra doesn't start inside the city.
-        # Sites without a boundary: snap to absolute nearest node.
-        # Intermediate/other cities are completely ignored.
         if s1.get("boundary_geojson"):
             start = _nearest_node_outside_boundary(
                 node_coords, s1["boundary_geojson"],
@@ -426,158 +607,46 @@ def find_p2p_roads(
         else:
             end = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
+        _, src = start
+        _, tgt = end
+
         logger.info(
-            "Site %s → node %d (%.2f km away)",
-            s1["name"], start[1], start[0],
+            "Site %s \u2192 node %d (%.2f km away)",
+            s1["name"], src, start[0],
         )
         logger.info(
-            "Site %s → node %d (%.2f km away)",
-            s2["name"], end[1], end[0],
+            "Site %s \u2192 node %d (%.2f km away)",
+            s2["name"], tgt, end[0],
         )
 
-        starts = [start]
-        ends = [end]
-
-        if start[1] == end[1]:
+        if src == tgt:
             logger.warning(
-                "Pair %s↔%s: start and end snap to same node",
+                "Pair %s\u2194%s: start and end snap to same node",
                 s1["name"], s2["name"],
             )
             continue
-        end_set = {nid for _, nid in ends}
 
-        all_found_ref_sets = []   # list of frozenset, one per route found
-        penalised_refs = set()
+        pair_routes, route_counter = _find_routes_for_pair(
+            G, node_coords, feat_ref, edge_to_feat, features,
+            source=src, target=tgt,
+            site_dist_km=site_dist_km,
+            s1=s1, s2=s2,
+            pair_idx=pair_idx,
+            route_counter_start=route_counter,
+            max_candidates=max_candidates,
+            max_routes=n_alternatives,
+            min_diversity=min_diversity,
+            max_detour_factor=max_detour_factor,
+        )
 
-        for _attempt in range(1 + n_alternatives):
-            dist_map, found_end = _dijkstra(
-                adj, starts, end_set,
-                feat_ref=feat_ref, penalised=penalised_refs,
-            )
-            if found_end is None:
-                break
-
-            path_refs, path_feat_indices, ref_km = _extract_path(
-                dist_map, found_end, feat_ref, node_coords
-            )
-
-            # Skip if this ref-set is identical to an already-found route
-            ref_key = frozenset(path_refs)
-            if ref_key in all_found_ref_sets:
-                break
-            all_found_ref_sets.append(ref_key)
-
-            total_km = sum(ref_km.values())
-
-            # Penalise only refs that account for ≥10% of the named-road
-            # distance on this path.  These are the "backbone" refs.
-            # Refs with small km share are city-entry connectors that the
-            # next route will also need — penalising them would block M-1
-            # just because it shares a short junction segment with M-3.
-            dominant_refs = {
-                r for r, km in ref_km.items()
-                if total_km == 0 or km / total_km >= 0.25
-            }
-            penalised_refs |= dominant_refs
-
-            # path_feat_indices are the actual Dijkstra-traversed features.
-            # Drop only bridge edges (feat_idx -1 = synthetic gap-closing
-            # edges with no real GeoJSON geometry).
-            # Features in the middle of a long highway (far from both
-            # endpoints) are legitimately on the route, so we keep them all.
-            if not path_feat_indices:
-                logger.debug(
-                    "Route %d: empty path features", route_counter,
-                )
-                continue
-
-            idx_list = sorted(path_feat_indices)
-
-            # Sanity check: discard routes whose actual traversed distance is
-            # more than 3× the straight-line site-to-site distance.
-            # Measure by walking the predecessor chain (actual Dijkstra path),
-            # NOT by summing up feature geometries (which can be much longer
-            # since a highway feature spans many kilometres).
-            route_km = 0.0
-            cur = found_end
-            while cur is not None and cur != -1:
-                dist_entry = dist_map[cur]
-                prev = dist_entry[1]
-                if prev != -1:
-                    c_lon, c_lat = node_coords[cur]
-                    p_lon, p_lat = node_coords[prev]
-                    route_km += _haversine_km(c_lat, c_lon, p_lat, p_lon)
-                cur = prev if prev != -1 else None
-            max_detour_km = site_dist_km * 3.0
-            if site_dist_km > 0 and route_km > max_detour_km:
-                logger.info(
-                    "Pair %d (%s↔%s) attempt %d: route too long "
-                    "(%.1f km > %.1f km limit), discarding",
-                    pair_idx, s1["name"], s2["name"],
-                    _attempt, route_km, max_detour_km,
-                )
-                continue
-
-            # Label: only refs covering ≥5% of named-road distance.
-            label_refs = sorted(
-                r for r, km in ref_km.items()
-                if total_km == 0 or km / total_km >= 0.05
-            )
-            refs_label = (
-                ", ".join(label_refs) if label_refs
-                else ", ".join(sorted(path_refs)) if path_refs
-                else "unnamed"
-            )
-
-            # Road name: prefer the name of the first named feature on the path
-            road_name = ""
-            for i in idx_list:
-                n = (features[i].get("properties") or {}).get("name", "") or ""
-                if n:
-                    road_name = n
-                    break
-            if not road_name:
-                road_name = refs_label
-
-            way_ids = [
-                (features[i].get("properties") or {}).get("osm_way_id")
-                for i in idx_list
-                if (features[i].get("properties") or {}).get(
-                    "osm_way_id") is not None
-            ]
-
-            routes.append({
-                "route_id":        f"route_{route_counter}",
-                "refs":            sorted(path_refs),
-                "ref":             refs_label,   # kept for UI compatibility
-                "road_name":       road_name,
-                "pair_idx":        pair_idx,
-                "site1":           {
-                    "name": s1["name"],
-                    "lat": s1["lat"],
-                    "lon": s1["lon"],
-                },
-                "site2":           {
-                    "name": s2["name"],
-                    "lat": s2["lat"],
-                    "lon": s2["lon"],
-                },
-                "feature_indices": idx_list,
-                "way_ids":         way_ids,
-            })
-            used_indices.update(idx_list)
-            route_counter += 1
-
-            logger.info(
-                "Pair %d (%s↔%s) route %d: refs=%s, features=%d",
-                pair_idx, s1["name"], s2["name"],
-                route_counter - 1, refs_label, len(idx_list),
-            )
-
-        if not routes or all(r["pair_idx"] != pair_idx for r in routes):
+        if not pair_routes:
             logger.warning(
-                "Pair %s↔%s: no connected path found",
+                "Pair %s\u2194%s: no connected path found",
                 s1["name"], s2["name"],
             )
+        else:
+            routes.extend(pair_routes)
+            for r in pair_routes:
+                used_indices.update(r["feature_indices"])
 
     return routes, used_indices
