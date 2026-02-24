@@ -1462,19 +1462,63 @@ def filter_p2p():
 
     # ── Store routes for later selection ────────────────────────────
     all_features = _roads_geojson.get("features", [])
+
+    # Build boundary polygons for clipping (one per site that has a boundary).
+    # Roads that cross into a city's own boundary are clipped to remove the
+    # interior portion so routes visually start/end at the city border.
+    def _clip_to_boundaries(features, s1_dict, s2_dict):
+        """Clip feature geometries to exclude city boundary interiors."""
+        try:
+            from shapely.geometry import shape, mapping
+        except ImportError:
+            return features
+
+        polys = []
+        for sd in (s1_dict, s2_dict):
+            if sd and sd.get("boundary_geojson"):
+                try:
+                    polys.append(shape(sd["boundary_geojson"]))
+                except Exception:
+                    pass
+        if not polys:
+            return features
+
+        clipped = []
+        for feat in features:
+            try:
+                geom = shape(feat["geometry"])
+                for poly in polys:
+                    geom = geom.difference(poly)
+                if geom.is_empty:
+                    continue
+                clipped.append({**feat, "geometry": mapping(geom)})
+            except Exception:
+                clipped.append(feat)
+        return clipped
+
+    # Build pair site dicts lookup by pair_idx for clipping
+    pair_site_dicts = {i: (s1, s2) for i, (s1, s2) in enumerate(site_pairs)}
+
     _p2p_routes = routes
-    _p2p_all_route_features = {
-        r["route_id"]: [all_features[i] for i in r["feature_indices"]]
-        for r in routes
-    }
+    _p2p_all_route_features = {}
+    for r in routes:
+        raw_feats = [all_features[i] for i in r["feature_indices"]]
+        s1d, s2d = pair_site_dicts.get(r["pair_idx"], ({}, {}))
+        clipped_feats = _clip_to_boundaries(raw_feats, s1d, s2d)
+        _p2p_all_route_features[r["route_id"]] = clipped_feats
 
     # Embed features inline so frontend can render all routes without re-fetching
     for r in routes:
-        r["features"] = [all_features[i] for i in r["feature_indices"]]
+        r["features"] = _p2p_all_route_features[r["route_id"]]
 
     # ── Filter roads GeoJSON to used features only (all selected initially) ──
-    filtered_features = [f for i, f in enumerate(all_features)
-                         if i in used_indices]
+    # Collect all clipped features (de-duplicated by route_id)
+    filtered_features = []
+    seen_route_ids = set()
+    for r in routes:
+        if r["route_id"] not in seen_route_ids:
+            seen_route_ids.add(r["route_id"])
+            filtered_features.extend(_p2p_all_route_features[r["route_id"]])
     filtered = {"type": "FeatureCollection", "features": filtered_features}
     _roads_geojson = filtered
     _loaded_layers["roads"] = filtered
@@ -1570,7 +1614,6 @@ def run_optimization():
     mesh_config = MeshConfig(**{k: v for k, v in param_overrides.items() if k in valid_fields})
 
     # Build RouteSpec list from currently selected routes + their features
-    all_features = _roads_geojson.get("features", []) if _roads_geojson else []
     route_specs = []
     for r in _p2p_routes:
         # Only include routes whose features are in the currently selected roads
