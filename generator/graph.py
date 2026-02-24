@@ -277,31 +277,25 @@ def _extract_path(dist_map, end_node, feat_ref, node_coords):
 
 def _nearest_node_outside_boundary(
         node_coords, boundary_geojson, site_lat, site_lon,
-        target_lat=None, target_lon=None, node_highway=None):
+        node_highway=None):
     """
     Return (dist_km, nid) for the road node that lies outside the boundary
-    polygon and is best positioned as a Dijkstra start/end point.
+    polygon and is the best Dijkstra start/end point for this site.
 
-    Selection criteria (in order of importance):
-    1. Node must be outside the boundary polygon.
-    2. Minimise effective_distance = haversine_to_target × road_type_penalty,
-       where major roads (trunk/motorway) get penalty 1.0 and minor roads get
-       up to 12×.  This ensures the exit node is on a major road facing the
-       destination rather than a nearby local road node.
+    Selection: minimise distance_from_site × road_type_penalty.
+    Major roads (trunk/motorway) get penalty 1.0; minor roads get up to 12×.
+    This picks the nearest outside-boundary major-road exit, not the node
+    closest to the other site (which would select nodes near the destination
+    and cause start==end when both sites snap to the same node).
 
-    Falls back to absolute nearest node if shapely is unavailable or no
-    outside node exists.  dist_km is distance from the site pin (for logging).
+    Falls back to absolute nearest node if shapely is unavailable or all
+    nodes are inside the boundary.
     """
     try:
         from shapely.geometry import Point, shape
         poly = shape(boundary_geojson)
     except Exception:
         return _nearest_node(node_coords, site_lat, site_lon)
-
-    # Use target location to pick exit direction; fall back to site pin if
-    # no target given.
-    measure_lat = target_lat if target_lat is not None else site_lat
-    measure_lon = target_lon if target_lon is not None else site_lon
 
     best_score = float("inf")
     best_nid = 0
@@ -310,7 +304,7 @@ def _nearest_node_outside_boundary(
         if poly.contains(Point(lon, lat)):
             continue
         found_any = True
-        d = _haversine_km(measure_lat, measure_lon, lat, lon)
+        d = _haversine_km(site_lat, site_lon, lat, lon)
         hw = (node_highway or {}).get(nid, "")
         penalty = _SNAP_HIGHWAY_PENALTY.get(hw, _DEFAULT_SNAP_PENALTY)
         score = d * penalty
@@ -321,13 +315,12 @@ def _nearest_node_outside_boundary(
     if not found_any:
         # All nodes inside boundary — fall back to absolute nearest
         return _nearest_node(node_coords, site_lat, site_lon)
-    # Return distance from site pin (not target) for logging consistency
     nlon, nlat = node_coords[best_nid]
     hw = (node_highway or {}).get(best_nid, "unknown")
     logger.debug(
-        "_nearest_node_outside_boundary: nid=%d hw=%s dist_to_target=%.2f km",
+        "_nearest_node_outside_boundary: nid=%d hw=%s dist_from_site=%.2f km",
         best_nid, hw,
-        _haversine_km(measure_lat, measure_lon, nlat, nlon),
+        _haversine_km(site_lat, site_lon, nlat, nlon),
     )
     return _haversine_km(site_lat, site_lon, nlat, nlon), best_nid
 
@@ -393,7 +386,6 @@ def find_p2p_roads(
             start = _nearest_node_outside_boundary(
                 node_coords, s1["boundary_geojson"],
                 s1["lat"], s1["lon"],
-                target_lat=s2["lat"], target_lon=s2["lon"],
                 node_highway=node_highway)
         else:
             start = _nearest_node(node_coords, s1["lat"], s1["lon"])
@@ -402,7 +394,6 @@ def find_p2p_roads(
             end = _nearest_node_outside_boundary(
                 node_coords, s2["boundary_geojson"],
                 s2["lat"], s2["lon"],
-                target_lat=s1["lat"], target_lon=s1["lon"],
                 node_highway=node_highway)
         else:
             end = _nearest_node(node_coords, s2["lat"], s2["lon"])
@@ -457,7 +448,7 @@ def find_p2p_roads(
             # just because it shares a short junction segment with M-3.
             dominant_refs = {
                 r for r, km in ref_km.items()
-                if total_km == 0 or km / total_km >= 0.10
+                if total_km == 0 or km / total_km >= 0.25
             }
             penalised_refs |= dominant_refs
 
