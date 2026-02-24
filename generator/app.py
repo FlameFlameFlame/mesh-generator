@@ -557,10 +557,11 @@ function doDetectCity() {
 function doExport() {
   let dir = document.getElementById('output-dir').value.trim();
   if (!dir) { alert('Enter an output directory'); return; }
+  let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   fetch('/api/export', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({output_dir: dir})
+    body: JSON.stringify({output_dir: dir, max_towers_per_route: maxTowers})
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
     setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
@@ -1905,6 +1906,7 @@ def export():
 
     data = request.json
     output_dir = os.path.abspath(data.get("output_dir", "output"))
+    max_towers_per_route = int(data.get("max_towers_per_route", 8))
     os.makedirs(output_dir, exist_ok=True)
 
     sites_path = os.path.join(output_dir, "sites.geojson")
@@ -1942,6 +1944,7 @@ def export():
         roads_path=roads_export_path,
         elevation_path=elevation_export_path,
         city_boundaries_path=city_boundaries_path,
+        max_nodes_per_road=max_towers_per_route,
     )
 
     # Export routes.json for standalone CLI use with mesh-calculator-routes
@@ -1962,7 +1965,7 @@ def export():
                     "route_id": r["route_id"],
                     "site1": r.get("site1", {}),
                     "site2": r.get("site2", {}),
-                    "max_towers": 8,
+                    "max_towers": max_towers_per_route,
                     "features": _p2p_all_route_features.get(r["route_id"], []),
                 }
                 for r in _p2p_routes
