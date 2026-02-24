@@ -506,20 +506,19 @@ def _boundary_exit_nodes(node_coords, G, boundary_geojson):
     return exits
 
 
-def _add_virtual_exit(G, node_coords, boundary_geojson):
+def _add_virtual_exit(G, node_coords, boundary_geojson, vnode_id):
     """
-    Add a virtual node to G (ID = len(node_coords)) with zero-weight edges to
-    every boundary-exit node, so Dijkstra can freely choose the best crossing.
-    Returns the virtual node ID, or None if no exits found (caller falls back).
+    Add a virtual node with ID vnode_id to G with zero-weight edges to every
+    boundary-exit node, so Dijkstra can freely choose the best crossing.
+    Returns vnode_id, or None if no exits found (caller falls back).
     """
     exits = _boundary_exit_nodes(node_coords, G, boundary_geojson)
     if not exits:
         return None
-    vnode = len(node_coords)
     for en in exits:
-        G.add_edge(vnode, en, weight=0.0, feat_idx=-1)
-        G.add_edge(en, vnode, weight=0.0, feat_idx=-1)
-    return vnode
+        G.add_edge(vnode_id, en, weight=0.0, feat_idx=-1)
+        G.add_edge(en, vnode_id, weight=0.0, feat_idx=-1)
+    return vnode_id
 
 
 def _nearest_node_outside_boundary(
@@ -667,10 +666,12 @@ def find_route_via_waypoints(
             best_node = edges[0][0]
         waypoint_nodes.append(best_node)
 
-    # Snap site endpoints — use all boundary exits as virtual super-node
+    # Snap site endpoints — use all boundary exits as virtual super-node.
+    # Use distinct IDs for each city's virtual node (n, n+1).
     n_real_nodes = len(node_coords)
     if s1.get("boundary_geojson"):
-        src = _add_virtual_exit(G, node_coords, s1["boundary_geojson"])
+        src = _add_virtual_exit(
+            G, node_coords, s1["boundary_geojson"], n_real_nodes)
         if src is None:
             _, src = _nearest_node_outside_boundary(
                 node_coords, s1["boundary_geojson"],
@@ -679,7 +680,8 @@ def find_route_via_waypoints(
         _, src = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
     if s2.get("boundary_geojson"):
-        tgt = _add_virtual_exit(G, node_coords, s2["boundary_geojson"])
+        tgt = _add_virtual_exit(
+            G, node_coords, s2["boundary_geojson"], n_real_nodes + 1)
         if tgt is None:
             _, tgt = _nearest_node_outside_boundary(
                 node_coords, s2["boundary_geojson"],
@@ -819,8 +821,10 @@ def find_p2p_roads(
 
         n_real_nodes = len(node_coords)
 
+        # Use distinct IDs for each city's virtual node (n, n+1).
         if s1.get("boundary_geojson"):
-            src = _add_virtual_exit(G, node_coords, s1["boundary_geojson"])
+            src = _add_virtual_exit(
+                G, node_coords, s1["boundary_geojson"], n_real_nodes)
             if src is None:
                 _, src = _nearest_node_outside_boundary(
                     node_coords, s1["boundary_geojson"],
@@ -832,7 +836,8 @@ def find_p2p_roads(
             _, src = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
         if s2.get("boundary_geojson"):
-            tgt = _add_virtual_exit(G, node_coords, s2["boundary_geojson"])
+            tgt = _add_virtual_exit(
+                G, node_coords, s2["boundary_geojson"], n_real_nodes + 1)
             if tgt is None:
                 _, tgt = _nearest_node_outside_boundary(
                     node_coords, s2["boundary_geojson"],
