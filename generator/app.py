@@ -1500,19 +1500,23 @@ def filter_p2p():
     pair_site_dicts = {i: (s1, s2) for i, (s1, s2) in enumerate(site_pairs)}
 
     _p2p_routes = routes
+    # _p2p_all_route_features: UNCLIPPED — used for export and graph re-use.
+    # _p2p_display_features:   CLIPPED   — used only for frontend rendering.
+    # Keeping them separate ensures clipping doesn't sever routing into cities.
     _p2p_all_route_features = {}
+    _p2p_display_features = {}
     for r in routes:
         raw_feats = [all_features[i] for i in r["feature_indices"]]
         s1d, s2d = pair_site_dicts.get(r["pair_idx"], ({}, {}))
-        clipped_feats = _clip_to_boundaries(raw_feats, s1d, s2d)
-        _p2p_all_route_features[r["route_id"]] = clipped_feats
+        _p2p_all_route_features[r["route_id"]] = raw_feats
+        _p2p_display_features[r["route_id"]] = _clip_to_boundaries(raw_feats, s1d, s2d)
 
-    # Embed features inline so frontend can render all routes without re-fetching
+    # Embed display (clipped) features so routes visually start/end at city borders
     for r in routes:
-        r["features"] = _p2p_all_route_features[r["route_id"]]
+        r["features"] = _p2p_display_features[r["route_id"]]
 
     # ── Filter roads GeoJSON to used features only (all selected initially) ──
-    # Collect all clipped features (de-duplicated by route_id)
+    # Use UNCLIPPED features so the graph stays intact for re-routing and export.
     filtered_features = []
     seen_route_ids = set()
     for r in routes:
