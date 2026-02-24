@@ -3,7 +3,6 @@ name = "mesh-generator"
 version = "0.1.0"
 description = "GUI tool to place mesh network sites on a map and export GeoJSON/config for mesh-engine"
 authors = []
-package-mode = false
 packages = [{include = "generator"}]
 
 [tool.poetry.scripts]
