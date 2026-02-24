@@ -1452,6 +1452,38 @@ def generate():
             buffer, south, west, north, east,
         )
 
+    # Validate that every site (or its full city boundary) lies inside the bbox
+    if user_bbox:
+        from shapely.geometry import box as _box, Point as _Point, shape as _shape
+        bbox_poly = _box(west, south, east, north)
+        outside = []
+        for site in sites:
+            if site.boundary_geojson:
+                try:
+                    site_geom = _shape(site.boundary_geojson)
+                    if not bbox_poly.contains(site_geom):
+                        outside.append(
+                            site.name
+                            + (f" [{site.boundary_name}]"
+                               if site.boundary_name else "")
+                        )
+                except Exception:
+                    pass  # malformed boundary — skip validation for this site
+            else:
+                pt = _Point(site.lon, site.lat)
+                if not bbox_poly.contains(pt):
+                    outside.append(site.name)
+        if outside:
+            return jsonify({
+                "error": (
+                    "The following sites or their city boundaries are outside"
+                    " the drawn bounding box: "
+                    + ", ".join(outside)
+                    + ". Please redraw the bounding box to include them,"
+                    " or clear the bounding box to use the automatic area."
+                )
+            })
+
     try:
         roads = fetch_roads(south, west, north, east)
     except Exception as e:
