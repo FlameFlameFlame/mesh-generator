@@ -282,7 +282,7 @@ def _bridge_components(node_coords, G, bridge_m, node_ref=None):
 # ---------------------------------------------------------------------------
 
 def _path_to_edge_set(path, edge_to_feat):
-    """Return frozenset of feat_idx for edges along path (skip bridge edges)."""
+    """Frozenset of feat_idx for edges along path; skips virtual edges (fi<0)."""
     result = set()
     for u, v in zip(path, path[1:]):
         fi = edge_to_feat.get((u, v), -1)
@@ -314,6 +314,7 @@ def _find_routes_for_pair(
     source, target, site_dist_km, s1, s2, pair_idx,
     route_counter_start, max_candidates=10, max_routes=4,
     min_diversity=0.4, max_detour_factor=3.0,
+    n_real_nodes=None,
 ):
     """
     Find up to max_routes diverse routes between source and target nodes.
@@ -332,6 +333,17 @@ def _find_routes_for_pair(
             G, source, target, weight="weight"
         )
         candidates = list(itertools.islice(path_gen, max_candidates))
+        # Strip virtual nodes (IDs >= n_real_nodes) from path ends
+        if n_real_nodes is not None:
+            stripped = []
+            for p in candidates:
+                while p and p[0] >= n_real_nodes:
+                    p = p[1:]
+                while p and p[-1] >= n_real_nodes:
+                    p = p[:-1]
+                if p:
+                    stripped.append(p)
+            candidates = stripped
     except nx.NetworkXNoPath:
         logger.warning(
             "Pair %s\u2194%s: no path found in graph",
@@ -463,6 +475,53 @@ def _find_routes_for_pair(
 # Snapping helpers (unchanged from original)
 # ---------------------------------------------------------------------------
 
+def _boundary_exit_nodes(node_coords, G, boundary_geojson):
+    """
+    Return the set of graph node IDs that are outside the boundary polygon
+    AND connected by an edge whose other endpoint is inside the boundary.
+    These are the road nodes where routes leave (or enter) the city.
+    """
+    from shapely.geometry import Point, shape
+    try:
+        poly = shape(boundary_geojson)
+    except Exception:
+        return set()
+
+    inside = set()
+    for nid, (lon, lat) in enumerate(node_coords):
+        if poly.contains(Point(lon, lat)):
+            inside.add(nid)
+
+    exits = set()
+    for u, v in G.edges():
+        if u in inside and v not in inside:
+            exits.add(v)
+        elif v in inside and u not in inside:
+            exits.add(u)
+
+    logger.debug(
+        "_boundary_exit_nodes: %d inside, %d exits",
+        len(inside), len(exits),
+    )
+    return exits
+
+
+def _add_virtual_exit(G, node_coords, boundary_geojson):
+    """
+    Add a virtual node to G (ID = len(node_coords)) with zero-weight edges to
+    every boundary-exit node, so Dijkstra can freely choose the best crossing.
+    Returns the virtual node ID, or None if no exits found (caller falls back).
+    """
+    exits = _boundary_exit_nodes(node_coords, G, boundary_geojson)
+    if not exits:
+        return None
+    vnode = len(node_coords)
+    for en in exits:
+        G.add_edge(vnode, en, weight=0.0, feat_idx=-1)
+        G.add_edge(en, vnode, weight=0.0, feat_idx=-1)
+    return vnode
+
+
 def _nearest_node_outside_boundary(
         node_coords, boundary_geojson, site_lat, site_lon,
         node_highway=None):
@@ -537,7 +596,7 @@ def find_route_via_waypoints(
     route_id="route_waypoint",
 ):
     """
-    Find a single route between s1 and s2 that passes through all forced_way_ids.
+    Find a single route between s1 and s2 passing through all forced_way_ids.
 
     Routes through forced segments by chaining Dijkstra sub-paths:
     src → waypoint_1 → waypoint_2 → ... → tgt
@@ -558,7 +617,9 @@ def find_route_via_waypoints(
     if not features:
         return None
 
-    node_coords, G, feat_ref, node_highway, edge_to_feat = _build_digraph(features)
+    node_coords, G, feat_ref, node_highway, edge_to_feat = _build_digraph(
+        features
+    )
 
     # Build waypoint nodes from forced_way_ids
     # For each way_id, find the feature index, then pick a representative node
@@ -578,11 +639,15 @@ def find_route_via_waypoints(
     for wid in forced_way_ids:
         fi = way_id_to_feat_idx.get(wid)
         if fi is None:
-            logger.warning("find_route_via_waypoints: way_id %s not found in features", wid)
+            logger.warning(
+                "find_route_via_waypoints: way_id %s not in features", wid)
+
             continue
         edges = feat_idx_to_edges.get(fi, [])
         if not edges:
-            logger.warning("find_route_via_waypoints: feat_idx %d has no graph edges", fi)
+            logger.warning(
+                "find_route_via_waypoints: feat_idx %d has no edges", fi)
+
             continue
         # Pick the node that is the midpoint of these edges (the median node)
         all_nodes = []
@@ -602,18 +667,23 @@ def find_route_via_waypoints(
             best_node = edges[0][0]
         waypoint_nodes.append(best_node)
 
-    # Snap site endpoints
+    # Snap site endpoints — use all boundary exits as virtual super-node
+    n_real_nodes = len(node_coords)
     if s1.get("boundary_geojson"):
-        _, src = _nearest_node_outside_boundary(
-            node_coords, s1["boundary_geojson"], s1["lat"], s1["lon"],
-            node_highway=node_highway)
+        src = _add_virtual_exit(G, node_coords, s1["boundary_geojson"])
+        if src is None:
+            _, src = _nearest_node_outside_boundary(
+                node_coords, s1["boundary_geojson"],
+                s1["lat"], s1["lon"], node_highway=node_highway)
     else:
         _, src = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
     if s2.get("boundary_geojson"):
-        _, tgt = _nearest_node_outside_boundary(
-            node_coords, s2["boundary_geojson"], s2["lat"], s2["lon"],
-            node_highway=node_highway)
+        tgt = _add_virtual_exit(G, node_coords, s2["boundary_geojson"])
+        if tgt is None:
+            _, tgt = _nearest_node_outside_boundary(
+                node_coords, s2["boundary_geojson"],
+                s2["lat"], s2["lon"], node_highway=node_highway)
     else:
         _, tgt = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
@@ -622,9 +692,15 @@ def find_route_via_waypoints(
     full_path = []
     try:
         for i in range(len(chain) - 1):
-            segment = nx.shortest_path(G, chain[i], chain[i + 1], weight="weight")
+            segment = nx.shortest_path(
+                G, chain[i], chain[i + 1], weight="weight")
             if full_path:
-                segment = segment[1:]  # avoid duplicating the junction node
+                segment = segment[1:]
+            # Strip virtual nodes from segment ends
+            while segment and segment[0] >= n_real_nodes:
+                segment = segment[1:]
+            while segment and segment[-1] >= n_real_nodes:
+                segment = segment[:-1]
             full_path.extend(segment)
     except (nx.NetworkXNoPath, nx.NodeNotFound) as e:
         logger.warning("find_route_via_waypoints: routing failed — %s", e)
@@ -741,33 +817,34 @@ def find_p2p_roads(
             s1["name"], s2["name"], site_dist_km,
         )
 
+        n_real_nodes = len(node_coords)
+
         if s1.get("boundary_geojson"):
-            start = _nearest_node_outside_boundary(
-                node_coords, s1["boundary_geojson"],
-                s1["lat"], s1["lon"],
-                node_highway=node_highway)
+            src = _add_virtual_exit(G, node_coords, s1["boundary_geojson"])
+            if src is None:
+                _, src = _nearest_node_outside_boundary(
+                    node_coords, s1["boundary_geojson"],
+                    s1["lat"], s1["lon"], node_highway=node_highway)
+            else:
+                logger.info(
+                    "Site %s: virtual exit node %d", s1["name"], src)
         else:
-            start = _nearest_node(node_coords, s1["lat"], s1["lon"])
+            _, src = _nearest_node(node_coords, s1["lat"], s1["lon"])
 
         if s2.get("boundary_geojson"):
-            end = _nearest_node_outside_boundary(
-                node_coords, s2["boundary_geojson"],
-                s2["lat"], s2["lon"],
-                node_highway=node_highway)
+            tgt = _add_virtual_exit(G, node_coords, s2["boundary_geojson"])
+            if tgt is None:
+                _, tgt = _nearest_node_outside_boundary(
+                    node_coords, s2["boundary_geojson"],
+                    s2["lat"], s2["lon"], node_highway=node_highway)
+            else:
+                logger.info(
+                    "Site %s: virtual exit node %d", s2["name"], tgt)
         else:
-            end = _nearest_node(node_coords, s2["lat"], s2["lon"])
+            _, tgt = _nearest_node(node_coords, s2["lat"], s2["lon"])
 
-        _, src = start
-        _, tgt = end
-
-        logger.info(
-            "Site %s \u2192 node %d (%.2f km away)",
-            s1["name"], src, start[0],
-        )
-        logger.info(
-            "Site %s \u2192 node %d (%.2f km away)",
-            s2["name"], tgt, end[0],
-        )
+        logger.info("Site %s \u2192 node %d", s1["name"], src)
+        logger.info("Site %s \u2192 node %d", s2["name"], tgt)
 
         if src == tgt:
             logger.warning(
@@ -783,6 +860,7 @@ def find_p2p_roads(
             s1=s1, s2=s2,
             pair_idx=pair_idx,
             route_counter_start=route_counter,
+            n_real_nodes=n_real_nodes,
             max_candidates=max_candidates,
             max_routes=n_alternatives,
             min_diversity=min_diversity,
