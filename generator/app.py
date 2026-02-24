@@ -3,7 +3,34 @@
 import json
 import logging
 import os
+import sys
 import webbrowser
+
+# Ensure mesh_calculator (sibling package) and its dependencies are importable
+# regardless of how this app is launched (e.g. outside the poetry venv).
+# Find the poetry venv that has mesh_calculator installed (contains a .pth file
+# pointing to the mesh_calculator source tree) and add its site-packages.
+def _ensure_mesh_calc_importable():
+    try:
+        import mesh_calculator  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import glob
+    _src = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "mesh_calculator")
+    )
+    # Search all pypoetry venvs for one that has mesh_calculator installed
+    _cache = os.path.expanduser("~/Library/Caches/pypoetry/virtualenvs")
+    for _sp in glob.glob(os.path.join(_cache, "*", "lib", "python3*", "site-packages")):
+        if os.path.isfile(os.path.join(_sp, "mesh_calculator.pth")):
+            if _sp not in sys.path:
+                sys.path.insert(0, _sp)
+            break
+    if os.path.isdir(_src) and _src not in sys.path:
+        sys.path.insert(0, _src)
+
+_ensure_mesh_calc_importable()
 
 import yaml
 from flask import Flask, jsonify, render_template_string, request
