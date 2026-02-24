@@ -115,6 +115,8 @@ HTML_PAGE = """<!DOCTYPE html>
 <div id="toolbar">
   <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
   <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
+  <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
+  <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">✕</a></span>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
   <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
@@ -242,6 +244,11 @@ const PAIR_COLORS = ['#2266aa','#e07000','#229933','#aa2222',
                      '#7722aa','#007799','#996600','#555555'];
 let wayIdToColor = {};          // way_id -> hex color for active routes
 let _allRoutes = [];            // all routes from last filter-p2p
+// Bounding box drawing state
+let _bboxMode = false;
+let _bboxRect = null;           // L.rectangle on map (preview + final)
+let _bboxBounds = null;         // stored [[south,west],[north,east]] or null
+let _bboxDragStart = null;      // latlng where mousedown began
 let _activeRoutePerPair = {};   // pair_key -> route_id (one active per pair)
 let _wayIdToRouteId = {};       // way_id -> route_id (for map click)
 let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
@@ -308,6 +315,90 @@ function toggleAddMode() {
     mapEl.classList.remove('placing');
   }
 }
+
+// ── Bounding-box drawing ──────────────────────────────────────────────────
+function toggleBboxMode() {
+  _bboxMode = !_bboxMode;
+  let btn = document.getElementById('btn-bbox');
+  let mapEl = document.getElementById('map');
+  if (_bboxMode) {
+    // Cancel add-site mode if active
+    if (addMode) toggleAddMode();
+    btn.classList.add('active');
+    btn.textContent = 'Cancel BBox';
+    mapEl.style.cursor = 'crosshair';
+    setStatus('Drag on the map to draw a bounding box');
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'Draw BBox';
+    mapEl.style.cursor = '';
+    // Remove in-progress rect if drag was not completed
+    if (_bboxRect && !_bboxBounds) {
+      map.removeLayer(_bboxRect);
+      _bboxRect = null;
+    }
+    setStatus('');
+  }
+}
+
+function clearBbox() {
+  _bboxBounds = null;
+  _bboxDragStart = null;
+  if (_bboxRect) { map.removeLayer(_bboxRect); _bboxRect = null; }
+  document.getElementById('bbox-status').style.display = 'none';
+  let btn = document.getElementById('btn-bbox');
+  btn.textContent = 'Draw BBox';
+  btn.classList.remove('active');
+  _bboxMode = false;
+  document.getElementById('map').style.cursor = '';
+  setStatus('Bounding box cleared — roads will use auto area from sites');
+}
+
+map.on('mousedown', function(e) {
+  if (!_bboxMode) return;
+  map.dragging.disable();
+  _bboxDragStart = e.latlng;
+  if (_bboxRect) { map.removeLayer(_bboxRect); _bboxRect = null; }
+  _bboxRect = L.rectangle([e.latlng, e.latlng],
+    {color: '#0077cc', weight: 2, dashArray: '5 4', fillOpacity: 0.08}
+  ).addTo(map);
+});
+
+map.on('mousemove', function(e) {
+  if (!_bboxMode || !_bboxDragStart) return;
+  _bboxRect.setBounds(L.latLngBounds(_bboxDragStart, e.latlng));
+});
+
+map.on('mouseup', function(e) {
+  if (!_bboxMode || !_bboxDragStart) return;
+  map.dragging.enable();
+  let bounds = L.latLngBounds(_bboxDragStart, e.latlng);
+  _bboxDragStart = null;
+  // Reject degenerate boxes (just a click)
+  if (bounds.getNorth() - bounds.getSouth() < 0.001 ||
+      bounds.getEast() - bounds.getWest() < 0.001) {
+    if (_bboxRect) { map.removeLayer(_bboxRect); _bboxRect = null; }
+    setStatus('Box too small — try again');
+    return;
+  }
+  _bboxBounds = [
+    [bounds.getSouth(), bounds.getWest()],
+    [bounds.getNorth(), bounds.getEast()]
+  ];
+  // Redraw as solid confirmation rect
+  if (_bboxRect) { map.removeLayer(_bboxRect); }
+  _bboxRect = L.rectangle(bounds,
+    {color: '#0077cc', weight: 2, fillOpacity: 0.06}
+  ).addTo(map);
+  // Exit draw mode
+  _bboxMode = false;
+  let btn = document.getElementById('btn-bbox');
+  btn.classList.remove('active');
+  btn.textContent = 'Draw BBox';
+  document.getElementById('map').style.cursor = '';
+  document.getElementById('bbox-status').style.display = 'inline';
+  setStatus('Bounding box set — click Download Roads to fetch');
+});
 
 map.on('click', function(e) {
   if (!addMode) return;
@@ -485,7 +576,14 @@ function doFetchRoads() {
   prog.style.display = 'inline-flex';
   bar.removeAttribute('value');
   label.textContent = 'Fetching roads...';
-  fetch('/api/generate', {method: 'POST'})
+  let bboxBody = _bboxBounds
+    ? JSON.stringify({bbox: _bboxBounds})
+    : '{}';
+  fetch('/api/generate', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: bboxBody
+  })
     .then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { prog.style.display = 'none'; alert(data.error); return; }
@@ -1331,11 +1429,28 @@ def generate():
                     "City auto-detection failed for site %s: %s",
                     site.name, e)
 
-    lats = [s.lat for s in sites]
-    lons = [s.lon for s in sites]
-    buffer = 0.15  # ~16 km buffer around sites
-    south, north = min(lats) - buffer, max(lats) + buffer
-    west, east = min(lons) - buffer, max(lons) + buffer
+    # Use user-drawn bbox if provided, otherwise auto-compute from sites
+    payload = request.get_json(silent=True) or {}
+    user_bbox = payload.get("bbox")  # [[south,west],[north,east]] or None
+    if (user_bbox and isinstance(user_bbox, list) and len(user_bbox) == 2):
+        south = float(user_bbox[0][0])
+        west = float(user_bbox[0][1])
+        north = float(user_bbox[1][0])
+        east = float(user_bbox[1][1])
+        logger.info(
+            "Using user-drawn bbox: S=%.4f W=%.4f N=%.4f E=%.4f",
+            south, west, north, east,
+        )
+    else:
+        lats = [s.lat for s in sites]
+        lons = [s.lon for s in sites]
+        buffer = 0.15  # ~16 km buffer around sites
+        south, north = min(lats) - buffer, max(lats) + buffer
+        west, east = min(lons) - buffer, max(lons) + buffer
+        logger.info(
+            "Auto bbox (%.2f° buffer): S=%.4f W=%.4f N=%.4f E=%.4f",
+            buffer, south, west, north, east,
+        )
 
     try:
         roads = fetch_roads(south, west, north, east)
