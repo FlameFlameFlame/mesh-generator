@@ -110,6 +110,7 @@ def export_config_yaml(
     roads_path: str = "",
     elevation_path: str = "",
     city_boundaries_path: str = "",
+    max_nodes_per_road: int = 8,
 ) -> None:
     """Write config.yaml for mesh-engine."""
     config = {
@@ -120,7 +121,7 @@ def export_config_yaml(
             "max_visibility_m": 20000.0,
             "tower_separation_m": 5000.0,
             "hop_limit": 7,
-            "max_nodes_per_road": 10,
+            "max_nodes_per_road": max_nodes_per_road,
         },
         "inputs": {
             "boundary": boundary_path,
