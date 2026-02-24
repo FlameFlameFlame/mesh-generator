@@ -62,6 +62,8 @@ _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _elevation_path = None  # path to downloaded elevation GeoTIFF
 _p2p_routes = []             # list of route dicts from find_p2p_roads
 _p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
+_p2p_display_features = {}   # route_id → clipped feature dicts (frontend rendering)
+_forced_waypoints = {}       # pair_key → list of osm_way_ids
 
 HTML_PAGE = """<!DOCTYPE html>
 <html>
@@ -281,6 +283,8 @@ let _activeRoutePerPair = {};   // pair_key -> route_id (one active per pair)
 let _wayIdToRouteId = {};       // way_id -> route_id (for map click)
 let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
 let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering)
+let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
+let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
 // Prerequisite tracking for Run Optimization button
 let _hasRoutes = false;
 let _hasElevation = false;
@@ -586,6 +590,8 @@ function doClear() {
       document.getElementById('coverage-circles-row').style.display = 'none';
       wayIdToColor = {};
       _allRoutes = [];
+      _forcedWaypoints = {};
+      _pinnedWayIds = new Set();
       document.getElementById('chk-roadhex').checked = false;
       let rl = document.getElementById('route-list');
       if (rl) rl.innerHTML = '';
@@ -672,6 +678,10 @@ function doFilterP2P() {
     (res.routes || []).forEach(function(r) {
       _allRouteFeaturesMap[r.route_id] = r.features || [];
     });
+
+    // Reset forced waypoints on each fresh Filter P2P run
+    _forcedWaypoints = {};
+    _pinnedWayIds = new Set();
 
     // renderRouteList handles coloring + map rendering via applyRouteSelection
     renderRouteList(res.routes || []);
@@ -800,18 +810,66 @@ function renderAllRoutesOnMap(activeIds) {
       let key = wid != null ? wid : JSON.stringify(feat.geometry);
       if (seen.has(key)) return;
       seen.add(key);
-      let color   = isActive ? (wayIdToColor[wid] || '#2266aa') : '#999';
-      let weight  = isActive ? 3 : 1.5;
-      let opacity = isActive ? 0.9 : 0.35;
+      let isPinned = _pinnedWayIds.has(wid);
+      let color, weight, opacity;
+      if (isPinned) {
+        color = '#f5a623'; weight = 5; opacity = 1.0;
+      } else if (isActive) {
+        color = wayIdToColor[wid] || '#2266aa'; weight = 3; opacity = 0.9;
+      } else {
+        color = '#999'; weight = 1.5; opacity = 0.35;
+      }
       let layer = L.geoJSON(feat, {style: {color, weight, opacity}});
-      layer.on('click', function() {
+      layer.on('click', function(e) {
+        L.DomEvent.stopPropagation(e);
+        // Find pair_key from whichever active route covers this segment
         let rid = _wayIdToRouteId[wid];
         if (!rid) return;
         let pk = _routeIdToPairKey[rid];
-        if (pk) selectRoute(pk, rid);
+        if (!pk) { selectRoute(pk, rid); return; }
+        // Toggle waypoint
+        if (!_forcedWaypoints[pk]) _forcedWaypoints[pk] = new Set();
+        if (_forcedWaypoints[pk].has(wid)) {
+          _forcedWaypoints[pk].delete(wid);
+        } else {
+          _forcedWaypoints[pk].add(wid);
+        }
+        _rebuildPinnedSet();
+        _rerouteWithWaypoints(pk);
       });
       layer.addTo(layerGroups.roads);
     });
+  });
+}
+
+function _rebuildPinnedSet() {
+  _pinnedWayIds = new Set();
+  Object.values(_forcedWaypoints).forEach(function(s) {
+    s.forEach(function(w) { _pinnedWayIds.add(w); });
+  });
+}
+
+function _rerouteWithWaypoints(pairKey) {
+  let wayIds = Array.from(_forcedWaypoints[pairKey] || []);
+  setStatus('Re-routing through ' + wayIds.length + ' forced segment(s)\u2026');
+  fetch('/api/roads/reroute-with-waypoints', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pair_key: pairKey, forced_way_ids: wayIds})
+  }).then(safeJson).then(function(res) {
+    if (res.error) { setStatus('Re-route failed: ' + res.error); return; }
+    // Replace _allRoutes entries for this pair with returned routes
+    _allRoutes = _allRoutes.filter(function(r) {
+      return _routeIdToPairKey[r.route_id] !== pairKey;
+    });
+    (res.routes || []).forEach(function(r) {
+      _allRouteFeaturesMap[r.route_id] = r.features || [];
+      _allRoutes.push(r);
+    });
+    renderRouteList(_allRoutes);
+    setStatus('Re-routed ' + pairKey + ' via ' + wayIds.length + ' forced segment(s)');
+  }).catch(function(err) {
+    setStatus('Re-route error: ' + err);
   });
 }
 
@@ -1373,6 +1431,7 @@ def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _loaded_layers, _loaded_report
     global _loaded_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
+    global _p2p_display_features, _forced_waypoints
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
@@ -1381,6 +1440,8 @@ def clear_project():
     _loaded_coverage = None
     _p2p_routes = []
     _p2p_all_route_features = {}
+    _p2p_display_features = {}
+    _forced_waypoints = {}
     if _elevation_path and os.path.isfile(_elevation_path):
         try:
             os.unlink(_elevation_path)
@@ -1611,6 +1672,8 @@ def road_hexagons():
 def filter_p2p():
     """Filter roads to named routes that connect site pairs."""
     global _roads_geojson, _loaded_layers, _p2p_routes, _p2p_all_route_features
+    global _p2p_display_features, _forced_waypoints
+    _forced_waypoints = {}
 
     from generator.graph import find_p2p_roads
     from math import atan2, cos, radians, sin, sqrt
@@ -1714,7 +1777,7 @@ def filter_p2p():
     # _p2p_display_features:   CLIPPED   — used only for frontend rendering.
     # Keeping them separate ensures clipping doesn't sever routing into cities.
     _p2p_all_route_features = {}
-    _p2p_display_features = {}
+    _p2p_display_features.clear()
     for r in routes:
         raw_feats = [all_features[i] for i in r["feature_indices"]]
         s1d, s2d = pair_site_dicts.get(r["pair_idx"], ({}, {}))
@@ -1781,6 +1844,105 @@ def select_routes():
     logger.info("select_routes: %d routes selected, %d features",
                 len(selected_ids), len(selected_features))
     return jsonify({"layers": {"roads": filtered}, "road_count": len(selected_features)})
+
+
+@app.route("/api/roads/reroute-with-waypoints", methods=["POST"])
+def reroute_with_waypoints():
+    """Re-route a site pair's roads via forced waypoint segments."""
+    global _p2p_routes, _p2p_all_route_features, _p2p_display_features
+    global _roads_geojson, _loaded_layers, _forced_waypoints
+
+    from generator.graph import find_route_via_waypoints
+
+    data = request.json or {}
+    pair_key = data.get("pair_key", "")          # e.g. "Yerevan↔Gyumri"
+    forced_way_ids = [int(w) for w in data.get("forced_way_ids", [])]
+
+    if not _p2p_routes:
+        return jsonify({"error": "No routes. Run Filter P2P first."}), 400
+    if not _roads_geojson:
+        return jsonify({"error": "No roads loaded."}), 400
+
+    # Find s1, s2 and pair_idx for this pair_key
+    target_route = None
+    for r in _p2p_routes:
+        rk = r["site1"]["name"] + "\u2194" + r["site2"]["name"]
+        if rk == pair_key:
+            target_route = r
+            break
+    if target_route is None:
+        return jsonify({"error": f"Pair '{pair_key}' not found."}), 400
+
+    s1 = target_route["site1"]
+    s2 = target_route["site2"]
+    pair_idx = target_route["pair_idx"]
+
+    # Store forced waypoints for this pair
+    _forced_waypoints[pair_key] = forced_way_ids
+
+    # Determine a unique route_id for the waypoint route
+    route_id = f"route_wp_{pair_key.replace(chr(8596), '_')}"
+
+    if not forced_way_ids:
+        # No waypoints: restore original routes for this pair from _p2p_routes
+        # (already stored — just keep whatever was there; caller will re-render)
+        original = [r for r in _p2p_routes
+                    if r["site1"]["name"] + "\u2194" + r["site2"]["name"] == pair_key]
+        for r in original:
+            r["features"] = _p2p_display_features.get(r["route_id"], [])
+        _rebuild_roads_geojson()
+        return jsonify({"routes": original, "road_count": len(_roads_geojson.get("features", []))})
+
+    # Add site boundary info back (not stored in route dict; look up from store)
+    site_map = {s.name: s for s in store}
+    for sd in (s1, s2):
+        site = site_map.get(sd["name"])
+        if site and site.boundary_geojson:
+            sd["boundary_geojson"] = site.boundary_geojson
+
+    new_route = find_route_via_waypoints(
+        _roads_geojson, s1, s2, forced_way_ids,
+        pair_idx=pair_idx, route_id=route_id,
+    )
+
+    if new_route is None:
+        return jsonify({"error": "Could not find a route through the selected segments. Try a different segment."}), 400
+
+    # Replace routes for this pair in _p2p_routes
+    _p2p_routes = [r for r in _p2p_routes
+                   if r["site1"]["name"] + "\u2194" + r["site2"]["name"] != pair_key]
+
+    # Build features for the new route
+    all_features = _roads_geojson.get("features", [])
+    raw_feats = [all_features[i] for i in new_route["feature_indices"]
+                 if i < len(all_features)]
+    _p2p_all_route_features[new_route["route_id"]] = raw_feats
+    _p2p_display_features[new_route["route_id"]] = raw_feats  # no clipping for waypoint routes
+    new_route["features"] = raw_feats
+
+    _p2p_routes.append(new_route)
+
+    _rebuild_roads_geojson()
+
+    logger.info("reroute_with_waypoints: pair=%s waypoints=%d route=%s features=%d",
+                pair_key, len(forced_way_ids), route_id, len(raw_feats))
+    return jsonify({"routes": [new_route], "road_count": len(_roads_geojson.get("features", []))})
+
+
+def _rebuild_roads_geojson():
+    """Rebuild _roads_geojson and _loaded_layers['roads'] from current _p2p_routes."""
+    global _roads_geojson, _loaded_layers
+    all_feats = []
+    seen = set()
+    for r in _p2p_routes:
+        for feat in _p2p_all_route_features.get(r["route_id"], []):
+            wid = (feat.get("properties") or {}).get("osm_way_id")
+            key = wid if wid is not None else id(feat)
+            if key not in seen:
+                seen.add(key)
+                all_feats.append(feat)
+    _roads_geojson = {"type": "FeatureCollection", "features": all_feats}
+    _loaded_layers["roads"] = _roads_geojson
 
 
 @app.route("/api/run-optimization", methods=["POST"])
