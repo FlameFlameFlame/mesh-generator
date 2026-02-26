@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mesh Site Generator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
+  <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
+  <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
+  <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">✕</a></span>
+  <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
+  <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
+  <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
+  <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
+  <button onclick="doLoadProject()">Load Project</button>
+  <button class="danger" onclick="doClear()">Clear</button>
+  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
+  <button class="primary" onclick="doExport()">Export</button>
+  <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
+    title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
+  <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
+    <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1"
+           style="width:44px;padding:3px 4px;"> towers/route
+  </label>
+  <span id="hint" class="hint">Click "Add Site" then click on the map</span>
+</div>
+
+<div id="main">
+  <div id="map"></div>
+  <div id="sidebar">
+    <div id="site-list">
+      <table>
+        <thead><tr><th>Name</th><th>Priority</th></tr></thead>
+        <tbody id="site-tbody"></tbody>
+      </table>
+    </div>
+    <div id="controls">
+      <label>Name
+        <input id="edit-name" type="text" placeholder="Select a site">
+      </label>
+      <label>Priority
+        <select id="edit-priority">
+          <option value="1">1</option><option value="2">2</option>
+          <option value="3">3</option><option value="4">4</option>
+          <option value="5">5</option>
+        </select>
+      </label>
+      <div class="btn-row">
+        <button onclick="doUpdate()">Update</button>
+        <button onclick="doDetectCity()">Detect City</button>
+        <button class="danger" onclick="doDelete()">Delete</button>
+      </div>
+      <div id="city-info" style="display:none;font-size:0.85em;color:#555;margin-top:4px;"></div>
+    </div>
+    <div id="layer-panel">
+      <strong>Layers</strong>
+      <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
+      <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
+      <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
+      <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
+      <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
+      <label><input type="checkbox" id="chk-roadhex" onchange="toggleLayer('roadhex')"> Road Hexagons</label>
+      <label><input type="checkbox" id="chk-coveragecircles" onchange="toggleCoverageCircles()"> Coverage Circles</label>
+      <div class="sub-control" id="coverage-circles-row" style="display:none;">
+        <label>Radius <input type="number" id="coverage-radius" value="5000" min="100" max="200000" step="100" oninput="renderCoverageCircles()"> m</label>
+      </div>
+      <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons (roads)</label>
+      <div class="sub-control" id="coverage-metric-row" style="display:none;">
+        <select id="coverage-metric" onchange="renderCoverage()">
+          <option value="visible_tower_count">Visible tower count</option>
+          <option value="path_loss">Path loss (dB)</option>
+          <option value="elevation">Elevation (m)</option>
+          <option value="clearance">Clearance (m)</option>
+          <option value="distance_to_closest_tower">Distance to tower (m)</option>
+        </select>
+      </div>
+      <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Radial Coverage</label>
+      <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
+        <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
+          <option value="received_power_dbm">Received power (dBm)</option>
+          <option value="path_loss_db">Path loss (dB)</option>
+          <option value="distance_m">Distance to tower (m)</option>
+          <option value="elevation">Elevation (m)</option>
+        </select>
+      </div>
+      <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>
+      <div class="sub-control" id="elevation-opacity-row" style="display:none;">
+        <label>Opacity <input type="range" id="elev-opacity" min="0" max="1" step="0.05" value="0.5" oninput="setElevationOpacity(this.value)"></label>
+      </div>
+    </div>
+    <div id="tower-legend">
+      <strong>Tower Sources</strong>
+      <div id="tower-legend-items"></div>
+    </div>
+    <div id="report-panel">
+      <strong>Report</strong>
+      <table id="report-table"></table>
+    </div>
+    <div id="route-list"></div>
+    <div id="status-bar"></div>
+  </div>
+</div>
+
+<div class="color-legend" id="color-legend">
+  <div id="legend-title">Coverage</div>
+  <div class="gradient-bar" id="legend-gradient"></div>
+  <div class="labels"><span id="legend-min">0</span><span id="legend-max">1</span></div>
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
