@@ -18,7 +18,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
                     connections: L.layerGroup().addTo(map),
                     coverageCircles: L.layerGroup(),
-                    roadhex: L.layerGroup(),
+
                     coverage: L.layerGroup(),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup() };
@@ -50,6 +50,7 @@ let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering
 let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
 let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
 // Prerequisite tracking for Run Optimization button
+let _hasRoads = false;
 let _hasRoutes = false;
 let _hasElevation = false;
 function _updateOptimizeBtn() {
@@ -245,6 +246,10 @@ function refresh() {
     if (i === selectedIdx) tr.classList.add('selected');
     tbody.appendChild(tr);
   });
+  // Keep profile site selects in sync
+  if (document.getElementById('profile-controls').style.display !== 'none') {
+    _updateProfileSiteSelects();
+  }
 }
 
 function selectSite(i) {
@@ -360,7 +365,7 @@ function doClear() {
       _allRoutes = [];
       _forcedWaypoints = {};
       _pinnedWayIds = new Set();
-      document.getElementById('chk-roadhex').checked = false;
+
       let rl = document.getElementById('route-list');
       if (rl) rl.innerHTML = '';
       // Reset elevation
@@ -375,9 +380,11 @@ function doClear() {
       document.getElementById('tower-legend').style.display = 'none';
       document.getElementById('report-panel').style.display = 'none';
       setStatus('');
+      _hasRoads = false;
       _hasRoutes = false;
       _hasElevation = false;
       _updateOptimizeBtn();
+      try { localStorage.removeItem(_STATE_KEY); } catch(e) {}
     });
 }
 
@@ -419,6 +426,8 @@ function doFetchRoads() {
         let idx = sites.findIndex(function(s) { return s.name === cb.name; });
         if (idx >= 0 && cb.boundary_name) sites[idx].boundary_name = cb.boundary_name;
       });
+      _hasRoads = true;
+      saveProjectState(null);
       if ((data.city_boundaries || []).length > 0) refresh();
       if (data.bounds) map.fitBounds(data.bounds, {padding: [30, 30]});
     }).catch(err => {
@@ -455,6 +464,7 @@ function doFilterP2P() {
     renderRouteList(res.routes || []);
     _hasRoutes = (res.routes || []).length > 0;
     _updateOptimizeBtn();
+    saveProjectState(null);
 
     // Draw site-to-site connection overlay
     layerGroups.connections.clearLayers();
@@ -693,6 +703,7 @@ function doFetchElevation() {
       document.getElementById('chk-elevation').disabled = false;
       _hasElevation = true;
       _updateOptimizeBtn();
+      saveProjectState(null);
     }).catch(err => {
       btn.disabled = false;
       prog.style.display = 'none';
@@ -723,12 +734,25 @@ function doLoadProject() {
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     if (data.report) showReport(data.report);
     if (data.has_elevation) {
+      _hasElevation = true;
+      hasElevation = true;
       elevationOverlay = null;
       elevationFetched = false;
       let chk = document.getElementById('chk-elevation');
-      chk.checked = true;
-      toggleElevation();
+      chk.disabled = false;
     }
+    // Restore project status flags and settings
+    let ps = data.project_status || {};
+    if (ps.has_roads) _hasRoads = true;
+    if (ps.has_routes) {
+      _hasRoutes = true;
+    }
+    if (ps.has_optimization) {
+      hasCoverage = data.has_coverage || false;
+    }
+    if (ps.parameters) applySettings(ps.parameters);
+    _updateOptimizeBtn();
+    saveProjectState(data.config_path || configPath);
     setStatus('Loaded project: ' + (data.config_path || ''));
     if (data.bounds) map.fitBounds(data.bounds);
   });
@@ -749,29 +773,13 @@ let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
 
 
-function fetchRoadHexagons() {
-  fetch('/api/roads/hexagons').then(r => {
-    if (!r.ok) return;
-    return r.json();
-  }).then(data => {
-    if (!data) return;
-    layerGroups.roadhex.clearLayers();
-    L.geoJSON(data, {
-      style: { color: '#339966', weight: 0.5, fillColor: '#33cc77', fillOpacity: 0.15 }
-    }).addTo(layerGroups.roadhex);
-    // Show on map if checkbox is checked
-    if (document.getElementById('chk-roadhex').checked) {
-      layerGroups.roadhex.addTo(map);
-    }
-  });
-}
 
 function renderLayers(layers) {
   // Roads
   if (layers.roads) {
     _cachedRoadsGeojson = layers.roads;
     renderRoads();
-    fetchRoadHexagons();
+
   }
   // Towers (colored by source)
   layerGroups.towers.clearLayers();
@@ -1111,16 +1119,52 @@ function setStatus(msg) {
 
 // --- Run mesh_calculator optimization on selected routes ---
 
+function toggleSettings() {
+  let panel = document.getElementById('settings-panel');
+  panel.style.display = panel.style.display === 'none' ? '' : 'none';
+}
+
+function getSettings() {
+  let freqMhz = parseFloat(document.getElementById('set-frequency-mhz').value) || 868;
+  return {
+    h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
+    frequency_hz: freqMhz * 1e6,
+    mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 2.0,
+    max_visibility_m: parseFloat(document.getElementById('set-max-visibility').value) || 20000,
+    tower_separation_m: parseFloat(document.getElementById('set-tower-separation').value) || 5000,
+    hop_limit: parseInt(document.getElementById('set-hop-limit').value) || 7,
+    max_nodes_per_road: parseInt(document.getElementById('set-max-nodes-per-road').value) || 8,
+    tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
+    antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
+    receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
+  };
+}
+
+function applySettings(s) {
+  if (!s) return;
+  if (s.h3_resolution != null) document.getElementById('set-h3-resolution').value = s.h3_resolution;
+  if (s.frequency_hz != null) document.getElementById('set-frequency-mhz').value = Math.round(s.frequency_hz / 1e6);
+  if (s.mast_height_m != null) document.getElementById('set-mast-height').value = s.mast_height_m;
+  if (s.max_visibility_m != null) document.getElementById('set-max-visibility').value = s.max_visibility_m;
+  if (s.tower_separation_m != null) document.getElementById('set-tower-separation').value = s.tower_separation_m;
+  if (s.hop_limit != null) document.getElementById('set-hop-limit').value = s.hop_limit;
+  if (s.max_nodes_per_road != null) document.getElementById('set-max-nodes-per-road').value = s.max_nodes_per_road;
+  if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
+  if (s.antenna_gain_dbi != null) document.getElementById('set-antenna-gain').value = s.antenna_gain_dbi;
+  if (s.receiver_sensitivity_dbm != null) document.getElementById('set-rx-sensitivity').value = s.receiver_sensitivity_dbm;
+}
+
 function doRunOptimization() {
   let btn = document.getElementById('btn-optimize');
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
+  let parameters = getSettings();
   btn.disabled = true;
   setStatus('Running optimization\u2026 (this may take a minute)');
 
   fetch('/api/run-optimization', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({max_towers_per_route: maxTowers})
+    body: JSON.stringify({max_towers_per_route: maxTowers, parameters: parameters})
   }).then(safeJson).then(function(res) {
     btn.disabled = false;
     if (res.error) { setStatus('Optimization failed: ' + res.error); return; }
@@ -1205,9 +1249,239 @@ function doRunOptimization() {
         }, {}),
       });
     }
+    saveProjectState(null);
   }).catch(function(err) {
     btn.disabled = false;
     setStatus('');
     alert('Optimization error: ' + err);
   });
 }
+
+// --- Path Profile ---
+
+function toggleProfileControls() {
+  let el = document.getElementById('profile-controls');
+  let visible = el.style.display !== 'none' && el.style.display !== '';
+  if (visible) {
+    el.style.display = 'none';
+  } else {
+    el.style.display = 'inline-flex';
+    _updateProfileSiteSelects();
+  }
+}
+
+function _updateProfileSiteSelects() {
+  let s1 = document.getElementById('profile-site1');
+  let s2 = document.getElementById('profile-site2');
+  [s1, s2].forEach(function(sel) {
+    sel.innerHTML = '';
+    sites.forEach(function(s, i) {
+      let opt = document.createElement('option');
+      opt.value = i;
+      opt.textContent = s.name;
+      sel.appendChild(opt);
+    });
+  });
+  // Default: first two different sites
+  if (s2.options.length > 1) s2.selectedIndex = 1;
+}
+
+function doPathProfile() {
+  let idx1 = parseInt(document.getElementById('profile-site1').value);
+  let idx2 = parseInt(document.getElementById('profile-site2').value);
+  if (idx1 === idx2) { alert('Select two different sites.'); return; }
+  if (!_hasElevation) { alert('Download Elevation first.'); return; }
+  fetch('/api/path-profile', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({site1_idx: idx1, site2_idx: idx2})
+  }).then(safeJson).then(function(data) {
+    if (data.error) { alert('Profile error: ' + data.error); return; }
+    _showPathProfile(data);
+  }).catch(function(e) { alert('Error: ' + e); });
+}
+
+function _showPathProfile(data) {
+  let panel = document.getElementById('path-profile-panel');
+  let title = document.getElementById('path-profile-title');
+  let stats = document.getElementById('path-profile-stats');
+  title.textContent = (data.site1.name || 'A') + ' → ' + (data.site2.name || 'B');
+  let distKm = (data.distance_m / 1000).toFixed(1);
+  stats.textContent = 'Distance: ' + distKm + ' km';
+  panel.style.display = '';
+  _drawPathProfile(data);
+}
+
+function closePathProfile() {
+  document.getElementById('path-profile-panel').style.display = 'none';
+}
+
+function _drawPathProfile(data) {
+  let canvas = document.getElementById('path-profile-canvas');
+  // Resize canvas to match rendered CSS width
+  canvas.width = canvas.offsetWidth || 560;
+  let ctx = canvas.getContext('2d');
+  let W = canvas.width, H = canvas.height;
+  let pad = {top: 16, right: 16, bottom: 28, left: 48};
+  let cw = W - pad.left - pad.right;
+  let ch = H - pad.top - pad.bottom;
+
+  ctx.clearRect(0, 0, W, H);
+
+  let pts = data.points;
+  let elevs = pts.map(function(p) { return p.elevation_m; });
+  let minE = Math.min.apply(null, elevs);
+  let maxE = Math.max.apply(null, elevs);
+  let rangeE = maxE - minE || 1;
+  let maxD = data.distance_m;
+
+  function xOf(dist) { return pad.left + (dist / maxD) * cw; }
+  function yOf(elev) { return pad.top + ch - ((elev - minE) / rangeE) * ch; }
+
+  // Draw axes
+  ctx.strokeStyle = '#aaa';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, pad.top);
+  ctx.lineTo(pad.left, pad.top + ch);
+  ctx.lineTo(pad.left + cw, pad.top + ch);
+  ctx.stroke();
+
+  // Y axis labels
+  ctx.fillStyle = '#666';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'right';
+  ctx.fillText(Math.round(maxE) + ' m', pad.left - 4, pad.top + 4);
+  ctx.fillText(Math.round(minE) + ' m', pad.left - 4, pad.top + ch);
+
+  // X axis labels
+  ctx.textAlign = 'center';
+  ctx.fillText('0', pad.left, pad.top + ch + 14);
+  ctx.fillText((data.distance_m / 1000).toFixed(1) + ' km', pad.left + cw, pad.top + ch + 14);
+
+  // Fill terrain profile
+  ctx.beginPath();
+  ctx.moveTo(xOf(pts[0].dist_m), yOf(pts[0].elevation_m));
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(xOf(pts[i].dist_m), yOf(pts[i].elevation_m));
+  }
+  ctx.lineTo(xOf(pts[pts.length - 1].dist_m), pad.top + ch);
+  ctx.lineTo(xOf(pts[0].dist_m), pad.top + ch);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100,160,80,0.35)';
+  ctx.fill();
+
+  // Terrain profile line
+  ctx.beginPath();
+  ctx.moveTo(xOf(pts[0].dist_m), yOf(pts[0].elevation_m));
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(xOf(pts[i].dist_m), yOf(pts[i].elevation_m));
+  }
+  ctx.strokeStyle = '#4a8a30';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // LOS line between sites
+  let y1 = yOf(data.site1.elevation_m);
+  let y2 = yOf(data.site2.elevation_m);
+  ctx.beginPath();
+  ctx.moveTo(xOf(0), y1);
+  ctx.lineTo(xOf(data.distance_m), y2);
+  ctx.strokeStyle = 'rgba(220,60,60,0.7)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([5, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Site markers
+  function drawSitePin(x, y, label) {
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    ctx.lineTo(x, pad.top + ch);
+    ctx.strokeStyle = '#c00';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 2]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#c00';
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, 2 * Math.PI);
+    ctx.fill();
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = x < W / 2 ? 'left' : 'right';
+    ctx.fillText(label, x + (x < W / 2 ? 6 : -6), y - 6);
+  }
+
+  drawSitePin(xOf(0), y1, data.site1.name || 'A');
+  drawSitePin(xOf(data.distance_m), y2, data.site2.name || 'B');
+}
+
+// --- localStorage project state caching ---
+
+const _STATE_KEY = 'meshProjectState';
+
+function saveProjectState(projectPath) {
+  try {
+    let existing = {};
+    try { existing = JSON.parse(localStorage.getItem(_STATE_KEY) || '{}'); } catch(e) {}
+    let state = Object.assign(existing, {
+      projectPath: projectPath || existing.projectPath || null,
+      hasRoads: _hasRoads,
+      hasElevation: _hasElevation,
+      hasRoutes: _hasRoutes,
+      outputDir: document.getElementById('output-dir').value,
+      bbox: _bboxBounds,
+      settings: getSettings(),
+    });
+    localStorage.setItem(_STATE_KEY, JSON.stringify(state));
+  } catch(e) { /* localStorage may be unavailable */ }
+}
+
+function restoreProjectState() {
+  try {
+    let state = JSON.parse(localStorage.getItem(_STATE_KEY) || '{}');
+    if (!state.projectPath) return;
+    // Restore output dir and bbox immediately
+    if (state.outputDir) document.getElementById('output-dir').value = state.outputDir;
+    if (state.bbox) {
+      _bboxBounds = state.bbox;
+      document.getElementById('bbox-status').style.display = '';
+    }
+    if (state.settings) applySettings(state.settings);
+    // Auto-load the project from server
+    setStatus('Restoring project from ' + state.projectPath + '...');
+    fetch('/api/load', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({path: state.projectPath})
+    }).then(safeJson).then(data => {
+      if (data.error) { setStatus('Could not restore project: ' + data.error); return; }
+      sites = data.sites || [];
+      hasCoverage = data.has_coverage || false;
+      coverageData = null; coverageFetched = false;
+      towerCoverageData = null; towerCoverageFetched = false;
+      refresh();
+      renderLayers(data.layers || {});
+      if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
+      if (data.report) showReport(data.report);
+      let ps = data.project_status || {};
+      if (ps.has_roads || state.hasRoads) _hasRoads = true;
+      if (ps.has_routes || state.hasRoutes) _hasRoutes = true;
+      if (ps.has_elevation || state.hasElevation || data.has_elevation) {
+        _hasElevation = true;
+        hasElevation = true;
+        document.getElementById('chk-elevation').disabled = false;
+      }
+      if (ps.parameters) applySettings(ps.parameters);
+      _updateOptimizeBtn();
+      setStatus('Project restored: ' + (data.config_path || state.projectPath));
+      if (data.bounds) map.fitBounds(data.bounds);
+    }).catch(function(e) {
+      setStatus('Could not restore project: ' + e);
+    });
+  } catch(e) { /* ignore */ }
+}
+
+// Restore state on page load
+restoreProjectState();

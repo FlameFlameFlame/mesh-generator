@@ -255,6 +255,79 @@ def get_elevation_image():
         return jsonify({"error": f"Failed to render elevation: {e}"}), 500
 
 
+@app.route("/api/path-profile", methods=["POST"])
+def path_profile():
+    """Sample terrain elevation between two sites for a path-profile chart."""
+    if not _elevation_path or not os.path.isfile(_elevation_path):
+        return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+
+    data = request.json or {}
+    idx1 = data.get("site1_idx")
+    idx2 = data.get("site2_idx")
+    if idx1 is None or idx2 is None:
+        return jsonify({"error": "site1_idx and site2_idx required"}), 400
+
+    try:
+        s1 = store.get(int(idx1))
+        s2 = store.get(int(idx2))
+    except (IndexError, ValueError):
+        return jsonify({"error": "Invalid site index"}), 400
+
+    # Sample terrain along great-circle
+    import math
+    try:
+        from mesh_calculator.core.elevation import ElevationProvider
+        elev_provider = ElevationProvider(_elevation_path)
+    except Exception as e:
+        return jsonify({"error": f"Could not open elevation data: {e}"}), 500
+
+    n_samples = 120
+    lat1, lon1 = s1.lat, s1.lon
+    lat2, lon2 = s2.lat, s2.lon
+
+    # Haversine distance
+    R = 6371000.0
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlam = math.radians(lon2 - lon1)
+    a = (math.sin(dphi / 2) ** 2
+         + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
+    dist_m = 2 * R * math.asin(math.sqrt(a))
+
+    points = []
+    for i in range(n_samples + 1):
+        frac = i / n_samples
+        lat = lat1 + frac * (lat2 - lat1)
+        lon = lon1 + frac * (lon2 - lon1)
+        elev = elev_provider.get_elevation(lat, lon)
+        points.append({
+            "dist_m": round(frac * dist_m, 1),
+            "elevation_m": round(elev, 1),
+        })
+
+    s1_elev = elev_provider.get_elevation(lat1, lon1)
+    s2_elev = elev_provider.get_elevation(lat2, lon2)
+
+    logger.info(
+        "Path profile: %s → %s, dist=%.1f m, %d samples",
+        s1.name, s2.name, dist_m, n_samples,
+    )
+    return jsonify({
+        "distance_m": round(dist_m, 1),
+        "points": points,
+        "site1": {
+            "name": s1.name,
+            "dist_m": 0,
+            "elevation_m": round(s1_elev, 1),
+        },
+        "site2": {
+            "name": s2.name,
+            "dist_m": round(dist_m, 1),
+            "elevation_m": round(s2_elev, 1),
+        },
+    })
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """Compute boundary from sites, fetch roads from OSM, return layers for visualization."""
@@ -347,6 +420,33 @@ def generate():
 
     logger.info("Fetched: %d road features", len(roads.get("features", [])))
 
+    # Exclude road segments that lie entirely within city boundaries
+    from shapely.geometry import shape as _shape_geom
+    from shapely.ops import unary_union as _unary_union
+    city_polygons = []
+    for site in sites:
+        if site.boundary_geojson:
+            try:
+                city_polygons.append(_shape_geom(site.boundary_geojson))
+            except Exception:
+                pass
+    if city_polygons:
+        exclusion_zone = _unary_union(city_polygons)
+        original_count = len(roads.get("features", []))
+        filtered_features = []
+        for feat in roads.get("features", []):
+            try:
+                geom = _shape_geom(feat["geometry"])
+                if not exclusion_zone.contains(geom):
+                    filtered_features.append(feat)
+            except Exception:
+                filtered_features.append(feat)
+        roads = {"type": "FeatureCollection", "features": filtered_features}
+        excluded = original_count - len(filtered_features)
+        logger.info(
+            "Excluded %d road segments within city boundaries (kept %d)",
+            excluded, len(filtered_features))
+
     _roads_geojson = roads
     _full_roads_geojson = roads
     logger.info("Generated: %d road features", len(roads.get("features", [])))
@@ -386,15 +486,6 @@ def generate():
         "city_boundaries": city_boundaries,
     })
 
-
-@app.route("/api/roads/hexagons", methods=["GET"])
-def road_hexagons():
-    """Return H3 hexagons covering current roads as GeoJSON."""
-    if not _roads_geojson:
-        return jsonify({"error": "No roads loaded"}), 404
-    from generator.coverage import roads_to_h3_cells, h3_cells_to_geojson
-    cells = roads_to_h3_cells(_roads_geojson, resolution=8)
-    return jsonify(h3_cells_to_geojson(cells))
 
 
 @app.route("/api/roads/filter-p2p", methods=["POST"])
@@ -715,7 +806,6 @@ def run_optimization():
     param_overrides = body.get("parameters", {})
 
     # Build MeshConfig (with optional overrides from request body)
-    from mesh_calculator.core.config import MeshConfig
     valid_fields = MeshConfig.__dataclass_fields__
     mesh_config = MeshConfig(**{k: v for k, v in param_overrides.items() if k in valid_fields})
 
@@ -832,19 +922,21 @@ def export():
             output_dir, "city_boundaries.geojson")
         export_city_boundaries_geojson(sites, city_boundaries_path)
 
+    # Collect parameters from request for config export
+    req_params = data.get("parameters", {})
     export_config_yaml(
         output_dir, sites_path, boundary_path,
         roads_path=roads_export_path,
         elevation_path=elevation_export_path,
         city_boundaries_path=city_boundaries_path,
         max_nodes_per_road=max_towers_per_route,
+        parameters=req_params,
     )
 
     # Export routes.json for standalone CLI use with mesh-calculator-routes
     routes_path = ""
     if _p2p_routes:
         routes_path = os.path.join(output_dir, "routes.json")
-        all_feats = _roads_geojson.get("features", []) if _roads_geojson else []
         routes_export = {
             "parameters": {
                 "h3_resolution": 8,
@@ -868,13 +960,27 @@ def export():
             json.dump(routes_export, f, indent=2)
         logger.info("Exported routes to %s (%d routes)", routes_path, len(_p2p_routes))
 
+    # Write status.json to capture project state
+    status = {
+        "has_roads": bool(_roads_geojson),
+        "has_elevation": bool(_elevation_path and os.path.isfile(_elevation_path)),
+        "has_routes": bool(_p2p_routes),
+        "has_optimization": bool(_loaded_layers.get("towers")),
+        "elevation_path": _elevation_path or "",
+        "parameters": req_params,
+    }
+    status_path = os.path.join(output_dir, "status.json")
+    with open(status_path, "w") as f:
+        json.dump(status, f, indent=2)
+    logger.info("Exported status to %s", status_path)
+
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
         "files": [sites_path, boundary_path, roads_path,
                   elevation_export_path, os.path.join(output_dir, "config.yaml"),
-                  routes_path],
+                  routes_path, status_path],
     })
 
 
@@ -990,6 +1096,20 @@ def load_project():
     if not output_dir:
         output_dir = config_dir
 
+    # Load status.json if present
+    project_status = {}
+    status_path = os.path.join(config_dir, "status.json")
+    if os.path.isfile(status_path):
+        with open(status_path) as f:
+            project_status = json.load(f)
+        logger.info("Loaded project status from %s", status_path)
+        # Restore elevation path from status if not already found
+        if not _elevation_path and project_status.get("elevation_path"):
+            ep = project_status["elevation_path"]
+            if os.path.isfile(ep):
+                _elevation_path = ep
+                logger.info("Restored elevation path from status: %s", ep)
+
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
 
@@ -1002,6 +1122,7 @@ def load_project():
         "report": _loaded_report,
         "has_coverage": _loaded_coverage is not None,
         "has_elevation": _elevation_path is not None,
+        "project_status": project_status,
     })
 
 

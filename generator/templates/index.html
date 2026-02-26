@@ -28,6 +28,14 @@
     <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1"
            style="width:44px;padding:3px 4px;"> towers/route
   </label>
+  <button onclick="toggleSettings()" title="Mesh calculator settings">Settings ⚙</button>
+  <span id="profile-controls" style="display:none;align-items:center;gap:4px;font-size:0.85em;">
+    <select id="profile-site1" title="From site"></select>
+    <span>→</span>
+    <select id="profile-site2" title="To site"></select>
+    <button onclick="doPathProfile()" title="Requires elevation download">Show Profile</button>
+  </span>
+  <button onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile 📈</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
 </div>
 
@@ -65,7 +73,7 @@
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
       <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
       <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
-      <label><input type="checkbox" id="chk-roadhex" onchange="toggleLayer('roadhex')"> Road Hexagons</label>
+
       <label><input type="checkbox" id="chk-coveragecircles" onchange="toggleCoverageCircles()"> Coverage Circles</label>
       <div class="sub-control" id="coverage-circles-row" style="display:none;">
         <label>Radius <input type="number" id="coverage-radius" value="5000" min="100" max="200000" step="100" oninput="renderCoverageCircles()"> m</label>
@@ -102,9 +110,51 @@
       <strong>Report</strong>
       <table id="report-table"></table>
     </div>
+    <div id="settings-panel" style="display:none;">
+      <strong>Mesh Calculator Settings</strong>
+      <label title="H3 resolution (6=coarse, 10=fine)">H3 resolution
+        <input id="set-h3-resolution" type="number" value="8" min="6" max="10" step="1">
+      </label>
+      <label title="Radio frequency in MHz">Frequency (MHz)
+        <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1">
+      </label>
+      <label title="Antenna mast height above ground">Mast height (m)
+        <input id="set-mast-height" type="number" value="2.0" min="0.5" max="50" step="0.5">
+      </label>
+      <label title="Maximum line-of-sight distance">Max visibility (m)
+        <input id="set-max-visibility" type="number" value="20000" min="1000" max="200000" step="1000">
+      </label>
+      <label title="Minimum spacing between towers">Tower separation (m)
+        <input id="set-tower-separation" type="number" value="5000" min="100" max="50000" step="100">
+      </label>
+      <label title="Maximum hops within a cluster">Hop limit
+        <input id="set-hop-limit" type="number" value="7" min="1" max="30" step="1">
+      </label>
+      <label title="Maximum tower nodes per road segment">Max nodes/road
+        <input id="set-max-nodes-per-road" type="number" value="8" min="1" max="50" step="1">
+      </label>
+      <label title="Transmit power in milliwatts">TX power (mW)
+        <input id="set-tx-power-mw" type="number" value="500" min="1" max="5000" step="10">
+      </label>
+      <label title="Antenna gain at both TX and RX">Antenna gain (dBi)
+        <input id="set-antenna-gain" type="number" value="2.0" min="0" max="30" step="0.5">
+      </label>
+      <label title="Minimum receivable signal level">RX sensitivity (dBm)
+        <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1">
+      </label>
+    </div>
     <div id="route-list"></div>
     <div id="status-bar"></div>
   </div>
+</div>
+
+<div id="path-profile-panel" style="display:none;">
+  <div id="path-profile-header">
+    <strong id="path-profile-title">Path Profile</strong>
+    <button onclick="closePathProfile()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">✕</button>
+  </div>
+  <canvas id="path-profile-canvas" width="560" height="180"></canvas>
+  <div id="path-profile-stats" style="font-size:0.82em;color:#444;padding:4px 0;"></div>
 </div>
 
 <div class="color-legend" id="color-legend">

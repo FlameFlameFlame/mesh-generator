@@ -111,18 +111,24 @@ def export_config_yaml(
     elevation_path: str = "",
     city_boundaries_path: str = "",
     max_nodes_per_road: int = 8,
+    parameters: dict | None = None,
 ) -> None:
     """Write config.yaml for mesh-engine."""
+    defaults = {
+        "h3_resolution": 8,
+        "frequency_hz": 868000000.0,
+        "mast_height_m": 2.0,
+        "max_visibility_m": 20000.0,
+        "tower_separation_m": 5000.0,
+        "hop_limit": 7,
+        "max_nodes_per_road": max_nodes_per_road,
+    }
+    if parameters:
+        defaults.update({k: v for k, v in parameters.items() if k != "max_nodes_per_road"})
+        if "max_nodes_per_road" in parameters:
+            defaults["max_nodes_per_road"] = parameters["max_nodes_per_road"]
     config = {
-        "parameters": {
-            "h3_resolution": 8,
-            "frequency_hz": 868000000.0,
-            "mast_height_m": 2.0,
-            "max_visibility_m": 20000.0,
-            "tower_separation_m": 5000.0,
-            "hop_limit": 7,
-            "max_nodes_per_road": max_nodes_per_road,
-        },
+        "parameters": defaults,
         "inputs": {
             "boundary": boundary_path,
             "elevation": elevation_path,

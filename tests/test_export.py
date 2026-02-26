@@ -144,3 +144,24 @@ class TestExportConfigYaml:
 
         assert config["outputs"]["towers"].endswith("towers.geojson")
         assert config["outputs"]["report"].endswith("report.json")
+
+    def test_parameters_override(self, tmp_path):
+        """Custom parameters dict should override defaults in config.yaml."""
+        export_config_yaml(
+            str(tmp_path),
+            str(tmp_path / "sites.geojson"),
+            str(tmp_path / "boundary.geojson"),
+            parameters={
+                "frequency_hz": 433000000.0,
+                "mast_height_m": 10.0,
+                "h3_resolution": 9,
+            },
+        )
+        config_path = str(tmp_path / "config.yaml")
+        with open(config_path) as f:
+            config = yaml.safe_load(f)
+        assert config["parameters"]["frequency_hz"] == 433000000.0
+        assert config["parameters"]["mast_height_m"] == 10.0
+        assert config["parameters"]["h3_resolution"] == 9
+        # Non-overridden defaults preserved
+        assert config["parameters"]["hop_limit"] == 7
