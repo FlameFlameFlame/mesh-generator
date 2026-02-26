@@ -1,0 +1,64 @@
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; display: flex; flex-direction: column; height: 100vh; }
+  #toolbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px;
+             background: #f5f5f5; border-bottom: 1px solid #ddd; flex-wrap: wrap; }
+  #toolbar button, #controls button {
+    padding: 6px 16px; cursor: pointer; border: 1px solid #aaa; border-radius: 3px;
+    background: #fff; font-size: 0.85em; transition: background 0.15s;
+  }
+  #toolbar button:hover, #controls button:hover { background: #e8e8e8; }
+  #toolbar button:disabled { opacity: 0.5; cursor: default; }
+  #toolbar button.danger, #controls button.danger { background: #fee; border-color: #daa; }
+  #toolbar button.danger:hover, #controls button.danger:hover { background: #fdd; }
+  #toolbar button.primary { background: #e0edff; border-color: #8ab; font-weight: 600; }
+  #toolbar button.primary:hover { background: #cde0f8; }
+  #btn-add-site.active { background: #c00; color: #fff; border-color: #900; }
+  #toolbar .hint { margin-left: auto; color: #666; font-size: 0.9em; }
+  #route-list { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
+  #route-list strong { display: block; margin-bottom: 2px; }
+  .route-pair { margin: 8px 0 4px; }
+  .route-card { display: flex; align-items: center; gap: 8px; padding: 6px 8px;
+                margin: 3px 0; border: 2px solid #ccc; border-radius: 6px;
+                cursor: pointer; background: #fafafa;
+                transition: border-color 0.15s, background 0.15s; }
+  .route-card:hover  { border-color: #888; background: #f0f4ff; }
+  .route-card.active { border-color: #2266aa; background: #e0edff; font-weight: 600; }
+  .route-dot  { display: inline-block; width: 12px; height: 12px;
+                border-radius: 50%; flex-shrink: 0; }
+  .route-ref  { font-weight: bold; }
+  .route-count { color: #666; font-size: 0.85em; }
+  .progress-wrap { display: none; align-items: center; gap: 6px; font-size: 0.82em; color: #555; }
+  .progress-wrap progress { width: 120px; height: 14px; }
+  #map.placing { cursor: crosshair !important; }
+  #main { display: flex; flex: 1; overflow: hidden; }
+  #map { flex: 3; }
+  #sidebar { flex: 1; min-width: 280px; max-width: 380px; display: flex;
+             flex-direction: column; border-left: 1px solid #ddd; overflow-y: auto; }
+  #site-list { overflow-y: auto; max-height: 220px; }
+  #site-list table { width: 100%; border-collapse: collapse; }
+  #site-list th, #site-list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; }
+  #site-list tr.selected { background: #d0e8ff; }
+  #site-list tr:hover { background: #f0f0f0; cursor: pointer; }
+  #controls { padding: 10px; border-top: 1px solid #ddd; }
+  #controls label { display: block; margin-top: 6px; font-size: 0.85em; color: #555; }
+  #controls input, #controls select { width: 100%; padding: 4px 6px; margin-top: 2px; }
+  #controls .btn-row { display: flex; gap: 6px; margin-top: 10px; }
+  #controls button { flex: 1; padding: 6px; cursor: pointer; }
+  #layer-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
+  #layer-panel label { display: block; margin: 3px 0; cursor: pointer; }
+  #layer-panel .sub-control { margin-left: 22px; margin-top: 2px; }
+  #tower-legend { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
+  #tower-legend .legend-item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
+  #tower-legend .legend-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; display: inline-block; }
+  #report-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
+  #report-panel table { width: 100%; border-collapse: collapse; }
+  #report-panel td { padding: 3px 6px; }
+  #report-panel td:first-child { color: #666; }
+  #report-panel td:last-child { font-weight: 600; text-align: right; }
+  #status-bar { padding: 6px 12px; background: #eafaea; border-top: 1px solid #ccc;
+                font-size: 0.85em; display: none; }
+  .color-legend { position: absolute; bottom: 20px; right: 20px; background: white;
+                  padding: 8px 12px; border-radius: 4px; box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+                  z-index: 1000; font-size: 0.82em; display: none; }
+  .color-legend .gradient-bar { width: 200px; height: 14px; border: 1px solid #999; margin: 4px 0; }
+  .color-legend .labels { display: flex; justify-content: space-between; font-size: 0.9em; color: #555; }
