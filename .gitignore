@@ -8,4 +8,12 @@ build/
 .venv/
 data/
 output/
+ab/
+abc/
+fail/
+save/
+wrong/
+wrong2/
+wrong3/
+.claude/
 .DS_Store
