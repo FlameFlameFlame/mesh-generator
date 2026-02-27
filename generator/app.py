@@ -96,6 +96,7 @@ def add_site():
         lat=data["lat"],
         lon=data["lon"],
         priority=data.get("priority", 1),
+        fetch_city=bool(data.get("fetch_city", True)),
     )
     store.add(site)
     logger.info("Added site %s at (%.4f, %.4f) priority=%d", site.name, site.lat, site.lon, site.priority)
@@ -112,6 +113,8 @@ def update_site(idx):
         site.name = data["name"]
     if "priority" in data:
         store.update_priority(idx, data["priority"])
+    if "fetch_city" in data:
+        site.fetch_city = bool(data["fetch_city"])
     logger.info("Updated site %d: name=%s priority=%d", idx, site.name, site.priority)
     return jsonify(store.to_list())
 
@@ -465,7 +468,7 @@ def generate():
     from generator.boundaries import detect_city as _detect_city
     newly_detected = []
     for site in sites:
-        if site.boundary_geojson is None:
+        if site.boundary_geojson is None and site.fetch_city:
             try:
                 result = _detect_city(site.lat, site.lon)
                 if result:

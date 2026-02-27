@@ -240,7 +240,10 @@ function refresh() {
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
     let label = s.name + (s.boundary_name ? ' [' + s.boundary_name + ']' : '');
-    tr.innerHTML = '<td>' + label + '</td><td>' +
+    let chk = '<input type="checkbox" title="Download city boundary on \'Download Roads\'"'
+            + (s.fetch_city !== false ? ' checked' : '')
+            + ' onclick="event.stopPropagation()" onchange="toggleFetchCity(' + i + ', this.checked)">';
+    tr.innerHTML = '<td>' + chk + '</td><td>' + label + '</td><td>' +
       '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
@@ -284,6 +287,14 @@ function doDelete() {
   if (selectedIdx < 0) return;
   fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
     .then(safeJson).then(data => { sites = data; selectedIdx = -1; refresh(); });
+}
+
+function toggleFetchCity(idx, value) {
+  fetch('/api/sites/' + idx, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fetch_city: value})
+  }).then(safeJson).then(data => { sites = data; refresh(); });
 }
 
 function safeJson(r) {
