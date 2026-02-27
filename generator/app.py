@@ -420,8 +420,11 @@ def path_profile():
 
     s1 = route_meta["site1"]
     s2 = route_meta["site2"]
-    s1_elev = elev_provider.get_elevation(s1["lat"], s1["lon"])
-    s2_elev = elev_provider.get_elevation(s2["lat"], s2["lon"])
+    # Snap endpoints to the road polyline start/end (not city-center coords)
+    road_start_lon, road_start_lat = chain[0]
+    road_end_lon, road_end_lat = chain[-1]
+    s1_elev = elev_provider.get_elevation(road_start_lat, road_start_lon)
+    s2_elev = elev_provider.get_elevation(road_end_lat, road_end_lon)
 
     logger.info(
         "Path profile (route): %s → %s via %s, dist=%.1f m, %d samples",
@@ -433,15 +436,15 @@ def path_profile():
         "route_id": route_id,
         "site1": {
             "name": s1["name"],
-            "lat": s1["lat"],
-            "lon": s1["lon"],
+            "lat": round(road_start_lat, 6),
+            "lon": round(road_start_lon, 6),
             "dist_m": 0,
             "elevation_m": round(s1_elev, 1),
         },
         "site2": {
             "name": s2["name"],
-            "lat": s2["lat"],
-            "lon": s2["lon"],
+            "lat": round(road_end_lat, 6),
+            "lon": round(road_end_lon, 6),
             "dist_m": round(total_dist_m, 1),
             "elevation_m": round(s2_elev, 1),
         },
