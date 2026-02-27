@@ -1090,7 +1090,6 @@ def export():
                 "h3_resolution": 8,
                 "frequency_hz": 868_000_000,
                 "mast_height_m": 28,
-                "max_visibility_m": 70_000,
             },
             "routes": [
                 {

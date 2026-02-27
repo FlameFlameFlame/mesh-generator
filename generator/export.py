@@ -117,7 +117,6 @@ def export_config_yaml(
         "h3_resolution": 8,
         "frequency_hz": 868000000.0,
         "mast_height_m": 2.0,
-        "max_visibility_m": 20000.0,
         "tx_power_mw": 500.0,
         "antenna_gain_dbi": 2.0,
         "receiver_sensitivity_dbm": -137.0,

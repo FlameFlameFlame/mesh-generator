@@ -1133,7 +1133,6 @@ function getSettings() {
     h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
     frequency_hz: freqMhz * 1e6,
     mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 2.0,
-    max_visibility_m: parseFloat(document.getElementById('set-max-visibility').value) || 20000,
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
     antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
     receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
@@ -1146,7 +1145,6 @@ function applySettings(s) {
   if (s.h3_resolution != null) document.getElementById('set-h3-resolution').value = s.h3_resolution;
   if (s.frequency_hz != null) document.getElementById('set-frequency-mhz').value = Math.round(s.frequency_hz / 1e6);
   if (s.mast_height_m != null) document.getElementById('set-mast-height').value = s.mast_height_m;
-  if (s.max_visibility_m != null) document.getElementById('set-max-visibility').value = s.max_visibility_m;
   if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
   if (s.antenna_gain_dbi != null) document.getElementById('set-antenna-gain').value = s.antenna_gain_dbi;
   if (s.receiver_sensitivity_dbm != null) document.getElementById('set-rx-sensitivity').value = s.receiver_sensitivity_dbm;
