@@ -164,4 +164,4 @@ class TestExportConfigYaml:
         assert config["parameters"]["mast_height_m"] == 10.0
         assert config["parameters"]["h3_resolution"] == 9
         # Non-overridden defaults preserved
-        assert config["parameters"]["hop_limit"] == 7
+        assert config["parameters"]["max_towers_per_route"] == 10

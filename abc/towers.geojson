@@ -1,0 +1,62 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.84519403882326,
+          40.78420142861613
+        ]
+      },
+      "properties": {
+        "tower_id": 1,
+        "h3_index": "8b2c05074626fff",
+        "source": "site",
+        "route_id": "site",
+        "city_link": false,
+        "lat": 40.78420142861613,
+        "lon": 43.84519403882326
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.524130286690465,
+          40.187938956412935
+        ]
+      },
+      "properties": {
+        "tower_id": 2,
+        "h3_index": "8b2c01dac174fff",
+        "source": "site",
+        "route_id": "site",
+        "city_link": false,
+        "lat": 40.187938956412935,
+        "lon": 44.524130286690465
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.496350520629946,
+          40.809428250709814
+        ]
+      },
+      "properties": {
+        "tower_id": 3,
+        "h3_index": "8b2c052dc39bfff",
+        "source": "site",
+        "route_id": "site",
+        "city_link": false,
+        "lat": 40.809428250709814,
+        "lon": 44.496350520629946
+      }
+    }
+  ]
+}

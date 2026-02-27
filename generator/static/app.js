@@ -1131,12 +1131,10 @@ function getSettings() {
     frequency_hz: freqMhz * 1e6,
     mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 2.0,
     max_visibility_m: parseFloat(document.getElementById('set-max-visibility').value) || 20000,
-    tower_separation_m: parseFloat(document.getElementById('set-tower-separation').value) || 5000,
-    hop_limit: parseInt(document.getElementById('set-hop-limit').value) || 7,
-    max_nodes_per_road: parseInt(document.getElementById('set-max-nodes-per-road').value) || 8,
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
     antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
     receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
+    max_towers_per_route: parseInt(document.getElementById('opt-max-towers').value) || 10,
   };
 }
 
@@ -1146,12 +1144,37 @@ function applySettings(s) {
   if (s.frequency_hz != null) document.getElementById('set-frequency-mhz').value = Math.round(s.frequency_hz / 1e6);
   if (s.mast_height_m != null) document.getElementById('set-mast-height').value = s.mast_height_m;
   if (s.max_visibility_m != null) document.getElementById('set-max-visibility').value = s.max_visibility_m;
-  if (s.tower_separation_m != null) document.getElementById('set-tower-separation').value = s.tower_separation_m;
-  if (s.hop_limit != null) document.getElementById('set-hop-limit').value = s.hop_limit;
-  if (s.max_nodes_per_road != null) document.getElementById('set-max-nodes-per-road').value = s.max_nodes_per_road;
   if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
   if (s.antenna_gain_dbi != null) document.getElementById('set-antenna-gain').value = s.antenna_gain_dbi;
   if (s.receiver_sensitivity_dbm != null) document.getElementById('set-rx-sensitivity').value = s.receiver_sensitivity_dbm;
+  if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
+}
+
+function doSaveSettings() {
+  saveProjectState(null);
+  setStatus('Settings saved.');
+}
+
+function doClearCalculations() {
+  let dir = document.getElementById('output-dir').value.trim();
+  if (!dir) { alert('No output directory set.'); return; }
+  if (!confirm('Delete all mesh_calculator output files in: ' + dir + '?')) return;
+  fetch('/api/clear-calculations', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({output_dir: dir})
+  }).then(safeJson).then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    layerGroups.towers.clearLayers();
+    layerGroups.edges.clearLayers();
+    layerGroups.coverage.clearLayers();
+    layerGroups.towerCoverage.clearLayers();
+    document.getElementById('tower-legend').style.display = 'none';
+    document.getElementById('report-panel').style.display = 'none';
+    hasCoverage = false; coverageFetched = false;
+    towerCoverageData = null; towerCoverageFetched = false;
+    setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
+  });
 }
 
 function doRunOptimization() {
