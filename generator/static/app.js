@@ -400,13 +400,12 @@ function doFetchRoads() {
   prog.style.display = 'inline-flex';
   bar.removeAttribute('value');
   label.textContent = 'Fetching roads...';
-  let bboxBody = _bboxBounds
-    ? JSON.stringify({bbox: _bboxBounds})
-    : '{}';
+  let generatePayload = {output_dir: document.getElementById('output-dir').value.trim()};
+  if (_bboxBounds) generatePayload.bbox = _bboxBounds;
   fetch('/api/generate', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: bboxBody
+    body: JSON.stringify(generatePayload)
   })
     .then(safeJson).then(data => {
       btn.disabled = false;
@@ -693,7 +692,10 @@ function doFetchElevation() {
   fetch('/api/elevation', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(_bboxBounds ? {bbox: _bboxBounds} : {})
+    body: JSON.stringify(Object.assign(
+      {output_dir: document.getElementById('output-dir').value.trim()},
+      _bboxBounds ? {bbox: _bboxBounds} : {}
+    ))
   }).then(safeJson).then(data => {
       btn.disabled = false;
       if (data.error) { prog.style.display = 'none'; alert(data.error); return; }

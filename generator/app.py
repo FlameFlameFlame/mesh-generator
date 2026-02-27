@@ -41,10 +41,18 @@ from generator.export import (
     export_roads_geojson, export_config_yaml,
     export_city_boundaries_geojson,
 )
-from generator.roads import fetch_roads
-from generator.elevation import fetch_and_write_elevation, render_elevation_image
+from generator.roads import fetch_roads_cached
+from generator.elevation import fetch_and_write_elevation_cached, render_elevation_image
 
 logger = logging.getLogger(__name__)
+
+
+def _get_cache_dir(output_dir: str | None = None) -> str:
+    """Return the cache directory (inside output_dir, or a global fallback)."""
+    if output_dir:
+        return os.path.join(os.path.abspath(output_dir), "cache")
+    return os.path.expanduser("~/.cache/lora-mesh")
+
 
 app = Flask(__name__)
 
@@ -248,7 +256,11 @@ def download_elevation():
     try:
         fd, path = tempfile.mkstemp(suffix=".tif", prefix="elevation_")
         os.close(fd)
-        fetch_and_write_elevation(south, west, north, east, path)
+        output_dir_for_cache = payload.get("output_dir")
+        fetch_and_write_elevation_cached(
+            south, west, north, east, path,
+            cache_dir=_get_cache_dir(output_dir_for_cache),
+        )
         _elevation_path = path
         size_mb = os.path.getsize(path) / (1024 * 1024)
         from generator.elevation import _tiles_for_bbox
@@ -438,8 +450,12 @@ def generate():
                 )
             })
 
+    output_dir_for_cache = payload.get("output_dir")
     try:
-        roads = fetch_roads(south, west, north, east)
+        roads = fetch_roads_cached(
+            south, west, north, east,
+            cache_dir=_get_cache_dir(output_dir_for_cache),
+        )
     except Exception as e:
         logger.error("Failed to fetch roads: %s", e)
         return jsonify({"error": f"Failed to fetch roads: {e}"})
