@@ -355,11 +355,15 @@ def path_profile():
         "points": points,
         "site1": {
             "name": s1.name,
+            "lat": lat1,
+            "lon": lon1,
             "dist_m": 0,
             "elevation_m": round(s1_elev, 1),
         },
         "site2": {
             "name": s2.name,
+            "lat": lat2,
+            "lon": lon2,
             "dist_m": round(dist_m, 1),
             "elevation_m": round(s2_elev, 1),
         },
