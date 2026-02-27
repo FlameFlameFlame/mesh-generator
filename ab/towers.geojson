@@ -1,0 +1,1012 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.84688201851334,
+          40.783846733378795
+        ]
+      },
+      "properties": {
+        "tower_id": 1,
+        "h3_index": "882c050747fffff",
+        "source": "site",
+        "route_id": "site",
+        "city_link": false,
+        "lat": 40.783846733378795,
+        "lon": 43.84688201851334
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.51786037543068,
+          40.1816386461459
+        ]
+      },
+      "properties": {
+        "tower_id": 2,
+        "h3_index": "882c01dacdfffff",
+        "source": "site",
+        "route_id": "site",
+        "city_link": false,
+        "lat": 40.1816386461459,
+        "lon": 44.51786037543068
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.84712619656377,
+          40.79226486565013
+        ]
+      },
+      "properties": {
+        "tower_id": 3,
+        "h3_index": "882c050743fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.79226486565013,
+        "lon": 43.84712619656377
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.86583887082519,
+          40.79962665846078
+        ]
+      },
+      "properties": {
+        "tower_id": 4,
+        "h3_index": "882c050757fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.79962665846078,
+        "lon": 43.86583887082519
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.97907791785783,
+          40.86904423059134
+        ]
+      },
+      "properties": {
+        "tower_id": 5,
+        "h3_index": "882c053365fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.86904423059134,
+        "lon": 43.97907791785783
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.99758837366483,
+          40.86797117493076
+        ]
+      },
+      "properties": {
+        "tower_id": 6,
+        "h3_index": "882c05332dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.86797117493076,
+        "lon": 43.99758837366483
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.006710113781125,
+          40.8632197553023
+        ]
+      },
+      "properties": {
+        "tower_id": 7,
+        "h3_index": "882c053325fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.8632197553023,
+        "lon": 44.006710113781125
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.17252782720077,
+          40.82810759659308
+        ]
+      },
+      "properties": {
+        "tower_id": 8,
+        "h3_index": "882c052365fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.82810759659308,
+        "lon": 44.17252782720077
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.172234095531145,
+          40.819676168256514
+        ]
+      },
+      "properties": {
+        "tower_id": 9,
+        "h3_index": "882c0538d9fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.819676168256514,
+        "lon": 44.172234095531145
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.17194045237173,
+          40.811245136804686
+        ]
+      },
+      "properties": {
+        "tower_id": 10,
+        "h3_index": "882c0538ddfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.811245136804686,
+        "lon": 44.17194045237173
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.17135343142363,
+          40.794384265906025
+        ]
+      },
+      "properties": {
+        "tower_id": 11,
+        "h3_index": "882c0538c7fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.794384265906025,
+        "lon": 44.17135343142363
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.20778655903502,
+          40.77529835547055
+        ]
+      },
+      "properties": {
+        "tower_id": 12,
+        "h3_index": "882c0538a3fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.77529835547055,
+        "lon": 44.20778655903502
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.207189024020224,
+          40.75843825879421
+        ]
+      },
+      "properties": {
+        "tower_id": 13,
+        "h3_index": "882c05399bfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.75843825879421,
+        "lon": 44.207189024020224
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.20629339586269,
+          40.73315111015045
+        ]
+      },
+      "properties": {
+        "tower_id": 14,
+        "h3_index": "882c0539b9fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.73315111015045,
+        "lon": 44.20629339586269
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.20569675952752,
+          40.71629501256778
+        ]
+      },
+      "properties": {
+        "tower_id": 15,
+        "h3_index": "882c0539a3fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.71629501256778,
+        "lon": 44.20569675952752
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.21479355987589,
+          40.71152036477259
+        ]
+      },
+      "properties": {
+        "tower_id": 16,
+        "h3_index": "882c052b49fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.71152036477259,
+        "lon": 44.21479355987589
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.23298478273804,
+          40.701968120817874
+        ]
+      },
+      "properties": {
+        "tower_id": 17,
+        "h3_index": "882c052b47fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.701968120817874,
+        "lon": 44.23298478273804
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.25117283278926,
+          40.69241194760624
+        ]
+      },
+      "properties": {
+        "tower_id": 18,
+        "h3_index": "882c052b05fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.69241194760624,
+        "lon": 44.25117283278926
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.26966546437066,
+          40.69128038925196
+        ]
+      },
+      "properties": {
+        "tower_id": 19,
+        "h3_index": "882c052b3dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.69128038925196,
+        "lon": 44.26966546437066
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.28784986770497,
+          40.68171655926148
+        ]
+      },
+      "properties": {
+        "tower_id": 20,
+        "h3_index": "882c05294bfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.68171655926148,
+        "lon": 44.28784986770497
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.2966290582761,
+          40.66850433903098
+        ]
+      },
+      "properties": {
+        "tower_id": 21,
+        "h3_index": "882c052947fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.66850433903098,
+        "lon": 44.2966290582761
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.305404840934074,
+          40.65529134838555
+        ]
+      },
+      "properties": {
+        "tower_id": 22,
+        "h3_index": "882c052963fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.65529134838555,
+        "lon": 44.305404840934074
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.314177217251306,
+          40.64207758964343
+        ]
+      },
+      "properties": {
+        "tower_id": 23,
+        "h3_index": "882c05292dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.64207758964343,
+        "lon": 44.314177217251306
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.322946188799634,
+          40.628863065122715
+        ]
+      },
+      "properties": {
+        "tower_id": 24,
+        "h3_index": "882c056619fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.628863065122715,
+        "lon": 44.322946188799634
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.331711757150345,
+          40.6156477771414
+        ]
+      },
+      "properties": {
+        "tower_id": 25,
+        "h3_index": "882c056615fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.6156477771414,
+        "lon": 44.331711757150345
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.34987149880308,
+          40.60606927839743
+        ]
+      },
+      "properties": {
+        "tower_id": 26,
+        "h3_index": "882c056633fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.60606927839743,
+        "lon": 44.34987149880308
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.36706189078675,
+          40.57120538504414
+        ]
+      },
+      "properties": {
+        "tower_id": 27,
+        "h3_index": "882c05640dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.57120538504414,
+        "lon": 44.36706189078675
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.36641826579606,
+          40.55435309640073
+        ]
+      },
+      "properties": {
+        "tower_id": 28,
+        "h3_index": "882c056467fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.55435309640073,
+        "lon": 44.36641826579606
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.384558149433566,
+          40.544765861981226
+        ]
+      },
+      "properties": {
+        "tower_id": 29,
+        "h3_index": "882c056425fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.544765861981226,
+        "lon": 44.384558149433566
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.39330118813691,
+          40.5315449767742
+        ]
+      },
+      "properties": {
+        "tower_id": 30,
+        "h3_index": "882c056511fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.5315449767742,
+        "lon": 44.39330118813691
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.39232465054734,
+          40.506270011402236
+        ]
+      },
+      "properties": {
+        "tower_id": 31,
+        "h3_index": "882c05653dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.506270011402236,
+        "lon": 44.39232465054734
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.39167411355427,
+          40.48942208297185
+        ]
+      },
+      "properties": {
+        "tower_id": 32,
+        "h3_index": "882c056527fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.48942208297185,
+        "lon": 44.39167411355427
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.39102396660503,
+          40.47257579645626
+        ]
+      },
+      "properties": {
+        "tower_id": 33,
+        "h3_index": "882c056e11fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.47257579645626,
+        "lon": 44.39102396660503
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.39037420934909,
+          40.455731154534334
+        ]
+      },
+      "properties": {
+        "tower_id": 34,
+        "h3_index": "882c056e39fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.455731154534334,
+        "lon": 44.39037420934909
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.38972484143637,
+          40.438888159883135
+        ]
+      },
+      "properties": {
+        "tower_id": 35,
+        "h3_index": "882c056e23fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.438888159883135,
+        "lon": 44.38972484143637
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.38907586251719,
+          40.422046815178106
+        ]
+      },
+      "properties": {
+        "tower_id": 36,
+        "h3_index": "882c056f1bfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.422046815178106,
+        "lon": 44.38907586251719
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.37938002212727,
+          40.410003631462544
+        ]
+      },
+      "properties": {
+        "tower_id": 37,
+        "h3_index": "882c056f1dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.410003631462544,
+        "lon": 44.37938002212727
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.37873450006061,
+          40.39316576965719
+        ]
+      },
+      "properties": {
+        "tower_id": 38,
+        "h3_index": "882c056f07fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.39316576965719,
+        "lon": 44.37873450006061
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.37841188393481,
+          40.3847474600136
+        ]
+      },
+      "properties": {
+        "tower_id": 39,
+        "h3_index": "882c056f2bfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.3847474600136,
+        "lon": 44.37841188393481
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.37808936435625,
+          40.37632956498762
+        ]
+      },
+      "properties": {
+        "tower_id": 40,
+        "h3_index": "882c056f21fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.37632956498762,
+        "lon": 44.37808936435625
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.37776694128161,
+          40.36791208491286
+        ]
+      },
+      "properties": {
+        "tower_id": 41,
+        "h3_index": "882c056f25fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.36791208491286,
+        "lon": 44.37776694128161
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.377444614667596,
+          40.35949502012272
+        ]
+      },
+      "properties": {
+        "tower_id": 42,
+        "h3_index": "882c056899fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.35949502012272,
+        "lon": 44.377444614667596
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.374869469152415,
+          40.2921734920273
+        ]
+      },
+      "properties": {
+        "tower_id": 43,
+        "h3_index": "882c05699dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.2921734920273,
+        "lon": 44.374869469152415
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.38389799310741,
+          40.28737577610017
+        ]
+      },
+      "properties": {
+        "tower_id": 44,
+        "h3_index": "882c056995fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.28737577610017,
+        "lon": 44.38389799310741
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.40195267163833,
+          40.27777745486003
+        ]
+      },
+      "properties": {
+        "tower_id": 45,
+        "h3_index": "882c0569b3fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.27777745486003,
+        "lon": 44.40195267163833
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.41065202813163,
+          40.264563201204155
+        ]
+      },
+      "properties": {
+        "tower_id": 46,
+        "h3_index": "882c01d35dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.264563201204155,
+        "lon": 44.41065202813163
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.41934802467528,
+          40.25134823827879
+        ]
+      },
+      "properties": {
+        "tower_id": 47,
+        "h3_index": "882c01d309fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.25134823827879,
+        "lon": 44.41934802467528
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.42804066281505,
+          40.23813256839436
+        ]
+      },
+      "properties": {
+        "tower_id": 48,
+        "h3_index": "882c01d305fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.23813256839436,
+        "lon": 44.42804066281505
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.44607943693738,
+          40.22852413193735
+        ]
+      },
+      "properties": {
+        "tower_id": 49,
+        "h3_index": "882c01d323fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.22852413193735,
+        "lon": 44.44607943693738
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.46411504573623,
+          40.21891185495973
+        ]
+      },
+      "properties": {
+        "tower_id": 50,
+        "h3_index": "882c01d141fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.21891185495973,
+        "lon": 44.46411504573623
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.48214748647143,
+          40.20929573978245
+        ]
+      },
+      "properties": {
+        "tower_id": 51,
+        "h3_index": "882c01d10dfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.20929573978245,
+        "lon": 44.48214748647143
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.49082403034955,
+          40.196073122892294
+        ]
+      },
+      "properties": {
+        "tower_id": 52,
+        "h3_index": "882c01d129fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.196073122892294,
+        "lon": 44.49082403034955
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.49983693862152,
+          40.19126258857699
+        ]
+      },
+      "properties": {
+        "tower_id": 53,
+        "h3_index": "882c01d121fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "city_link": false,
+        "lat": 40.19126258857699,
+        "lon": 44.49983693862152
+      }
+    }
+  ]
+}

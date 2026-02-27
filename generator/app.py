@@ -172,6 +172,32 @@ def clear_project():
     return jsonify({"ok": True})
 
 
+@app.route("/api/clear-calculations", methods=["POST"])
+def clear_calculations():
+    """Delete mesh_calculator output files from disk and reset server-side layer state."""
+    global _loaded_layers, _loaded_report, _loaded_coverage, _loaded_tower_coverage
+    data = request.json or {}
+    output_dir = os.path.abspath(data.get("output_dir", "output"))
+    files_to_delete = [
+        "towers.geojson", "coverage.geojson", "visibility_edges.geojson",
+        "report.json", "status.json", "tower_coverage.geojson",
+    ]
+    deleted = 0
+    for fname in files_to_delete:
+        fpath = os.path.join(output_dir, fname)
+        if os.path.isfile(fpath):
+            os.remove(fpath)
+            deleted += 1
+    _loaded_layers.pop("towers", None)
+    _loaded_layers.pop("edges", None)
+    _loaded_layers.pop("coverage", None)
+    _loaded_report = None
+    _loaded_coverage = None
+    _loaded_tower_coverage = None
+    logger.info("Cleared %d calculation file(s) from %s", deleted, output_dir)
+    return jsonify({"deleted": deleted, "output_dir": output_dir})
+
+
 @app.route("/api/coverage", methods=["GET"])
 def get_coverage():
     """Serve cached coverage GeoJSON (lazy-loaded by frontend on toggle)."""
@@ -821,7 +847,7 @@ def run_optimization():
             features=feats,
             site1=r.get("site1", {}),
             site2=r.get("site2", {}),
-            max_towers=max_towers,
+            max_towers_per_route=max_towers,
         ))
 
     if not route_specs:
@@ -929,7 +955,6 @@ def export():
         roads_path=roads_export_path,
         elevation_path=elevation_export_path,
         city_boundaries_path=city_boundaries_path,
-        max_nodes_per_road=max_towers_per_route,
         parameters=req_params,
     )
 
@@ -943,14 +968,13 @@ def export():
                 "frequency_hz": 868_000_000,
                 "mast_height_m": 28,
                 "max_visibility_m": 70_000,
-                "tower_separation_m": 5_000,
             },
             "routes": [
                 {
                     "route_id": r["route_id"],
                     "site1": r.get("site1", {}),
                     "site2": r.get("site2", {}),
-                    "max_towers": max_towers_per_route,
+                    "max_towers_per_route": max_towers_per_route,
                     "features": _p2p_all_route_features.get(r["route_id"], []),
                 }
                 for r in _p2p_routes

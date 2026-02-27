@@ -21,7 +21,8 @@
   <button onclick="doLoadProject()">Load Project</button>
   <button class="danger" onclick="doClear()">Clear</button>
   <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
-  <button class="primary" onclick="doExport()">Export</button>
+  <button class="primary" onclick="doExport()">Save</button>
+  <button class="danger" onclick="doClearCalculations()" title="Delete mesh_calculator output files and clear map layers">Clear Calculations</button>
   <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
     title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
   <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
@@ -124,15 +125,6 @@
       <label title="Maximum line-of-sight distance">Max visibility (m)
         <input id="set-max-visibility" type="number" value="20000" min="1000" max="200000" step="1000">
       </label>
-      <label title="Minimum spacing between towers">Tower separation (m)
-        <input id="set-tower-separation" type="number" value="5000" min="100" max="50000" step="100">
-      </label>
-      <label title="Maximum hops within a cluster">Hop limit
-        <input id="set-hop-limit" type="number" value="7" min="1" max="30" step="1">
-      </label>
-      <label title="Maximum tower nodes per road segment">Max nodes/road
-        <input id="set-max-nodes-per-road" type="number" value="8" min="1" max="50" step="1">
-      </label>
       <label title="Transmit power in milliwatts">TX power (mW)
         <input id="set-tx-power-mw" type="number" value="500" min="1" max="5000" step="10">
       </label>
@@ -142,6 +134,7 @@
       <label title="Minimum receivable signal level">RX sensitivity (dBm)
         <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1">
       </label>
+      <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;">Save settings</button>
     </div>
     <div id="route-list"></div>
     <div id="status-bar"></div>

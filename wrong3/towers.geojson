@@ -1,0 +1,131 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          43.88480961100453,
+          40.81540753240003
+        ]
+      },
+      "properties": {
+        "tower_id": 1,
+        "h3_index": "882c050627fffff",
+        "source": "site",
+        "route_id": "site",
+        "virtual": true,
+        "city_link": false,
+        "coverage_radius_m": 10813.277365501313,
+        "lat": 40.81540753240003,
+        "lon": 43.88480961100453
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.437060445370264,
+          40.23332883037586
+        ]
+      },
+      "properties": {
+        "tower_id": 2,
+        "h3_index": "882c01d32bfffff",
+        "source": "site",
+        "route_id": "site",
+        "virtual": true,
+        "city_link": false,
+        "coverage_radius_m": 934.7670337725693,
+        "lat": 40.23332883037586,
+        "lon": 44.437060445370264
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.09017648335954,
+          40.862558875620444
+        ]
+      },
+      "properties": {
+        "tower_id": 3,
+        "h3_index": "882c05313bfffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "virtual": false,
+        "city_link": false,
+        "coverage_radius_m": 7928.907234667681,
+        "lat": 40.862558875620444,
+        "lon": 44.09017648335954
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.20569675952752,
+          40.71629501256778
+        ]
+      },
+      "properties": {
+        "tower_id": 4,
+        "h3_index": "882c0539a3fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "virtual": false,
+        "city_link": false,
+        "coverage_radius_m": 1643.7759779609394,
+        "lat": 40.71629501256778,
+        "lon": 44.20569675952752
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.21479355987589,
+          40.71152036477259
+        ]
+      },
+      "properties": {
+        "tower_id": 5,
+        "h3_index": "882c052b49fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "virtual": false,
+        "city_link": false,
+        "coverage_radius_m": 1643.834526374879,
+        "lat": 40.71152036477259,
+        "lon": 44.21479355987589
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          44.25147788154624,
+          40.700840293111845
+        ]
+      },
+      "properties": {
+        "tower_id": 6,
+        "h3_index": "882c052b01fffff",
+        "source": "priority_1",
+        "route_id": "priority_1",
+        "virtual": false,
+        "city_link": false,
+        "coverage_radius_m": 936.3063710213686,
+        "lat": 40.700840293111845,
+        "lon": 44.25147788154624
+      }
+    }
+  ]
+}
