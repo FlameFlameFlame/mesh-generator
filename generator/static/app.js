@@ -248,7 +248,7 @@ function refresh() {
   });
   // Keep profile site selects in sync
   if (document.getElementById('profile-controls').style.display !== 'none') {
-    _updateProfileSiteSelects();
+    _updateProfileRouteSelect();
   }
 }
 
@@ -490,6 +490,7 @@ function escHtml(s) {
 
 function renderRouteList(routes) {
   _allRoutes = routes;
+  _updateProfileRouteSelect();
   let el = document.getElementById('route-list');
   if (!el) return;
   if (!routes.length) { el.innerHTML = '<em>No routes found.</em>'; return; }
@@ -1327,6 +1328,22 @@ function _interpolateElev(points, distM) {
   return points[points.length - 1].elevation_m;
 }
 
+/** Interpolate [lat, lon] at distM along route points (each has lat, lon, dist_m). */
+function _interpolateLatLon(points, distM) {
+  if (!points[0].lat) return [0, 0]; // points without coords (shouldn't happen)
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].dist_m >= distM) {
+      let seg = points[i].dist_m - points[i - 1].dist_m;
+      let t = seg > 0 ? (distM - points[i - 1].dist_m) / seg : 0;
+      let lat = points[i - 1].lat + t * (points[i].lat - points[i - 1].lat);
+      let lon = points[i - 1].lon + t * (points[i].lon - points[i - 1].lon);
+      return [lat, lon];
+    }
+  }
+  let last = points[points.length - 1];
+  return [last.lat, last.lon];
+}
+
 function _clearProfileHover() {
   let tooltip = document.getElementById('profile-hover-tooltip');
   if (tooltip) tooltip.style.display = 'none';
@@ -1348,13 +1365,13 @@ function _attachProfileHover(data) {
     let frac = (mx - pad.left) / cw;
     let distM = frac * data.distance_m;
     let elev = _interpolateElev(data.points, distM);
-    let lat = data.site1.lat + frac * (data.site2.lat - data.site1.lat);
-    let lon = data.site1.lon + frac * (data.site2.lon - data.site1.lon);
+    let latlon = _interpolateLatLon(data.points, distM);
+    let lat = latlon[0], lon = latlon[1];
 
     tooltip.style.display = 'block';
     tooltip.style.left = (e.clientX - rect.left + 10) + 'px';
     tooltip.style.top  = (e.clientY - rect.top  - 28) + 'px';
-    tooltip.textContent = Math.round(elev) + ' m  \u2502  ' + (distM / 1000).toFixed(1) + ' km';
+    tooltip.textContent = Math.round(elev) + ' m';
 
     if (_profileHoverMarker) {
       _profileHoverMarker.setLatLng([lat, lon]);
@@ -1377,35 +1394,45 @@ function toggleProfileControls() {
     el.style.display = 'none';
   } else {
     el.style.display = 'inline-flex';
-    _updateProfileSiteSelects();
+    _updateProfileRouteSelect();
   }
 }
 
-function _updateProfileSiteSelects() {
-  let s1 = document.getElementById('profile-site1');
-  let s2 = document.getElementById('profile-site2');
-  [s1, s2].forEach(function(sel) {
-    sel.innerHTML = '';
-    sites.forEach(function(s, i) {
-      let opt = document.createElement('option');
-      opt.value = i;
-      opt.textContent = s.name;
-      sel.appendChild(opt);
-    });
+function _updateProfileRouteSelect() {
+  let sel = document.getElementById('profile-route');
+  if (!sel) return;
+  let prev = sel.value;
+  sel.innerHTML = '';
+  if (!_allRoutes || _allRoutes.length === 0) {
+    let opt = document.createElement('option');
+    opt.value = '';
+    opt.textContent = '— run Filter P2P first —';
+    sel.appendChild(opt);
+    return;
+  }
+  _allRoutes.forEach(function(r) {
+    let opt = document.createElement('option');
+    opt.value = r.route_id;
+    let label = (r.site1 && r.site2)
+      ? r.site1.name + ' \u2192 ' + r.site2.name
+      : r.route_id;
+    if (r.ref) label += '  (' + r.ref + ')';
+    opt.textContent = label;
+    sel.appendChild(opt);
   });
-  // Default: first two different sites
-  if (s2.options.length > 1) s2.selectedIndex = 1;
+  if (prev && [...sel.options].some(function(o) { return o.value === prev; })) {
+    sel.value = prev;
+  }
 }
 
 function doPathProfile() {
-  let idx1 = parseInt(document.getElementById('profile-site1').value);
-  let idx2 = parseInt(document.getElementById('profile-site2').value);
-  if (idx1 === idx2) { alert('Select two different sites.'); return; }
+  let routeId = document.getElementById('profile-route').value;
+  if (!routeId) { alert('Run Filter P2P first to get routes.'); return; }
   if (!_hasElevation) { alert('Download Elevation first.'); return; }
   fetch('/api/path-profile', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({site1_idx: idx1, site2_idx: idx2})
+    body: JSON.stringify({route_id: routeId})
   }).then(safeJson).then(function(data) {
     if (data.error) { alert('Profile error: ' + data.error); return; }
     _showPathProfile(data);
@@ -1533,19 +1560,20 @@ function _drawPathProfile(data) {
   drawSitePin(xOf(data.distance_m), y2, data.site2.name || 'B');
 
   // Draw towers that lie near this profile path
-  if (_cachedTowersGeojson && data.site1.lat != null && data.site2.lat != null) {
-    let tLat1 = data.site1.lat, tLon1 = data.site1.lon;
-    let tLat2 = data.site2.lat, tLon2 = data.site2.lon;
+  // Use closest-point-on-polyline: find the route point nearest the tower.
+  if (_cachedTowersGeojson && data.points && data.points.length > 1 && data.points[0].lat != null) {
     _cachedTowersGeojson.features.forEach(function(f) {
       if (!f.geometry || f.geometry.type !== 'Point') return;
       let tLat = f.geometry.coordinates[1];
       let tLon = f.geometry.coordinates[0];
-      let frac = _projectToLine(tLat1, tLon1, tLat2, tLon2, tLat, tLon);
-      if (frac < 0 || frac > 1) return;
-      let perpLat = tLat1 + frac * (tLat2 - tLat1);
-      let perpLon = tLon1 + frac * (tLon2 - tLon1);
-      if (_haversine(perpLat, perpLon, tLat, tLon) > 2000) return;
-      let distAtFrac = frac * data.distance_m;
+      // Find closest point index along polyline
+      let bestDist = Infinity, bestIdx = -1;
+      for (let i = 0; i < data.points.length; i++) {
+        let d = _haversine(data.points[i].lat, data.points[i].lon, tLat, tLon);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+      if (bestDist > 2000) return; // >2 km from route — skip
+      let distAtFrac = data.points[bestIdx].dist_m;
       let elevAtFrac = _interpolateElev(data.points, distAtFrac);
       let tx = xOf(distAtFrac);
       let ty = yOf(elevAtFrac);

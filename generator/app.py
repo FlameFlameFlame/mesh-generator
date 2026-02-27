@@ -295,76 +295,154 @@ def get_elevation_image():
 
 @app.route("/api/path-profile", methods=["POST"])
 def path_profile():
-    """Sample terrain elevation between two sites for a path-profile chart."""
+    """Sample terrain elevation along a P2P route for a path-profile chart.
+
+    Accepts route_id (from filter-p2p routes). Chains the route's road
+    LineString features into an ordered polyline, then samples elevation
+    every ~200 m along it. Returns points with dist_m, elevation_m, lat, lon
+    so the frontend can map hover positions back to the map.
+    """
+    import math
+
     if not _elevation_path or not os.path.isfile(_elevation_path):
         return jsonify({"error": "No elevation data. Download Elevation first."}), 400
 
-    data = request.json or {}
-    idx1 = data.get("site1_idx")
-    idx2 = data.get("site2_idx")
-    if idx1 is None or idx2 is None:
-        return jsonify({"error": "site1_idx and site2_idx required"}), 400
+    body = request.json or {}
+    route_id = body.get("route_id")
+    if not route_id:
+        return jsonify({"error": "route_id required"}), 400
 
-    try:
-        s1 = store.get(int(idx1))
-        s2 = store.get(int(idx2))
-    except (IndexError, ValueError):
-        return jsonify({"error": "Invalid site index"}), 400
+    # Look up the route metadata and its features
+    route_meta = next((r for r in _p2p_routes if r["route_id"] == route_id), None)
+    if route_meta is None:
+        return jsonify({"error": f"Route '{route_id}' not found. Run Filter P2P first."}), 400
 
-    # Sample terrain along great-circle
-    import math
+    features = _p2p_all_route_features.get(route_id, [])
+    if not features:
+        return jsonify({"error": f"No road features for route '{route_id}'."}), 400
+
     try:
         from mesh_calculator.core.elevation import ElevationProvider
         elev_provider = ElevationProvider(_elevation_path)
     except Exception as e:
         return jsonify({"error": f"Could not open elevation data: {e}"}), 500
 
-    n_samples = 120
-    lat1, lon1 = s1.lat, s1.lon
-    lat2, lon2 = s2.lat, s2.lon
+    def _haversine(lat1, lon1, lat2, lon2):
+        R = 6371000.0
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlam = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+        return 2 * R * math.asin(math.sqrt(a))
 
-    # Haversine distance
-    R = 6371000.0
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi = math.radians(lat2 - lat1)
-    dlam = math.radians(lon2 - lon1)
-    a = (math.sin(dphi / 2) ** 2
-         + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2)
-    dist_m = 2 * R * math.asin(math.sqrt(a))
+    # ── Chain LineString features into one ordered polyline ──────────────
+    # Each feature geometry may be LineString or MultiLineString.
+    # Strategy: greedily connect segments end-to-end (flip if needed).
+    def _coords_of(feat):
+        geom = feat.get("geometry", {})
+        gtype = geom.get("type", "")
+        coords = geom.get("coordinates", [])
+        if gtype == "LineString":
+            return [coords]
+        if gtype == "MultiLineString":
+            return coords
+        return []
 
+    # Collect all segment coordinate lists [[lon,lat], ...]
+    segments = []
+    for feat in features:
+        for seg in _coords_of(feat):
+            if len(seg) >= 2:
+                segments.append(seg)
+
+    if not segments:
+        return jsonify({"error": "Route has no geometry."}), 400
+
+    # Greedily chain segments: pick the segment whose start or end is closest
+    # to the current chain tail and append (flipping if necessary).
+    chain = list(segments[0])  # [lon, lat] list
+    remaining = segments[1:]
+    while remaining:
+        tail = chain[-1]
+        best_idx, best_dist, best_flip = 0, float("inf"), False
+        for i, seg in enumerate(remaining):
+            d_start = _haversine(tail[1], tail[0], seg[0][1], seg[0][0])
+            d_end = _haversine(tail[1], tail[0], seg[-1][1], seg[-1][0])
+            if d_start < best_dist:
+                best_dist, best_idx, best_flip = d_start, i, False
+            if d_end < best_dist:
+                best_dist, best_idx, best_flip = d_end, i, True
+        seg = remaining.pop(best_idx)
+        if best_flip:
+            seg = list(reversed(seg))
+        # Skip duplicate first point if it matches the tail
+        start = 1 if _haversine(tail[1], tail[0], seg[0][1], seg[0][0]) < 10 else 0
+        chain.extend(seg[start:])
+
+    # ── Resample every ~200 m along the chain ────────────────────────────
+    # First compute cumulative distances at each chain vertex.
+    cum_dists = [0.0]
+    for i in range(1, len(chain)):
+        lon0, lat0 = chain[i - 1]
+        lon1, lat1 = chain[i]
+        cum_dists.append(cum_dists[-1] + _haversine(lat0, lon0, lat1, lon1))
+
+    total_dist_m = cum_dists[-1]
+    sample_interval = 200.0  # metres between samples
+    n_samples = max(2, int(total_dist_m / sample_interval))
     points = []
+
+    def _interp_at(dist):
+        """Interpolate (lat, lon) at cumulative distance dist along chain."""
+        if dist <= 0:
+            return chain[0][1], chain[0][0]
+        if dist >= total_dist_m:
+            return chain[-1][1], chain[-1][0]
+        for i in range(1, len(cum_dists)):
+            if cum_dists[i] >= dist:
+                seg_len = cum_dists[i] - cum_dists[i - 1]
+                t = (dist - cum_dists[i - 1]) / seg_len if seg_len > 0 else 0
+                lon = chain[i - 1][0] + t * (chain[i][0] - chain[i - 1][0])
+                lat = chain[i - 1][1] + t * (chain[i][1] - chain[i - 1][1])
+                return lat, lon
+        return chain[-1][1], chain[-1][0]
+
     for i in range(n_samples + 1):
-        frac = i / n_samples
-        lat = lat1 + frac * (lat2 - lat1)
-        lon = lon1 + frac * (lon2 - lon1)
+        d = i / n_samples * total_dist_m
+        lat, lon = _interp_at(d)
         elev = elev_provider.get_elevation(lat, lon)
         points.append({
-            "dist_m": round(frac * dist_m, 1),
+            "dist_m": round(d, 1),
             "elevation_m": round(elev, 1),
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
         })
 
-    s1_elev = elev_provider.get_elevation(lat1, lon1)
-    s2_elev = elev_provider.get_elevation(lat2, lon2)
+    s1 = route_meta["site1"]
+    s2 = route_meta["site2"]
+    s1_elev = elev_provider.get_elevation(s1["lat"], s1["lon"])
+    s2_elev = elev_provider.get_elevation(s2["lat"], s2["lon"])
 
     logger.info(
-        "Path profile: %s → %s, dist=%.1f m, %d samples",
-        s1.name, s2.name, dist_m, n_samples,
+        "Path profile (route): %s → %s via %s, dist=%.1f m, %d samples",
+        s1["name"], s2["name"], route_id, total_dist_m, n_samples,
     )
     return jsonify({
-        "distance_m": round(dist_m, 1),
+        "distance_m": round(total_dist_m, 1),
         "points": points,
+        "route_id": route_id,
         "site1": {
-            "name": s1.name,
-            "lat": lat1,
-            "lon": lon1,
+            "name": s1["name"],
+            "lat": s1["lat"],
+            "lon": s1["lon"],
             "dist_m": 0,
             "elevation_m": round(s1_elev, 1),
         },
         "site2": {
-            "name": s2.name,
-            "lat": lat2,
-            "lon": lon2,
-            "dist_m": round(dist_m, 1),
+            "name": s2["name"],
+            "lat": s2["lat"],
+            "lon": s2["lon"],
+            "dist_m": round(total_dist_m, 1),
             "elevation_m": round(s2_elev, 1),
         },
     })

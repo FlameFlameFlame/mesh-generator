@@ -31,10 +31,8 @@
   </label>
   <button onclick="toggleSettings()" title="Mesh calculator settings">Settings ⚙</button>
   <span id="profile-controls" style="display:none;align-items:center;gap:4px;font-size:0.85em;">
-    <select id="profile-site1" title="From site"></select>
-    <span>→</span>
-    <select id="profile-site2" title="To site"></select>
-    <button onclick="doPathProfile()" title="Requires elevation download">Show Profile</button>
+    <select id="profile-route" title="Route to profile" style="max-width:240px;"></select>
+    <button onclick="doPathProfile()" title="Requires Filter P2P + Download Elevation">Show Profile</button>
   </span>
   <button onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile 📈</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
@@ -148,7 +146,7 @@
   </div>
   <div style="position:relative;line-height:0;">
     <canvas id="path-profile-canvas" width="560" height="180"></canvas>
-    <div id="profile-hover-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(0,0,0,0.72);color:#fff;font-size:11px;padding:2px 7px;border-radius:3px;white-space:nowrap;z-index:10;"></div>
+    <div id="profile-hover-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(0,0,0,0.72);color:#fff;font-size:14px;font-weight:bold;padding:3px 8px;border-radius:3px;white-space:nowrap;z-index:10;"></div>
   </div>
   <div id="path-profile-stats" style="font-size:0.82em;color:#444;padding:4px 0;"></div>
 </div>
