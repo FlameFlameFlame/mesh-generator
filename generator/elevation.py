@@ -3,6 +3,7 @@
 import gzip
 import logging
 import math
+import os
 import struct
 import zlib
 
@@ -62,6 +63,29 @@ def _download_tile(lat: int, lon: int, timeout: int = 60) -> np.ndarray:
 
     data = np.frombuffer(raw, dtype=">i2").reshape(SRTM1_SIZE, SRTM1_SIZE)
     return data.astype(np.float32)
+
+
+def _download_tile_cached(lat: int, lon: int, cache_dir: str | None = None) -> np.ndarray:
+    """Download tile, with optional per-tile disk cache (numpy .npy format).
+
+    Cache location: cache_dir/srtm/<tilename>.npy
+    """
+    cache_file = None
+    if cache_dir:
+        srtm_dir = os.path.join(cache_dir, "srtm")
+        os.makedirs(srtm_dir, exist_ok=True)
+        cache_file = os.path.join(srtm_dir, f"{_tile_name(lat, lon)}.npy")
+        if os.path.isfile(cache_file):
+            logger.info("Elevation tile cache hit: %s", cache_file)
+            return np.load(cache_file)
+
+    data = _download_tile(lat, lon)
+
+    if cache_file:
+        np.save(cache_file, data)
+        logger.info("Elevation tile cached to %s", cache_file)
+
+    return data
 
 
 def _mosaic_tiles(
@@ -136,6 +160,29 @@ def fetch_and_write_elevation(
     # Replace NODATA with 0
     data[data == NODATA] = 0.0
 
+    _write_geotiff(data, south, west, north, east, nrows, ncols, output_path)
+    return output_path
+
+
+def fetch_and_write_elevation_cached(
+    south: float,
+    west: float,
+    north: float,
+    east: float,
+    output_path: str,
+    cache_dir: str | None = None,
+) -> str:
+    """Like fetch_and_write_elevation but uses per-tile disk cache."""
+    tile_coords = _tiles_for_bbox(south, west, north, east)
+    logger.info(
+        "Need %d SRTM tile(s) for bbox [%.3f, %.3f, %.3f, %.3f]",
+        len(tile_coords), south, west, north, east,
+    )
+    tiles = {}
+    for lat, lon in tile_coords:
+        tiles[(lat, lon)] = _download_tile_cached(lat, lon, cache_dir)
+    data, nrows, ncols = _mosaic_tiles(tiles, south, west, north, east)
+    data[data == NODATA] = 0.0
     _write_geotiff(data, south, west, north, east, nrows, ncols, output_path)
     return output_path
 

@@ -1,6 +1,8 @@
 """Fetch road data from OpenStreetMap via Overpass API."""
 
+import json
 import logging
+import os
 
 import requests
 
@@ -70,4 +72,33 @@ def fetch_roads(south: float, west: float, north: float, east: float) -> dict:
 
     geojson = parse_overpass_response(data)
     logger.info("Parsed %d road features", len(geojson["features"]))
+    return geojson
+
+
+def fetch_roads_cached(
+    south: float, west: float, north: float, east: float,
+    cache_dir: str | None = None,
+) -> dict:
+    """fetch_roads with optional disk cache keyed by rounded bbox.
+
+    Cache key uses 2 decimal places (~1 km precision) so minor bbox
+    differences don't bust the cache unnecessarily.
+    """
+    cache_file = None
+    if cache_dir:
+        os.makedirs(cache_dir, exist_ok=True)
+        key = f"{south:.2f}_{west:.2f}_{north:.2f}_{east:.2f}"
+        cache_file = os.path.join(cache_dir, f"roads_{key}.json")
+        if os.path.isfile(cache_file):
+            logger.info("Roads cache hit: %s", cache_file)
+            with open(cache_file) as f:
+                return json.load(f)
+
+    geojson = fetch_roads(south, west, north, east)
+
+    if cache_file:
+        with open(cache_file, "w") as f:
+            json.dump(geojson, f)
+        logger.info("Roads cached to %s", cache_file)
+
     return geojson
