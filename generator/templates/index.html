@@ -146,7 +146,10 @@
     <strong id="path-profile-title">Path Profile</strong>
     <button onclick="closePathProfile()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">✕</button>
   </div>
-  <canvas id="path-profile-canvas" width="560" height="180"></canvas>
+  <div style="position:relative;line-height:0;">
+    <canvas id="path-profile-canvas" width="560" height="180"></canvas>
+    <div id="profile-hover-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(0,0,0,0.72);color:#fff;font-size:11px;padding:2px 7px;border-radius:3px;white-space:nowrap;z-index:10;"></div>
+  </div>
   <div id="path-profile-stats" style="font-size:0.82em;color:#444;padding:4px 0;"></div>
 </div>
 

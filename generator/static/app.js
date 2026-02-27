@@ -1186,6 +1186,17 @@ function doRunOptimization() {
   btn.disabled = true;
   setStatus('Running optimization\u2026 (this may take a minute)');
 
+  // Clear stale results before starting new calculation
+  layerGroups.towers.clearLayers();
+  layerGroups.edges.clearLayers();
+  layerGroups.coverage.clearLayers();
+  layerGroups.towerCoverage.clearLayers();
+  document.getElementById('tower-legend').style.display = 'none';
+  document.getElementById('report-panel').style.display = 'none';
+  hasCoverage = false; coverageFetched = false;
+  towerCoverageData = null; towerCoverageFetched = false;
+  coverageData = null;
+
   fetch('/api/run-optimization', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1282,6 +1293,81 @@ function doRunOptimization() {
   });
 }
 
+// --- Path Profile helpers ---
+
+let _profileData = null;        // last path-profile API response (for redraw)
+let _profileHoverMarker = null; // Leaflet marker shown on map during canvas hover
+
+/** Project point (pLat,pLon) onto line (lat1,lon1)→(lat2,lon2). Returns fraction [0..1] (unclamped). */
+function _projectToLine(lat1, lon1, lat2, lon2, pLat, pLon) {
+  let dx = lat2 - lat1, dy = lon2 - lon1;
+  let len2 = dx * dx + dy * dy;
+  if (len2 === 0) return 0;
+  return ((pLat - lat1) * dx + (pLon - lon1) * dy) / len2;
+}
+
+/** Haversine distance in metres between two lat/lon points. */
+function _haversine(lat1, lon1, lat2, lon2) {
+  let R = 6371000;
+  let dLat = (lat2 - lat1) * Math.PI / 180;
+  let dLon = (lon2 - lon1) * Math.PI / 180;
+  let a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+/** Linear interpolation of elevation at distM from a sorted points array [{dist_m, elevation_m}]. */
+function _interpolateElev(points, distM) {
+  for (let i = 1; i < points.length; i++) {
+    if (points[i].dist_m >= distM) {
+      let t = (distM - points[i - 1].dist_m) / (points[i].dist_m - points[i - 1].dist_m);
+      return points[i - 1].elevation_m + t * (points[i].elevation_m - points[i - 1].elevation_m);
+    }
+  }
+  return points[points.length - 1].elevation_m;
+}
+
+function _clearProfileHover() {
+  let tooltip = document.getElementById('profile-hover-tooltip');
+  if (tooltip) tooltip.style.display = 'none';
+  if (_profileHoverMarker) { map.removeLayer(_profileHoverMarker); _profileHoverMarker = null; }
+}
+
+function _attachProfileHover(data) {
+  let canvas = document.getElementById('path-profile-canvas');
+  let tooltip = document.getElementById('profile-hover-tooltip');
+  if (!canvas || !tooltip) return;
+
+  canvas.onmousemove = function(e) {
+    let rect = canvas.getBoundingClientRect();
+    let W = canvas.width;
+    let pad = {top: 16, right: 16, bottom: 28, left: 48};
+    let cw = W - pad.left - pad.right;
+    let mx = (e.clientX - rect.left) * (W / rect.width);
+    if (mx < pad.left || mx > pad.left + cw) { _clearProfileHover(); return; }
+    let frac = (mx - pad.left) / cw;
+    let distM = frac * data.distance_m;
+    let elev = _interpolateElev(data.points, distM);
+    let lat = data.site1.lat + frac * (data.site2.lat - data.site1.lat);
+    let lon = data.site1.lon + frac * (data.site2.lon - data.site1.lon);
+
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX - rect.left + 10) + 'px';
+    tooltip.style.top  = (e.clientY - rect.top  - 28) + 'px';
+    tooltip.textContent = Math.round(elev) + ' m  \u2502  ' + (distM / 1000).toFixed(1) + ' km';
+
+    if (_profileHoverMarker) {
+      _profileHoverMarker.setLatLng([lat, lon]);
+    } else {
+      _profileHoverMarker = L.circleMarker([lat, lon], {
+        radius: 6, color: '#e67e22', weight: 2, fillColor: '#f39c12', fillOpacity: 0.9
+      }).addTo(map);
+    }
+  };
+
+  canvas.onmouseleave = function() { _clearProfileHover(); };
+}
+
 // --- Path Profile ---
 
 function toggleProfileControls() {
@@ -1327,6 +1413,7 @@ function doPathProfile() {
 }
 
 function _showPathProfile(data) {
+  _profileData = data;
   let panel = document.getElementById('path-profile-panel');
   let title = document.getElementById('path-profile-title');
   let stats = document.getElementById('path-profile-stats');
@@ -1335,10 +1422,14 @@ function _showPathProfile(data) {
   stats.textContent = 'Distance: ' + distKm + ' km';
   panel.style.display = '';
   _drawPathProfile(data);
+  _attachProfileHover(data);
 }
 
 function closePathProfile() {
   document.getElementById('path-profile-panel').style.display = 'none';
+  let canvas = document.getElementById('path-profile-canvas');
+  if (canvas) { canvas.onmousemove = null; canvas.onmouseleave = null; }
+  _clearProfileHover();
 }
 
 function _drawPathProfile(data) {
@@ -1440,6 +1531,47 @@ function _drawPathProfile(data) {
 
   drawSitePin(xOf(0), y1, data.site1.name || 'A');
   drawSitePin(xOf(data.distance_m), y2, data.site2.name || 'B');
+
+  // Draw towers that lie near this profile path
+  if (_cachedTowersGeojson && data.site1.lat != null && data.site2.lat != null) {
+    let tLat1 = data.site1.lat, tLon1 = data.site1.lon;
+    let tLat2 = data.site2.lat, tLon2 = data.site2.lon;
+    _cachedTowersGeojson.features.forEach(function(f) {
+      if (!f.geometry || f.geometry.type !== 'Point') return;
+      let tLat = f.geometry.coordinates[1];
+      let tLon = f.geometry.coordinates[0];
+      let frac = _projectToLine(tLat1, tLon1, tLat2, tLon2, tLat, tLon);
+      if (frac < 0 || frac > 1) return;
+      let perpLat = tLat1 + frac * (tLat2 - tLat1);
+      let perpLon = tLon1 + frac * (tLon2 - tLon1);
+      if (_haversine(perpLat, perpLon, tLat, tLon) > 2000) return;
+      let distAtFrac = frac * data.distance_m;
+      let elevAtFrac = _interpolateElev(data.points, distAtFrac);
+      let tx = xOf(distAtFrac);
+      let ty = yOf(elevAtFrac);
+      // Vertical dashed line from tower elevation to x-axis
+      ctx.beginPath();
+      ctx.moveTo(tx, ty);
+      ctx.lineTo(tx, pad.top + ch);
+      ctx.strokeStyle = 'rgba(52,152,219,0.55)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Diamond marker at terrain elevation
+      ctx.beginPath();
+      ctx.moveTo(tx, ty - 6);
+      ctx.lineTo(tx + 5, ty);
+      ctx.lineTo(tx, ty + 6);
+      ctx.lineTo(tx - 5, ty);
+      ctx.closePath();
+      ctx.fillStyle = '#3498db';
+      ctx.strokeStyle = '#1a5e8a';
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+    });
+  }
 }
 
 // --- localStorage project state caching ---
