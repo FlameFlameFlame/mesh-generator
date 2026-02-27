@@ -931,6 +931,7 @@ def run_optimization():
     body = request.json or {}
     max_towers = int(body.get("max_towers_per_route", 8))
     param_overrides = body.get("parameters", {})
+    output_dir = body.get("output_dir", "")
 
     # Build MeshConfig (with optional overrides from request body)
     valid_fields = MeshConfig.__dataclass_fields__
@@ -991,11 +992,32 @@ def run_optimization():
             if os.path.isfile(fpath):
                 with open(fpath) as f:
                     result[key] = _json.load(f)
+                _loaded_layers[key] = result[key]
 
         logger.info(
             "run_optimization complete: %d towers, %d edges",
             summary.get("total_towers", 0), summary.get("visibility_edges", 0),
         )
+
+        # Persist results to project output_dir if provided
+        if output_dir:
+            import shutil
+            os.makedirs(output_dir, exist_ok=True)
+            for fname in ["towers.geojson", "visibility_edges.geojson",
+                          "coverage.geojson", "tower_coverage.geojson", "report.json"]:
+                src = os.path.join(tmp_dir, fname)
+                if os.path.isfile(src):
+                    shutil.copy2(src, os.path.join(output_dir, fname))
+            # Update status.json to reflect optimization is done
+            status_path = os.path.join(output_dir, "status.json")
+            if os.path.isfile(status_path):
+                with open(status_path) as f:
+                    status = _json.load(f)
+                status["has_optimization"] = True
+                with open(status_path, "w") as f:
+                    _json.dump(status, f, indent=2)
+            logger.info("Saved optimization results to %s", output_dir)
+
         return jsonify(result)
 
     except Exception as exc:

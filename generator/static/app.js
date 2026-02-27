@@ -1198,10 +1198,11 @@ function doRunOptimization() {
   towerCoverageData = null; towerCoverageFetched = false;
   coverageData = null;
 
+  let outputDir = document.getElementById('output-dir').value.trim();
   fetch('/api/run-optimization', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({max_towers_per_route: maxTowers, parameters: parameters})
+    body: JSON.stringify({max_towers_per_route: maxTowers, parameters: parameters, output_dir: outputDir})
   }).then(safeJson).then(function(res) {
     btn.disabled = false;
     if (res.error) { setStatus('Optimization failed: ' + res.error); return; }
