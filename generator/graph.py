@@ -291,6 +291,23 @@ def _path_to_edge_set(path, edge_to_feat):
     return frozenset(result)
 
 
+def _path_to_feat_indices(path, edge_to_feat):
+    """List of feat_idx in path traversal order (deduplicated, skipping virtual edges).
+
+    Unlike _path_to_edge_set, this preserves the order features appear along the
+    Dijkstra path from s1→s2, which is needed for correct chain assembly in the
+    profile endpoint and for geographically-ordered road segment export.
+    """
+    seen = set()
+    result = []
+    for u, v in zip(path, path[1:]):
+        fi = edge_to_feat.get((u, v), -1)
+        if fi >= 0 and fi not in seen:
+            seen.add(fi)
+            result.append(fi)
+    return result
+
+
 def _path_km(path, node_coords):
     """Total haversine distance along the node-list path in km."""
     total = 0.0
@@ -374,7 +391,8 @@ def _find_routes_for_pair(
             )
             continue
 
-        edge_set = _path_to_edge_set(path, edge_to_feat)
+        feat_indices_ordered = _path_to_feat_indices(path, edge_to_feat)
+        edge_set = frozenset(feat_indices_ordered)
         if not edge_set:
             logger.debug(
                 "Pair %s\u2194%s: candidate has empty edge set, skipping",
@@ -397,7 +415,7 @@ def _find_routes_for_pair(
         selected_edge_sets.append(edge_set)
 
         # Accumulate ref_km for labelling
-        feat_indices = sorted(fi for fi in edge_set if fi >= 0)
+        feat_indices = feat_indices_ordered  # path-ordered, no virtual edges
         ref_km = {}
         for u, v in zip(path, path[1:]):
             fi = edge_to_feat.get((u, v), -1)
@@ -711,13 +729,8 @@ def find_route_via_waypoints(
     if len(full_path) < 2:
         return None
 
-    # Collect feature indices along the path
-    feat_indices_set = set()
-    for u, v in zip(full_path, full_path[1:]):
-        fi = edge_to_feat.get((u, v), -1)
-        if fi >= 0:
-            feat_indices_set.add(fi)
-    feat_indices = sorted(feat_indices_set)
+    # Collect feature indices in path traversal order (s1→s2)
+    feat_indices = _path_to_feat_indices(full_path, edge_to_feat)
 
     # Build refs label
     ref_km = {}

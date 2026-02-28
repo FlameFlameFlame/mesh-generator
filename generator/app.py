@@ -424,6 +424,22 @@ def path_profile():
         start = 1 if _haversine(tail[1], tail[0], seg[0][1], seg[0][0]) < 10 else 0
         chain.extend(seg[start:])
 
+    # ── Ensure chain runs s1→s2 (not reversed) ───────────────────────────
+    # The greedy assembler connects segments by proximity, which can produce a
+    # chain that runs from s2 to s1.  Compare chain endpoints to the route
+    # site coordinates and flip if necessary.
+    s1 = route_meta["site1"]
+    s2 = route_meta["site2"]
+
+    def _dist_to_site(chain_pt, site):
+        return _haversine(chain_pt[1], chain_pt[0], site["lat"], site["lon"])
+
+    if _dist_to_site(chain[-1], s1) < _dist_to_site(chain[0], s1):
+        chain = list(reversed(chain))
+        logger.debug(
+            "path_profile: reversed chain to match s1→s2 direction",
+        )
+
     # ── Resample every ~200 m along the chain ────────────────────────────
     # First compute cumulative distances at each chain vertex.
     cum_dists = [0.0]
@@ -463,8 +479,6 @@ def path_profile():
             "lon": round(lon, 6),
         })
 
-    s1 = route_meta["site1"]
-    s2 = route_meta["site2"]
     # Snap endpoints to the road polyline start/end (not city-center coords)
     road_start_lon, road_start_lat = chain[0]
     road_end_lon, road_end_lat = chain[-1]
@@ -1372,20 +1386,40 @@ def _collect_coords(geometry, lats, lons):
 @app.route("/api/pick-file", methods=["POST"])
 def pick_file():
     """Open a native OS file picker and return the selected path."""
+    import platform
+    import subprocess
+
     try:
-        import tkinter as tk
-        from tkinter import filedialog
-        root = tk.Tk()
-        root.withdraw()
-        root.wm_attributes("-topmost", 1)
-        path = filedialog.askopenfilename(
-            title="Open project config",
-            filetypes=[("YAML config", "*.yaml *.yml"), ("All files", "*")],
-        )
-        root.destroy()
-        return jsonify({"path": path or ""})
+        if platform.system() == "Darwin":
+            # macOS: use AppleScript — avoids tkinter threading issues on macOS
+            script = (
+                'tell application "System Events" to activate\n'
+                'set f to POSIX path of (choose file with prompt "Open project config"'
+                ' of type {"yaml", "yml", "public.yaml"})'
+            )
+            result = subprocess.run(
+                ["/usr/bin/osascript", "-e", script],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                return jsonify({"path": result.stdout.strip()})
+            # User cancelled (osascript exits 1 with "User canceled" in stderr)
+            return jsonify({"path": ""})
+        else:
+            # Linux/Windows: try tkinter
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes("-topmost", 1)
+            path = filedialog.askopenfilename(
+                title="Open project config",
+                filetypes=[("YAML config", "*.yaml *.yml"), ("All files", "*")],
+            )
+            root.destroy()
+            return jsonify({"path": path or ""})
     except Exception as e:
-        logger.warning("File picker failed (tkinter): %s", e)
+        logger.warning("File picker failed: %s", e)
         return jsonify({"error": str(e), "path": ""})
 
 
