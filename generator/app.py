@@ -1071,7 +1071,8 @@ def run_optimization():
                     src = os.path.join(tmp_dir, fname)
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(output_dir, fname))
-                _write_status_json(output_dir, has_optimization=True)
+                # Write full project state so the directory can be reopened
+                _save_project_to_dir(output_dir)
                 logger.info("Saved optimization results to %s", output_dir)
 
             _opt_result = result
@@ -1095,6 +1096,73 @@ def get_optimization_result():
     return jsonify(_opt_result)
 
 
+def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced_waypoints=None):
+    """Write config.yaml, routes.json, and status.json to output_dir.
+
+    Writes geojson files (sites, boundary, roads) only if they are not already
+    present — so calling this from the optimizer (which runs after export) does
+    not overwrite freshly-exported data.
+    """
+    sites = list(store)
+    sites_path = os.path.join(output_dir, "sites.geojson")
+    boundary_path = os.path.join(output_dir, "boundary.geojson")
+    roads_path = os.path.join(output_dir, "roads.geojson")
+
+    if sites:
+        if not os.path.isfile(sites_path):
+            export_sites_geojson(sites, sites_path)
+        if not os.path.isfile(boundary_path):
+            export_boundary_geojson(sites, boundary_path, roads_geojson=_roads_geojson)
+        if _roads_geojson and not os.path.isfile(roads_path):
+            export_roads_geojson(_roads_geojson, roads_path)
+
+        roads_export_path = roads_path if os.path.isfile(roads_path) else ""
+        elev_dest = os.path.join(output_dir, "elevation.tif")
+        elevation_export_path = elev_dest if os.path.isfile(elev_dest) else (_elevation_path or "")
+        city_boundaries_path = os.path.join(output_dir, "city_boundaries.geojson")
+        city_boundaries_export = city_boundaries_path if os.path.isfile(city_boundaries_path) else ""
+        export_config_yaml(
+            output_dir, sites_path, boundary_path,
+            roads_path=roads_export_path,
+            elevation_path=elevation_export_path,
+            city_boundaries_path=city_boundaries_export,
+            parameters=parameters or {},
+        )
+        logger.info("Saved config.yaml to %s", output_dir)
+
+    if _p2p_routes:
+        routes_path = os.path.join(output_dir, "routes.json")
+        max_towers = (parameters or {}).get("max_towers_per_route", 8)
+        routes_export = {
+            "parameters": {"h3_resolution": 8, "frequency_hz": 868_000_000, "mast_height_m": 28},
+            "routes": [
+                dict(r,
+                     max_towers_per_route=max_towers,
+                     features=_p2p_all_route_features.get(r["route_id"], []))
+                for r in _p2p_routes
+            ],
+        }
+        with open(routes_path, "w") as f:
+            json.dump(routes_export, f, indent=2)
+        logger.info("Saved routes.json to %s (%d routes)", output_dir, len(_p2p_routes))
+
+    status = {
+        "has_roads": bool(_roads_geojson),
+        "has_elevation": bool(_elevation_path and os.path.isfile(_elevation_path)),
+        "has_routes": bool(_p2p_routes),
+        "has_optimization": bool(_loaded_layers.get("towers")),
+        "elevation_path": _elevation_path or "",
+        "parameters": parameters or {},
+    }
+    if active_routes:
+        status["active_routes"] = active_routes
+    if forced_waypoints:
+        status["forced_waypoints"] = forced_waypoints
+    with open(os.path.join(output_dir, "status.json"), "w") as f:
+        json.dump(status, f, indent=2)
+    logger.info("Saved status.json to %s", output_dir)
+
+
 @app.route("/api/export", methods=["POST"])
 def export():
     if len(store) == 0:
@@ -1111,99 +1179,53 @@ def export():
     max_towers_per_route = int(data.get("max_towers_per_route", 8))
     os.makedirs(output_dir, exist_ok=True)
 
+    sites = list(store)
+
+    # Always write geojson files fresh on explicit export
     sites_path = os.path.join(output_dir, "sites.geojson")
     boundary_path = os.path.join(output_dir, "boundary.geojson")
     roads_path = os.path.join(output_dir, "roads.geojson")
-
-    sites = list(store)
     export_sites_geojson(sites, sites_path)
     export_boundary_geojson(sites, boundary_path, roads_geojson=_roads_geojson)
-
-    # Export roads if available
-    roads_export_path = ""
     if _roads_geojson:
         export_roads_geojson(_roads_geojson, roads_path)
-        roads_export_path = roads_path
 
     # Copy pre-downloaded elevation to output directory
-    elevation_export_path = ""
     if _elevation_path and os.path.isfile(_elevation_path):
         import shutil
         elevation_dest = os.path.join(output_dir, "elevation.tif")
         shutil.copy2(_elevation_path, elevation_dest)
-        elevation_export_path = elevation_dest
         logger.info("Copied elevation to %s", elevation_dest)
 
     # Export city boundaries if any site has one
-    city_boundaries_path = ""
     if any(s.boundary_geojson for s in sites):
-        city_boundaries_path = os.path.join(
-            output_dir, "city_boundaries.geojson")
+        city_boundaries_path = os.path.join(output_dir, "city_boundaries.geojson")
         export_city_boundaries_geojson(sites, city_boundaries_path)
 
-    # Collect parameters from request for config export
     req_params = data.get("parameters", {})
-    export_config_yaml(
-        output_dir, sites_path, boundary_path,
-        roads_path=roads_export_path,
-        elevation_path=elevation_export_path,
-        city_boundaries_path=city_boundaries_path,
+    req_params.setdefault("max_towers_per_route", max_towers_per_route)
+    active_routes = data.get("active_routes", {})
+    forced_waypoints = data.get("forced_waypoints", {})
+
+    # Write config.yaml + status.json via helper
+    _save_project_to_dir(
+        output_dir,
         parameters=req_params,
+        active_routes=active_routes,
+        forced_waypoints=forced_waypoints,
     )
-
-    # Export routes.json for standalone CLI use with mesh-calculator-routes
-    routes_path = ""
-    if _p2p_routes:
-        routes_path = os.path.join(output_dir, "routes.json")
-        routes_export = {
-            "parameters": {
-                "h3_resolution": 8,
-                "frequency_hz": 868_000_000,
-                "mast_height_m": 28,
-            },
-            "routes": [
-                {
-                    "route_id": r["route_id"],
-                    "site1": r.get("site1", {}),
-                    "site2": r.get("site2", {}),
-                    "max_towers_per_route": max_towers_per_route,
-                    "features": _p2p_all_route_features.get(r["route_id"], []),
-                }
-                for r in _p2p_routes
-            ],
-        }
-        with open(routes_path, "w") as f:
-            json.dump(routes_export, f, indent=2)
-        logger.info("Exported routes to %s (%d routes)", routes_path, len(_p2p_routes))
-
-    # Write status.json to capture project state
-    status = {
-        "has_roads": bool(_roads_geojson),
-        "has_elevation": bool(_elevation_path and os.path.isfile(_elevation_path)),
-        "has_routes": bool(_p2p_routes),
-        "has_optimization": bool(_loaded_layers.get("towers")),
-        "elevation_path": _elevation_path or "",
-        "parameters": req_params,
-    }
-    status_path = os.path.join(output_dir, "status.json")
-    with open(status_path, "w") as f:
-        json.dump(status, f, indent=2)
-    logger.info("Exported status to %s", status_path)
 
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
-        "files": [sites_path, boundary_path, roads_path,
-                  elevation_export_path, os.path.join(output_dir, "config.yaml"),
-                  routes_path, status_path],
     })
 
 
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson, _loaded_report, _loaded_coverage, _loaded_tower_coverage, _elevation_path
+    global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson, _loaded_report, _loaded_coverage, _loaded_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
     data = request.json
     path = data.get("path", "").strip()
 
@@ -1326,6 +1348,20 @@ def load_project():
                 _elevation_path = ep
                 logger.info("Restored elevation path from status: %s", ep)
 
+    # Restore routes from routes.json if present
+    _p2p_routes = []
+    _p2p_all_route_features = {}
+    routes_file = os.path.join(config_dir, "routes.json")
+    if os.path.isfile(routes_file):
+        with open(routes_file) as f:
+            routes_data = json.load(f)
+        for r in routes_data.get("routes", []):
+            meta = {k: v for k, v in r.items() if k != "features"}
+            _p2p_routes.append(meta)
+            _p2p_all_route_features[r["route_id"]] = r.get("features", [])
+        logger.info("Restored %d routes from %s", len(_p2p_routes), routes_file)
+        project_status["has_routes"] = True
+
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
 
@@ -1339,6 +1375,9 @@ def load_project():
         "has_coverage": _loaded_coverage is not None,
         "has_elevation": _elevation_path is not None,
         "project_status": project_status,
+        "routes": list(_p2p_routes),
+        "active_routes": project_status.get("active_routes", {}),
+        "forced_waypoints": project_status.get("forced_waypoints", {}),
     })
 
 
