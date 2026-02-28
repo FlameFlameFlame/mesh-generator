@@ -967,6 +967,17 @@ function renderLayers(layers) {
       style: { color: '#888', weight: 2, dashArray: '6 4', fillColor: '#ccc', fillOpacity: 0.1 }
     }).addTo(layerGroups.boundary);
   }
+  // City boundaries
+  layerGroups.cities.clearLayers();
+  if (layers.city_boundaries) {
+    L.geoJSON(layers.city_boundaries, {
+      style: { color: '#9944cc', weight: 2, dashArray: '6 3', fillColor: '#cc88ff', fillOpacity: 0.1 },
+      onEachFeature: function(feature, layer) {
+        let name = (feature.properties || {}).name || (feature.properties || {}).boundary_name || '';
+        if (name) layer.bindTooltip(name);
+      }
+    }).addTo(layerGroups.cities);
+  }
   // Visibility edges
   layerGroups.edges.clearLayers();
   if (layers.edges) {

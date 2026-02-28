@@ -1288,6 +1288,7 @@ def load_project():
         "boundary": resolve(inputs.get("boundary")),
         "towers": resolve(outputs.get("towers")),
         "edges": resolve(outputs.get("visibility_edges")),
+        "city_boundaries": resolve(inputs.get("city_boundaries")),
     }
     for key, fpath in layer_files.items():
         if fpath and os.path.isfile(fpath):
