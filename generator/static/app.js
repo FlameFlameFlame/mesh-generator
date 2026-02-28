@@ -1133,8 +1133,8 @@ function toggleTowerCoverage() {
   }
 }
 
-// Distinct colors for up to 12 towers (cycles if more)
-const TOWER_COLORS = [
+// Distinct colors for per-tower coverage coloring (cycles if >12 towers)
+const TOWER_HEX_COLORS = [
   '#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4',
   '#f032e6','#bfef45','#fabed4','#469990','#dcbeff','#9a6324',
 ];
@@ -1165,7 +1165,7 @@ function renderTowerCoverage() {
       style: function(feature) {
         let tid = (feature.properties || {}).closest_tower_id;
         let idx = towerIds.indexOf(tid);
-        let color = TOWER_COLORS[idx % TOWER_COLORS.length];
+        let color = TOWER_HEX_COLORS[idx % TOWER_HEX_COLORS.length];
         return { fillColor: color, fillOpacity: 0.55, color: '#222', weight: 0.2 };
       },
       onEachFeature: function(feature, layer) {
