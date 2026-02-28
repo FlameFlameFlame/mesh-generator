@@ -124,24 +124,29 @@ def export_config_yaml(
     }
     if parameters:
         defaults.update(parameters)
+    def _rel(p):
+        """Make path relative to output_dir if possible, else keep as-is."""
+        if not p:
+            return p
+        try:
+            return os.path.relpath(p, output_dir)
+        except ValueError:
+            return p  # different drive on Windows
+
     config = {
         "parameters": defaults,
         "inputs": {
-            "boundary": boundary_path,
-            "elevation": elevation_path,
-            "roads": roads_path,
-            "target_sites": sites_path,
-            "city_boundaries": city_boundaries_path,
+            "boundary": _rel(boundary_path),
+            "elevation": _rel(elevation_path),
+            "roads": _rel(roads_path),
+            "target_sites": _rel(sites_path),
+            "city_boundaries": _rel(city_boundaries_path),
         },
         "outputs": {
-            "towers": os.path.join(
-                output_dir, "towers.geojson"),
-            "coverage": os.path.join(
-                output_dir, "coverage.geojson"),
-            "report": os.path.join(
-                output_dir, "report.json"),
-            "visibility_edges": os.path.join(
-                output_dir, "visibility_edges.geojson"),
+            "towers": "towers.geojson",
+            "coverage": "coverage.geojson",
+            "report": "report.json",
+            "visibility_edges": "visibility_edges.geojson",
         },
     }
 

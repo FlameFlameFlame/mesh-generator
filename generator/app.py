@@ -1249,7 +1249,17 @@ def load_project():
             return None
         if os.path.isabs(p):
             return p
-        return os.path.join(config_dir, p)
+        # Try relative to config_dir first (correct case)
+        candidate = os.path.join(config_dir, p)
+        if os.path.exists(candidate):
+            return candidate
+        # Fallback: path may be relative to config_dir's parent (legacy configs
+        # written when output_dir was the parent directory).
+        parent_candidate = os.path.join(os.path.dirname(config_dir), p)
+        if os.path.exists(parent_candidate):
+            return parent_candidate
+        # Return the primary candidate so callers get the original (non-existent) path
+        return candidate
 
     # Load sites into the store
     store._sites.clear()
