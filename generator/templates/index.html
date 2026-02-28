@@ -10,31 +10,48 @@
 <body>
 
 <div id="toolbar">
+  <!-- Group 1: Map / Data -->
   <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
-  <button id="btn-roads" onclick="doFetchRoads()">Download Roads</button>
   <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
-  <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">✕</a></span>
+  <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">&#x2715;</a></span>
+  <button id="btn-download" onclick="doDownloadData()">Download Data</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
-  <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
-  <button id="btn-elevation" onclick="doFetchElevation()">Download Elevation</button>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
-  <button onclick="doLoadProject()">Load Project</button>
-  <button class="danger" onclick="doClear()">Clear</button>
-  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
-  <button class="primary" onclick="doExport()">Save</button>
-  <button class="danger" onclick="doClearCalculations()" title="Delete mesh_calculator output files and clear map layers">Clear Calculations</button>
+
+  <span class="toolbar-sep"></span>
+
+  <!-- Group 2: Pipeline -->
+  <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
   <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
     title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
   <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
     <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1"
            style="width:44px;padding:3px 4px;"> towers/route
   </label>
-  <button onclick="toggleSettings()" title="Mesh calculator settings">Settings ⚙</button>
+
+  <span class="toolbar-sep"></span>
+
+  <!-- Group 3: Project I/O -->
+  <span style="position:relative;display:inline-flex;gap:0;">
+    <button onclick="doLoadProject()">Open</button>
+    <button onclick="toggleHistoryDropdown()" style="padding:6px 4px;border-left:none;border-radius:0 3px 3px 0;" title="Recent projects">&#x25BE;</button>
+    <div id="history-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:999;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);min-width:260px;max-height:300px;overflow-y:auto;"></div>
+  </span>
+  <button class="primary" onclick="doExport()">Save</button>
+  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
+
+  <span class="toolbar-sep"></span>
+
+  <!-- Group 4: Extras -->
+  <button class="danger" onclick="doClear()">Clear</button>
+  <button class="danger" onclick="doClearCalculations()" title="Delete mesh_calculator output files and clear map layers">Clear Calc</button>
+  <button onclick="toggleSettings()" title="Mesh calculator settings">Settings &#x2699;</button>
   <span id="profile-controls" style="display:none;align-items:center;gap:4px;font-size:0.85em;">
     <select id="profile-route" title="Route to profile" style="max-width:240px;"></select>
     <button onclick="doPathProfile()" title="Requires Filter P2P + Download Elevation">Show Profile</button>
   </span>
-  <button onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile 📈</button>
+  <button onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile &#x1F4C8;</button>
+  <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
   <span id="hint" class="hint">Click "Add Site" then click on the map</span>
 </div>
 
@@ -109,6 +126,10 @@
       <strong>Report</strong>
       <table id="report-table"></table>
     </div>
+    <div id="opt-log-panel">
+      <strong>Optimization Log</strong>
+      <pre id="opt-log"></pre>
+    </div>
     <div id="settings-panel" style="display:none;">
       <strong>Mesh Calculator Settings</strong>
       <label title="H3 resolution (6=coarse, 10=fine)">H3 resolution
@@ -139,7 +160,7 @@
 <div id="path-profile-panel" style="display:none;">
   <div id="path-profile-header">
     <strong id="path-profile-title">Path Profile</strong>
-    <button onclick="closePathProfile()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">✕</button>
+    <button onclick="closePathProfile()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">&#x2715;</button>
   </div>
   <div style="position:relative;line-height:0;">
     <canvas id="path-profile-canvas" width="560" height="180"></canvas>

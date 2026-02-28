@@ -71,3 +71,171 @@
   #path-profile-header { display: flex; justify-content: space-between; align-items: center;
                           margin-bottom: 6px; }
   #path-profile-canvas { display: block; width: 100%; border: 1px solid #ddd; background: #f8f8ff; }
+
+  /* Toolbar separators */
+  .toolbar-sep {
+    display: inline-block;
+    width: 1px;
+    height: 22px;
+    background: #ccc;
+    margin: 0 4px;
+    vertical-align: middle;
+  }
+
+  /* History dropdown */
+  #history-dropdown {
+    position: absolute;
+    top: 100%;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    z-index: 2000;
+    min-width: 220px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .history-item {
+    padding: 6px 10px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+  }
+  .history-item:last-child { border-bottom: none; }
+  .history-item:hover { background: #f0f4ff; }
+  .history-item strong { font-size: 0.9em; }
+  .history-item small { color: #888; }
+
+  /* Optimization log panel */
+  #opt-log-panel {
+    padding: 8px 10px;
+    border-top: 1px solid #ddd;
+    font-size: 0.82em;
+    display: none;
+  }
+  #opt-log {
+    max-height: 200px;
+    overflow-y: auto;
+    background: #1a1a2e;
+    color: #0f0;
+    padding: 6px 8px;
+    border-radius: 4px;
+    font-size: 0.85em;
+    line-height: 1.4;
+    margin-top: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* --- Dark mode --- */
+  :root {
+    --bg: #ffffff;
+    --fg: #222222;
+    --toolbar-bg: #f5f5f5;
+    --toolbar-border: #ddd;
+    --sidebar-bg: #ffffff;
+    --sidebar-border: #ddd;
+    --btn-bg: #ffffff;
+    --btn-border: #aaa;
+    --btn-hover: #e8e8e8;
+    --btn-primary-bg: #e0edff;
+    --btn-primary-border: #8ab;
+    --btn-primary-hover: #cde0f8;
+    --btn-danger-bg: #fee;
+    --btn-danger-border: #daa;
+    --btn-danger-hover: #fdd;
+    --input-bg: #ffffff;
+    --input-border: #ccc;
+    --table-border: #eee;
+    --row-hover: #f0f0f0;
+    --row-selected: #d0e8ff;
+    --status-bg: #eafaea;
+    --status-border: #ccc;
+    --muted: #666;
+    --card-bg: #fafafa;
+    --card-border: #ccc;
+    --card-hover: #f0f4ff;
+    --card-active-bg: #e0edff;
+    --card-active-border: #2266aa;
+    --panel-border: #ddd;
+    --opt-log-bg: #1a1a2e;
+    --opt-log-fg: #0f0;
+  }
+
+  [data-theme="dark"] {
+    --bg: #1a1a2e;
+    --fg: #e0e0e0;
+    --toolbar-bg: #16213e;
+    --toolbar-border: #2a3a5c;
+    --sidebar-bg: #16213e;
+    --sidebar-border: #2a3a5c;
+    --btn-bg: #1a1a2e;
+    --btn-border: #3a4a6c;
+    --btn-hover: #2a3a5c;
+    --btn-primary-bg: #1a3a5c;
+    --btn-primary-border: #3a6a9c;
+    --btn-primary-hover: #2a4a7c;
+    --btn-danger-bg: #3c1a1a;
+    --btn-danger-border: #6c3a3a;
+    --btn-danger-hover: #4c2a2a;
+    --input-bg: #1a1a2e;
+    --input-border: #3a4a6c;
+    --table-border: #2a3a5c;
+    --row-hover: #2a3a5c;
+    --row-selected: #1a3a5c;
+    --status-bg: #1a2e1a;
+    --status-border: #2a4a2a;
+    --muted: #8899aa;
+    --card-bg: #1a1a2e;
+    --card-border: #2a3a5c;
+    --card-hover: #1a2a4c;
+    --card-active-bg: #1a3a5c;
+    --card-active-border: #4488cc;
+    --panel-border: #2a3a5c;
+    --opt-log-bg: #0d0d1a;
+    --opt-log-fg: #0f0;
+  }
+
+  /* Apply custom properties */
+  body { background: var(--bg); color: var(--fg); }
+  #toolbar { background: var(--toolbar-bg); border-bottom-color: var(--toolbar-border); }
+  #toolbar button, #controls button {
+    background: var(--btn-bg); border-color: var(--btn-border); color: var(--fg);
+  }
+  #toolbar button:hover, #controls button:hover { background: var(--btn-hover); }
+  #toolbar button.primary { background: var(--btn-primary-bg); border-color: var(--btn-primary-border); }
+  #toolbar button.primary:hover { background: var(--btn-primary-hover); }
+  #toolbar button.danger, #controls button.danger { background: var(--btn-danger-bg); border-color: var(--btn-danger-border); }
+  #toolbar button.danger:hover, #controls button.danger:hover { background: var(--btn-danger-hover); }
+  #toolbar .hint { color: var(--muted); }
+  #sidebar { background: var(--sidebar-bg); border-left-color: var(--sidebar-border); }
+  #site-list th, #site-list td { border-bottom-color: var(--table-border); }
+  #site-list tr.selected { background: var(--row-selected); }
+  #site-list tr:hover { background: var(--row-hover); }
+  #controls { border-top-color: var(--panel-border); }
+  #controls label { color: var(--muted); }
+  #controls input, #controls select { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
+  #layer-panel { border-top-color: var(--panel-border); }
+  #tower-legend { border-top-color: var(--panel-border); }
+  #report-panel { border-top-color: var(--panel-border); }
+  #report-panel td:first-child { color: var(--muted); }
+  #settings-panel { border-top-color: var(--panel-border); }
+  #settings-panel label { color: var(--muted); }
+  #settings-panel input { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
+  #status-bar { background: var(--status-bg); border-top-color: var(--status-border); }
+  .route-card { background: var(--card-bg); border-color: var(--card-border); }
+  .route-card:hover { border-color: var(--muted); background: var(--card-hover); }
+  .route-card.active { border-color: var(--card-active-border); background: var(--card-active-bg); }
+  .route-count { color: var(--muted); }
+  #route-list { border-top-color: var(--panel-border); }
+  #opt-log-panel { border-top-color: var(--panel-border); }
+  #opt-log { background: var(--opt-log-bg); color: var(--opt-log-fg); }
+  .toolbar-sep { background: var(--toolbar-border); }
+  #history-dropdown { background: var(--sidebar-bg); border-color: var(--sidebar-border); }
+  .history-item { border-bottom-color: var(--table-border); }
+  .history-item:hover { background: var(--card-hover); }
+  .history-item small { color: var(--muted); }
+  .color-legend { background: var(--sidebar-bg); }
+  .progress-wrap { color: var(--muted); }
+  #path-profile-panel { background: var(--sidebar-bg); }
+  #toolbar input { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
+  #path-profile-canvas { border-color: var(--panel-border); background: var(--bg); }
