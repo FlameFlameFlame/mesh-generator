@@ -49,6 +49,7 @@ let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
 let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering)
 let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
 let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
+let _sharedWayIds = new Set();  // way_ids used by 2+ active routes (for shared-road style)
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
 let _hasRoutes = false;
@@ -552,16 +553,23 @@ function renderRouteList(routes) {
     _activeRoutePerPair[pair] = rs[0].route_id;
   });
 
+  // Determine if any pair has multiple alternatives (affects card interactivity)
+  let hasAlternatives = Object.values(byPair).some(function(rs) { return rs.length > 1; });
+
   let html = '<strong>Routes</strong>';
   Object.entries(byPair).forEach(function([pair, rs]) {
     html += '<div class="route-pair"><em>' + escHtml(pair.replace('\u2194', ' \u2194 ')) + '</em>';
     rs.forEach(function(r) {
       let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
       let isActive = (_activeRoutePerPair[pair] === r.route_id);
-      html += '<div class="route-card' + (isActive ? ' active' : '') + '"'
+      let staticClass = hasAlternatives ? '' : ' route-card-static';
+      let clickAttr = hasAlternatives
+        ? ' onclick="selectRoute(this.dataset.pair, this.dataset.routeId)"'
+        : '';
+      html += '<div class="route-card' + (isActive ? ' active' : '') + staticClass + '"'
             + ' data-pair="' + escHtml(pair) + '"'
             + ' data-route-id="' + escHtml(r.route_id) + '"'
-            + ' onclick="selectRoute(this.dataset.pair, this.dataset.routeId)">'
+            + clickAttr + '>'
             + '<span class="route-dot" style="background:' + c + '"></span>'
             + '<span class="route-ref">' + escHtml(r.ref || 'unnamed') + '</span>'
             + ' <span class="route-count">(' + r.feature_indices.length + ' segs)</span>'
@@ -608,11 +616,19 @@ function _refreshProfileIfVisible(changedPairKey) {
 function applyRouteSelection() {
   let activeIds = new Set(Object.values(_activeRoutePerPair));
   wayIdToColor = {};
+  // Count how many active routes use each way_id to detect shared segments
+  let wayIdCount = {};
   (_allRoutes || []).forEach(function(r) {
     if (!activeIds.has(r.route_id)) return;
     let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
-    (r.way_ids || []).forEach(function(wid) { wayIdToColor[wid] = c; });
+    (r.way_ids || []).forEach(function(wid) {
+      wayIdToColor[wid] = c;
+      wayIdCount[wid] = (wayIdCount[wid] || 0) + 1;
+    });
   });
+  _sharedWayIds = new Set(
+    Object.keys(wayIdCount).filter(function(w) { return wayIdCount[w] > 1; }).map(Number)
+  );
 
   renderAllRoutesOnMap(activeIds);
 
@@ -639,25 +655,30 @@ function renderAllRoutesOnMap(activeIds) {
     feats.forEach(function(feat) {
       let wid = (feat.properties || {}).osm_way_id;
       let key = wid != null ? wid : JSON.stringify(feat.geometry);
+      // Allow shared active segments to be rendered once with the shared style
+      let isShared = isActive && _sharedWayIds.has(wid);
       if (seen.has(key)) return;
       seen.add(key);
       let isPinned = _pinnedWayIds.has(wid);
-      let color, weight, opacity;
+      let color, weight, opacity, extraStyle;
       if (isPinned) {
-        color = '#f5a623'; weight = 5; opacity = 1.0;
+        color = '#f5a623'; weight = 5; opacity = 1.0; extraStyle = {};
+      } else if (isShared) {
+        // Dashed dark line to indicate this segment is shared by multiple routes
+        color = '#444'; weight = 4; opacity = 0.9; extraStyle = {dashArray: '10 5'};
       } else if (isActive) {
-        color = wayIdToColor[wid] || '#2266aa'; weight = 3; opacity = 0.9;
+        color = wayIdToColor[wid] || '#2266aa'; weight = 3; opacity = 0.9; extraStyle = {};
       } else {
-        color = '#999'; weight = 1.5; opacity = 0.35;
+        color = '#999'; weight = 1.5; opacity = 0.35; extraStyle = {};
       }
-      let layer = L.geoJSON(feat, {style: {color, weight, opacity}});
+      let layer = L.geoJSON(feat, {style: Object.assign({color, weight, opacity}, extraStyle)});
       layer.on('click', function(e) {
         L.DomEvent.stopPropagation(e);
         // Find pair_key from whichever active route covers this segment
         let rid = _wayIdToRouteId[wid];
         if (!rid) return;
         let pk = _routeIdToPairKey[rid];
-        if (!pk) { selectRoute(pk, rid); return; }
+        if (!pk) return;
         // Toggle waypoint
         if (!_forcedWaypoints[pk]) _forcedWaypoints[pk] = new Set();
         if (_forcedWaypoints[pk].has(wid)) {

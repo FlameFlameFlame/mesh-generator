@@ -23,6 +23,8 @@
                 transition: border-color 0.15s, background 0.15s; }
   .route-card:hover  { border-color: #888; background: #f0f4ff; }
   .route-card.active { border-color: #2266aa; background: #e0edff; font-weight: 600; }
+  .route-card-static { cursor: default; }
+  .route-card-static:hover { border-color: #2266aa; background: #e0edff; }
   .route-dot  { display: inline-block; width: 12px; height: 12px;
                 border-radius: 50%; flex-shrink: 0; }
   .route-ref  { font-weight: bold; }
@@ -225,6 +227,7 @@
   .route-card { background: var(--card-bg); border-color: var(--card-border); }
   .route-card:hover { border-color: var(--muted); background: var(--card-hover); }
   .route-card.active { border-color: var(--card-active-border); background: var(--card-active-bg); }
+  .route-card-static:hover { border-color: var(--card-active-border); background: var(--card-active-bg); }
   .route-count { color: var(--muted); }
   #route-list { border-top-color: var(--panel-border); }
   #opt-log-panel { border-top-color: var(--panel-border); }

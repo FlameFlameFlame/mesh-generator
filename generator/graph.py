@@ -895,4 +895,13 @@ def find_p2p_roads(
             for r in pair_routes:
                 used_indices.update(r["feature_indices"])
 
+        # Remove virtual nodes so they don't pollute routing for subsequent pairs.
+        # Virtual node IDs are n_real_nodes and n_real_nodes+1; since _add_virtual_exit
+        # does not append to node_coords, n_real_nodes is the same for every pair and
+        # the virtual nodes would otherwise accumulate zero-weight edges to all
+        # boundary exits seen so far, corrupting Dijkstra for later pairs.
+        for vn in (n_real_nodes, n_real_nodes + 1):
+            if G.has_node(vn):
+                G.remove_node(vn)
+
     return routes, used_indices
