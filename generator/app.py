@@ -1384,7 +1384,7 @@ def load_project():
         "bounds": bounds,
         "report": _loaded_report,
         "has_coverage": _loaded_coverage is not None,
-        "has_elevation": _elevation_path is not None,
+        "has_elevation": _elevation_path is not None and os.path.isfile(_elevation_path),
         "project_status": project_status,
         "routes": [
             dict(r, features=_p2p_all_route_features.get(r["route_id"], []))
