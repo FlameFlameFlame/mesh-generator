@@ -156,6 +156,9 @@ def update_site(idx):
         store.update_priority(idx, data["priority"])
     if "fetch_city" in data:
         site.fetch_city = bool(data["fetch_city"])
+        if not site.fetch_city:
+            site.boundary_geojson = None
+            site.boundary_name = ""
     logger.info("Updated site %d: name=%s priority=%d", idx, site.name, site.priority)
     return jsonify(store.to_list())
 

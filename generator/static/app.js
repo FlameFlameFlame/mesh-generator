@@ -7,6 +7,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 let sites = [];
 let siteMarkers = [];
+let siteCityLayers = {};  // site index -> L.Layer (city boundary polygon)
 let selectedIdx = -1;
 let addMode = false;
 
@@ -233,7 +234,7 @@ function refresh() {
   sites.forEach((s, i) => {
     let m = L.circleMarker([s.lat, s.lon], {
       radius: 9, color: '#333', weight: 2, fillColor: COLORS[s.priority] || 'gray', fillOpacity: 0.9
-    }).addTo(map).bindTooltip(s.name, {permanent: false});
+    }).addTo(map).bindTooltip(s.name, {permanent: true, direction: 'right', offset: [10, 0], className: 'site-label'});
     m.on('click', () => selectSite(i));
     siteMarkers.push(m);
   });
@@ -296,7 +297,15 @@ function toggleFetchCity(idx, value) {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({fetch_city: value})
-  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
+  }).then(safeJson).then(data => {
+    sites = data;
+    _hasRoads = false;
+    if (!value && siteCityLayers[idx]) {
+      layerGroups.cities.removeLayer(siteCityLayers[idx]);
+      delete siteCityLayers[idx];
+    }
+    refresh();
+  });
 }
 
 function safeJson(r) {
@@ -319,12 +328,13 @@ function doDetectCity() {
         setStatus('Detected city: ' + data.name);
         info.textContent = 'City: ' + data.name;
         info.style.display = 'block';
-        // Render boundary on map
+        // Render boundary on map, track by site index so it can be removed
         if (data.geometry) {
-          L.geoJSON(data.geometry, {
+          if (siteCityLayers[selectedIdx]) layerGroups.cities.removeLayer(siteCityLayers[selectedIdx]);
+          siteCityLayers[selectedIdx] = L.geoJSON(data.geometry, {
             style: { color: '#8800aa', weight: 2, dashArray: '6 4',
                      fillColor: '#cc88ff', fillOpacity: 0.1 }
-          }).addTo(layerGroups.cities);
+          }).bindTooltip(data.name).addTo(layerGroups.cities);
         }
         // Update site list display
         if (sites[selectedIdx]) sites[selectedIdx].boundary_name = data.name;
@@ -433,13 +443,15 @@ function doFetchRoads() {
       label.textContent = (data.road_count || 0) + ' roads loaded';
       renderLayers(data.layers || {});
       (data.city_boundaries || []).forEach(function(cb) {
+        let idx = sites.findIndex(function(s) { return s.name === cb.name; });
         if (cb.geometry) {
-          L.geoJSON(cb.geometry, {
+          if (idx >= 0 && siteCityLayers[idx]) layerGroups.cities.removeLayer(siteCityLayers[idx]);
+          let layer = L.geoJSON(cb.geometry, {
             style: { color: '#8800aa', weight: 2, dashArray: '6 4',
                      fillColor: '#cc88ff', fillOpacity: 0.1 }
           }).bindTooltip(cb.boundary_name || cb.name).addTo(layerGroups.cities);
+          if (idx >= 0) siteCityLayers[idx] = layer;
         }
-        let idx = sites.findIndex(function(s) { return s.name === cb.name; });
         if (idx >= 0 && cb.boundary_name) sites[idx].boundary_name = cb.boundary_name;
       });
       _hasRoads = true;
@@ -964,16 +976,20 @@ function renderLayers(layers) {
       style: { color: '#888', weight: 2, dashArray: '6 4', fillColor: '#ccc', fillOpacity: 0.1 }
     }).addTo(layerGroups.boundary);
   }
-  // City boundaries
+  // City boundaries — render per-feature so we can track by site index
   layerGroups.cities.clearLayers();
+  siteCityLayers = {};
   if (layers.city_boundaries) {
-    L.geoJSON(layers.city_boundaries, {
-      style: { color: '#9944cc', weight: 2, dashArray: '6 3', fillColor: '#cc88ff', fillOpacity: 0.1 },
-      onEachFeature: function(feature, layer) {
-        let name = (feature.properties || {}).name || (feature.properties || {}).boundary_name || '';
-        if (name) layer.bindTooltip(name);
-      }
-    }).addTo(layerGroups.cities);
+    (layers.city_boundaries.features || []).forEach(function(feat) {
+      let name = (feat.properties || {}).name || (feat.properties || {}).boundary_name || '';
+      let siteIdx = sites.findIndex(function(s) { return s.name === name; });
+      let layer = L.geoJSON(feat, {
+        style: { color: '#9944cc', weight: 2, dashArray: '6 3', fillColor: '#cc88ff', fillOpacity: 0.1 }
+      });
+      if (name) layer.bindTooltip(name);
+      layer.addTo(layerGroups.cities);
+      if (siteIdx >= 0) siteCityLayers[siteIdx] = layer;
+    });
   }
   // Visibility edges
   layerGroups.edges.clearLayers();
