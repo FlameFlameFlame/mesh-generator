@@ -896,8 +896,8 @@ function _loadProjectFromPath(configPath) {
 function applyProjectStatus(ps, loadData) {
   ps = ps || {};
   loadData = loadData || {};
-  if (ps.has_roads) _hasRoads = true;
-  if (ps.has_routes) _hasRoutes = true;
+  if (ps.has_roads || (loadData.layers && loadData.layers.roads)) _hasRoads = true;
+  if (ps.has_routes || (loadData.routes && loadData.routes.length)) _hasRoutes = true;
   if (ps.has_elevation || loadData.has_elevation) {
     _hasElevation = true;
     hasElevation = true;
