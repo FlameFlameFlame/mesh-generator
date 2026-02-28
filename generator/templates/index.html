@@ -103,10 +103,14 @@
       <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Radial Coverage</label>
       <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
         <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
+          <option value="tower_id">Color by tower</option>
           <option value="received_power_dbm">Received power (dBm)</option>
           <option value="path_loss_db">Path loss (dB)</option>
           <option value="distance_m">Distance to tower (m)</option>
           <option value="elevation">Elevation (m)</option>
+        </select>
+        <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
+          <option value="all">All towers</option>
         </select>
       </div>
       <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>

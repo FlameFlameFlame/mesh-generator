@@ -1082,6 +1082,24 @@ function toggleCoverage() {
   }
 }
 
+function _populateTowerFilter() {
+  let sel = document.getElementById('tower-coverage-filter');
+  if (!sel || !towerCoverageData) return;
+  let ids = new Set();
+  (towerCoverageData.features || []).forEach(function(f) {
+    let tid = (f.properties || {}).closest_tower_id;
+    if (tid != null) ids.add(tid);
+  });
+  let sorted = Array.from(ids).sort(function(a, b) { return a - b; });
+  sel.innerHTML = '<option value="all">All towers</option>';
+  sorted.forEach(function(tid) {
+    let opt = document.createElement('option');
+    opt.value = tid;
+    opt.textContent = 'Tower ' + tid;
+    sel.appendChild(opt);
+  });
+}
+
 function toggleTowerCoverage() {
   let chk = document.getElementById('chk-tower-coverage');
   let metricRow = document.getElementById('tower-coverage-metric-row');
@@ -1094,6 +1112,7 @@ function toggleTowerCoverage() {
         .then(r => { if (!r.ok) throw new Error('No tower coverage'); return r.json(); })
         .then(data => {
           towerCoverageData = data;
+          _populateTowerFilter();
           renderTowerCoverage();
           layerGroups.towerCoverage.addTo(map);
           setStatus('Tower coverage loaded: ' + (data.features || []).length + ' cells');
@@ -1104,6 +1123,7 @@ function toggleTowerCoverage() {
           towerCoverageFetched = false;
         });
     } else if (towerCoverageData) {
+      _populateTowerFilter();
       renderTowerCoverage();
       layerGroups.towerCoverage.addTo(map);
     }
@@ -1113,11 +1133,55 @@ function toggleTowerCoverage() {
   }
 }
 
+// Distinct colors for up to 12 towers (cycles if more)
+const TOWER_COLORS = [
+  '#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4',
+  '#f032e6','#bfef45','#fabed4','#469990','#dcbeff','#9a6324',
+];
+
 function renderTowerCoverage() {
   if (!towerCoverageData) return;
   layerGroups.towerCoverage.clearLayers();
   let metric = document.getElementById('tower-coverage-metric').value;
-  let features = towerCoverageData.features || [];
+  let filterSel = document.getElementById('tower-coverage-filter');
+  let filterTid = filterSel ? filterSel.value : 'all';
+
+  let allFeatures = towerCoverageData.features || [];
+  let features = (filterTid === 'all')
+    ? allFeatures
+    : allFeatures.filter(function(f) {
+        return String((f.properties || {}).closest_tower_id) === String(filterTid);
+      });
+
+  if (metric === 'tower_id') {
+    // Build ordered tower ID list for consistent color assignment
+    let towerIds = [];
+    allFeatures.forEach(function(f) {
+      let tid = (f.properties || {}).closest_tower_id;
+      if (tid != null && towerIds.indexOf(tid) === -1) towerIds.push(tid);
+    });
+    towerIds.sort(function(a, b) { return a - b; });
+    L.geoJSON({type: 'FeatureCollection', features: features}, {
+      style: function(feature) {
+        let tid = (feature.properties || {}).closest_tower_id;
+        let idx = towerIds.indexOf(tid);
+        let color = TOWER_COLORS[idx % TOWER_COLORS.length];
+        return { fillColor: color, fillOpacity: 0.55, color: '#222', weight: 0.2 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties;
+        let tid = p.closest_tower_id != null ? p.closest_tower_id : 'N/A';
+        let lines = [
+          'Tower ID: ' + tid,
+          'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
+          'Distance: ' + (p.distance_m != null ? (p.distance_m / 1000).toFixed(2) + ' km' : 'N/A'),
+        ];
+        layer.bindTooltip(lines.join('<br>'), {sticky: true});
+      }
+    }).addTo(layerGroups.towerCoverage);
+    return;
+  }
+
   let vals = features.map(f => f.properties[metric]).filter(v => v != null && isFinite(v));
   if (vals.length === 0) return;
   let mn = Math.min(...vals);
@@ -1125,7 +1189,7 @@ function renderTowerCoverage() {
   let range = mx - mn || 1;
   // For received_power: higher = better (green), for path_loss/distance: lower = better (invert)
   let invert = (metric === 'path_loss_db' || metric === 'distance_m');
-  L.geoJSON(towerCoverageData, {
+  L.geoJSON({type: 'FeatureCollection', features: features}, {
     style: function(feature) {
       let v = feature.properties[metric];
       let t = (v != null && isFinite(v)) ? (v - mn) / range : 0;
@@ -1135,12 +1199,12 @@ function renderTowerCoverage() {
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
       let lines = [
+        'Tower ID: ' + (p.closest_tower_id != null ? p.closest_tower_id : 'N/A'),
         'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
         'Path loss: ' + (p.path_loss_db != null ? p.path_loss_db.toFixed(1) + ' dB' : 'N/A'),
         'Distance: ' + (p.distance_m != null ? (p.distance_m / 1000).toFixed(2) + ' km' : 'N/A'),
         'Elevation: ' + (p.elevation != null ? p.elevation.toFixed(0) + ' m' : 'N/A'),
         'Covered: ' + (p.is_covered ? 'yes' : 'no'),
-        'Tower ID: ' + (p.closest_tower_id != null ? p.closest_tower_id : 'N/A'),
       ];
       layer.bindTooltip(lines.join('<br>'), {sticky: true});
     }
