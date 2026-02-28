@@ -1430,13 +1430,12 @@ def pick_file():
 
     try:
         if platform.system() == "Darwin":
-            # macOS: use AppleScript with choose folder — avoids tkinter threading issues
-            # and allows selecting optimizer output directories directly.
-            # Note: choose file with of type causes crashes on some macOS versions.
+            # macOS: use AppleScript choose folder.
+            # Do NOT use "tell application X to activate" — that brings focus to
+            # the calling process (Python) which crashes Flask on some macOS versions.
             script = (
-                'tell application "System Events" to activate\n'
-                'set f to POSIX path of (choose folder with prompt'
-                ' "Select project directory (must contain config.yaml)")'
+                'set f to POSIX path of '
+                '(choose folder with prompt "Select project directory (must contain config.yaml)")'
             )
             result = subprocess.run(
                 ["/usr/bin/osascript", "-e", script],
