@@ -18,8 +18,6 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
                     connections: L.layerGroup().addTo(map),
-                    coverageCircles: L.layerGroup(),
-
                     coverage: L.layerGroup(),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup() };
@@ -391,8 +389,6 @@ function doClear() {
       document.getElementById('chk-tower-coverage').checked = false;
       document.getElementById('tower-coverage-metric-row').style.display = 'none';
       _cachedTowersGeojson = null;
-      document.getElementById('chk-coveragecircles').checked = false;
-      document.getElementById('coverage-circles-row').style.display = 'none';
       wayIdToColor = {};
       _allRoutes = [];
       _forcedWaypoints = {};
@@ -968,7 +964,6 @@ function renderLayers(layers) {
   } else {
     document.getElementById('tower-legend').style.display = 'none';
   }
-  if (document.getElementById('chk-coveragecircles').checked) renderCoverageCircles();
   // Boundary
   layerGroups.boundary.clearLayers();
   if (layers.boundary) {
@@ -1150,38 +1145,6 @@ function renderTowerCoverage() {
       layer.bindTooltip(lines.join('<br>'), {sticky: true});
     }
   }).addTo(layerGroups.towerCoverage);
-}
-
-function toggleCoverageCircles() {
-  let chk = document.getElementById('chk-coveragecircles');
-  let row = document.getElementById('coverage-circles-row');
-  if (chk.checked) {
-    row.style.display = 'block';
-    renderCoverageCircles();
-    layerGroups.coverageCircles.addTo(map);
-  } else {
-    row.style.display = 'none';
-    map.removeLayer(layerGroups.coverageCircles);
-  }
-}
-
-function renderCoverageCircles() {
-  layerGroups.coverageCircles.clearLayers();
-  if (!_cachedTowersGeojson) return;
-  let radius = parseFloat(document.getElementById('coverage-radius').value) || 5000;
-  (_cachedTowersGeojson.features || []).forEach(function(feat) {
-    if (!feat.geometry || feat.geometry.type !== 'Point') return;
-    let coords = feat.geometry.coordinates;  // [lon, lat]
-    let tid = feat.properties ? (feat.properties.tower_id || '') : '';
-    L.circle([coords[1], coords[0]], {
-      radius: radius,
-      color: '#2266cc',
-      weight: 1,
-      fillColor: '#4488ff',
-      fillOpacity: 0.08,
-      interactive: false,
-    }).addTo(layerGroups.coverageCircles);
-  });
 }
 
 function renderCoverage() {
