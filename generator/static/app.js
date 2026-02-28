@@ -296,7 +296,7 @@ function toggleFetchCity(idx, value) {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({fetch_city: value})
-  }).then(safeJson).then(data => { sites = data; refresh(); });
+  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
 }
 
 function safeJson(r) {

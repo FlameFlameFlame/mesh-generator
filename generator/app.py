@@ -1276,6 +1276,8 @@ def load_project():
                 lat=coords[1],
                 lon=coords[0],
                 priority=props.get("priority", 1),
+                fetch_city=props.get("fetch_city", True),
+                boundary_name=props.get("boundary_name", ""),
             )
             store.add(site)
             _counter += 1
