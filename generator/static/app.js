@@ -575,6 +575,27 @@ function selectRoute(pairKey, routeId) {
     }
   });
   applyRouteSelection();
+  _refreshProfileIfVisible(pairKey);
+}
+
+function _refreshProfileIfVisible(changedPairKey) {
+  let panel = document.getElementById('path-profile-panel');
+  if (!panel || panel.style.display === 'none') return;
+  if (!_hasElevation) return;
+  let sel = document.getElementById('profile-route');
+  if (!sel || !sel.value) return;
+  // Find which pair the currently-displayed route belongs to
+  let curRouteId = sel.value;
+  let route = (_allRoutes || []).find(function(r) { return r.route_id === curRouteId; });
+  if (!route) return;
+  let pairKey = route.site1.name + '\u2194' + route.site2.name;
+  // Only refresh if the changed pair is the one currently shown (or no specific pair given)
+  if (changedPairKey && pairKey !== changedPairKey) return;
+  let activeId = _activeRoutePerPair[pairKey];
+  if (activeId && activeId !== curRouteId) {
+    sel.value = activeId;
+  }
+  doPathProfile();
 }
 
 function applyRouteSelection() {
@@ -698,6 +719,7 @@ function _rerouteWithWaypoints(pairKey) {
     });
     renderRouteList(_allRoutes);
     setStatus('Re-routed ' + pairKey + ' via ' + wayIds.length + ' forced segment(s)');
+    _refreshProfileIfVisible(pairKey);
   }).catch(function(err) {
     setStatus('Re-route error: ' + err);
   });
@@ -741,13 +763,21 @@ function doLoadProject() {
   setStatus('Opening file picker...');
   fetch('/api/pick-file', {method: 'POST'})
     .then(safeJson).then(function(res) {
-      if (!res.path) { setStatus(''); return; }
-      _loadProjectFromPath(res.path);
+      if (res.path) {
+        _loadProjectFromPath(res.path);
+      } else if (res.error) {
+        // Picker unavailable — fall back to manual path input
+        setStatus('');
+        let configPath = prompt('Path to config.yaml:');
+        if (configPath) _loadProjectFromPath(configPath);
+      } else {
+        // User cancelled the dialog
+        setStatus('');
+      }
     }).catch(function() {
-      // Fallback to prompt if tkinter unavailable
-      let configPath = prompt('Path to config.yaml (or directory containing it):');
-      if (!configPath) return;
-      _loadProjectFromPath(configPath);
+      setStatus('');
+      let configPath = prompt('Path to config.yaml:');
+      if (configPath) _loadProjectFromPath(configPath);
     });
 }
 
