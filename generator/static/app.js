@@ -454,6 +454,7 @@ function doFetchRoads() {
 
 function doDownloadData() {
   if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
+  if (_hasRoads && _hasElevation) { setStatus('Roads and elevation already downloaded.'); return; }
   let btn = document.getElementById('btn-download');
   btn.disabled = true;
   let roadsStep = _hasRoads
