@@ -342,10 +342,19 @@ function doExport() {
   let dir = document.getElementById('output-dir').value.trim();
   if (!dir) { alert('Enter an output directory'); return; }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
+  let forcedWaypointsSerial = {};
+  Object.keys(_forcedWaypoints).forEach(function(k) {
+    forcedWaypointsSerial[k] = Array.from(_forcedWaypoints[k]);
+  });
   fetch('/api/export', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({output_dir: dir, max_towers_per_route: maxTowers})
+    body: JSON.stringify({
+      output_dir: dir,
+      max_towers_per_route: maxTowers,
+      active_routes: _activeRoutePerPair,
+      forced_waypoints: forcedWaypointsSerial,
+    })
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
     setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
@@ -759,6 +768,19 @@ function doFetchElevation() {
 
 // --- Project load & layer visualization ---
 
+/** Restore routes, active route selection, and forced waypoints from a load/restore response. */
+function _applyLoadedRoutes(data) {
+  if (!data.routes || !data.routes.length) return;
+  _allRoutes = data.routes;
+  _activeRoutePerPair = data.active_routes || {};
+  _forcedWaypoints = {};
+  let fw = data.forced_waypoints || {};
+  Object.keys(fw).forEach(function(k) {
+    _forcedWaypoints[k] = new Set(fw[k]);
+  });
+  renderRouteList(_allRoutes);
+}
+
 function doLoadProject() {
   setStatus('Opening file picker...');
   fetch('/api/pick-file', {method: 'POST'})
@@ -800,6 +822,7 @@ function _loadProjectFromPath(configPath) {
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     if (data.report) showReport(data.report);
     applyProjectStatus(data.project_status, data);
+    _applyLoadedRoutes(data);
     saveProjectState(data.config_path || configPath);
     _saveToHistory(data.config_path || configPath);
     setStatus('Loaded project: ' + (data.config_path || ''));
@@ -1703,6 +1726,10 @@ function saveProjectState(projectPath) {
   try {
     let existing = {};
     try { existing = JSON.parse(localStorage.getItem(_STATE_KEY) || '{}'); } catch(e) {}
+    let forcedWaypointsSerial = {};
+    Object.keys(_forcedWaypoints).forEach(function(k) {
+      forcedWaypointsSerial[k] = Array.from(_forcedWaypoints[k]);
+    });
     let state = Object.assign(existing, {
       projectPath: projectPath || existing.projectPath || null,
       hasRoads: _hasRoads,
@@ -1711,6 +1738,8 @@ function saveProjectState(projectPath) {
       outputDir: document.getElementById('output-dir').value,
       bbox: _bboxBounds,
       settings: getSettings(),
+      activeRoutes: _activeRoutePerPair,
+      forcedWaypoints: forcedWaypointsSerial,
     });
     localStorage.setItem(_STATE_KEY, JSON.stringify(state));
   } catch(e) { /* localStorage may be unavailable */ }
@@ -1848,6 +1877,7 @@ function restoreProjectState() {
       if (state.hasRoutes) ps.has_routes = true;
       if (state.hasElevation) ps.has_elevation = true;
       applyProjectStatus(ps, data);
+      _applyLoadedRoutes(data);
       setStatus('Project restored: ' + (data.config_path || state.projectPath));
       if (data.bounds) map.fitBounds(data.bounds);
     }).catch(function(e) {
