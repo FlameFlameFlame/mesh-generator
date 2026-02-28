@@ -829,6 +829,11 @@ function doFetchElevation() {
 function _applyLoadedRoutes(data) {
   if (!data.routes || !data.routes.length) return;
   _allRoutes = data.routes;
+  // Populate features map so routes can be drawn on the map
+  _allRouteFeaturesMap = {};
+  _allRoutes.forEach(function(r) {
+    _allRouteFeaturesMap[r.route_id] = r.features || [];
+  });
   _activeRoutePerPair = data.active_routes || {};
   _forcedWaypoints = {};
   let fw = data.forced_waypoints || {};

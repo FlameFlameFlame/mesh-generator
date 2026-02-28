@@ -1385,7 +1385,10 @@ def load_project():
         "has_coverage": _loaded_coverage is not None,
         "has_elevation": _elevation_path is not None,
         "project_status": project_status,
-        "routes": list(_p2p_routes),
+        "routes": [
+            dict(r, features=_p2p_all_route_features.get(r["route_id"], []))
+            for r in _p2p_routes
+        ],
         "active_routes": project_status.get("active_routes", {}),
         "forced_waypoints": project_status.get("forced_waypoints", {}),
     })
