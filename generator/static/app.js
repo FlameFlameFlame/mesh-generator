@@ -49,7 +49,8 @@ let _routeIdToPairKey = {};     // route_id -> pair_key (for map click)
 let _allRouteFeaturesMap = {};  // route_id -> [feature, ...] (for map rendering)
 let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
 let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
-let _sharedWayIds = new Set();  // way_ids used by 2+ active routes (for shared-road style)
+let _sharedWayIds = new Set();   // way_ids used by 2+ active routes (for shared-road style)
+let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by multiple routes
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
 let _hasRoutes = false;
@@ -616,19 +617,22 @@ function _refreshProfileIfVisible(changedPairKey) {
 function applyRouteSelection() {
   let activeIds = new Set(Object.values(_activeRoutePerPair));
   wayIdToColor = {};
-  // Count how many active routes use each way_id to detect shared segments
-  let wayIdCount = {};
+  // For each way_id, collect the list of colors from active routes that use it
+  let wayIdColors = {};  // wid -> [color, color, ...]
   (_allRoutes || []).forEach(function(r) {
     if (!activeIds.has(r.route_id)) return;
     let c = PAIR_COLORS[r.pair_idx % PAIR_COLORS.length];
     (r.way_ids || []).forEach(function(wid) {
       wayIdToColor[wid] = c;
-      wayIdCount[wid] = (wayIdCount[wid] || 0) + 1;
+      if (!wayIdColors[wid]) wayIdColors[wid] = [];
+      if (wayIdColors[wid].indexOf(c) === -1) wayIdColors[wid].push(c);
     });
   });
+  // _sharedWayIds maps wid -> [color, color, ...] for segments shared by 2+ routes
   _sharedWayIds = new Set(
-    Object.keys(wayIdCount).filter(function(w) { return wayIdCount[w] > 1; }).map(Number)
+    Object.keys(wayIdColors).filter(function(w) { return wayIdColors[w].length > 1; }).map(Number)
   );
+  _wayIdSharedColors = wayIdColors;  // store for use in renderAllRoutesOnMap
 
   renderAllRoutesOnMap(activeIds);
 
@@ -644,52 +648,86 @@ function applyRouteSelection() {
   }).catch(function(err) { alert('Error: ' + err); });
 }
 
+// Dash patterns for parallel shared-route stripes (one per route sharing a segment)
+const SHARED_DASH_PATTERNS = [
+  null,           // first route: solid
+  '1 8',          // second route: dots
+  '10 5 1 5',     // third route: dash-dot
+  '14 4',         // fourth route: long dash
+];
+
+function _addRouteLayer(feat, wid, style, pairKey) {
+  let layer = L.geoJSON(feat, {style: style});
+  layer.on('click', function(e) {
+    L.DomEvent.stopPropagation(e);
+    let rid = _wayIdToRouteId[wid];
+    if (!rid) return;
+    let pk = pairKey || _routeIdToPairKey[rid];
+    if (!pk) return;
+    if (!_forcedWaypoints[pk]) _forcedWaypoints[pk] = new Set();
+    if (_forcedWaypoints[pk].has(wid)) {
+      _forcedWaypoints[pk].delete(wid);
+    } else {
+      _forcedWaypoints[pk].add(wid);
+    }
+    _rebuildPinnedSet();
+    _rerouteWithWaypoints(pk);
+  });
+  layer.addTo(layerGroups.roads);
+}
+
 function renderAllRoutesOnMap(activeIds) {
   layerGroups.roads.clearLayers();
   if (!_allRoutes || !_allRoutes.length) { renderRoads(); return; }
 
+  // Track which shared wids have already been fully rendered (all stripes)
+  let seenShared = new Set();
+  // Track non-shared wids to avoid duplicate rendering
   let seen = new Set();
+
   _allRoutes.forEach(function(r) {
     let isActive = activeIds.has(r.route_id);
     let feats = _allRouteFeaturesMap[r.route_id] || [];
     feats.forEach(function(feat) {
       let wid = (feat.properties || {}).osm_way_id;
       let key = wid != null ? wid : JSON.stringify(feat.geometry);
-      // Allow shared active segments to be rendered once with the shared style
+      let isPinned = _pinnedWayIds.has(wid);
       let isShared = isActive && _sharedWayIds.has(wid);
+
+      if (isPinned) {
+        if (seen.has(key)) return;
+        seen.add(key);
+        _addRouteLayer(feat, wid, {color: '#f5a623', weight: 5, opacity: 1.0}, null);
+        return;
+      }
+
+      if (isShared) {
+        // Render all stripe layers the first time we see this shared wid
+        if (seenShared.has(key)) return;
+        seenShared.add(key);
+        seen.add(key);
+        let colors = (_wayIdSharedColors[wid] || [wayIdToColor[wid] || '#2266aa']);
+        // Base layer: wide white outline for separation
+        _addRouteLayer(feat, wid,
+          {color: '#fff', weight: colors.length * 4 + 2, opacity: 0.7}, null);
+        // One stripe per route color
+        colors.forEach(function(c, i) {
+          let dash = SHARED_DASH_PATTERNS[i] || SHARED_DASH_PATTERNS[SHARED_DASH_PATTERNS.length - 1];
+          let style = {color: c, weight: 4, opacity: 1.0};
+          if (dash) style.dashArray = dash;
+          _addRouteLayer(feat, wid, style, _routeIdToPairKey[_wayIdToRouteId[wid]]);
+        });
+        return;
+      }
+
       if (seen.has(key)) return;
       seen.add(key);
-      let isPinned = _pinnedWayIds.has(wid);
-      let color, weight, opacity, extraStyle;
-      if (isPinned) {
-        color = '#f5a623'; weight = 5; opacity = 1.0; extraStyle = {};
-      } else if (isShared) {
-        // Dashed dark line to indicate this segment is shared by multiple routes
-        color = '#444'; weight = 4; opacity = 0.9; extraStyle = {dashArray: '10 5'};
-      } else if (isActive) {
-        color = wayIdToColor[wid] || '#2266aa'; weight = 3; opacity = 0.9; extraStyle = {};
+      if (isActive) {
+        _addRouteLayer(feat, wid,
+          {color: wayIdToColor[wid] || '#2266aa', weight: 3, opacity: 0.9}, null);
       } else {
-        color = '#999'; weight = 1.5; opacity = 0.35; extraStyle = {};
+        _addRouteLayer(feat, wid, {color: '#999', weight: 1.5, opacity: 0.35}, null);
       }
-      let layer = L.geoJSON(feat, {style: Object.assign({color, weight, opacity}, extraStyle)});
-      layer.on('click', function(e) {
-        L.DomEvent.stopPropagation(e);
-        // Find pair_key from whichever active route covers this segment
-        let rid = _wayIdToRouteId[wid];
-        if (!rid) return;
-        let pk = _routeIdToPairKey[rid];
-        if (!pk) return;
-        // Toggle waypoint
-        if (!_forcedWaypoints[pk]) _forcedWaypoints[pk] = new Set();
-        if (_forcedWaypoints[pk].has(wid)) {
-          _forcedWaypoints[pk].delete(wid);
-        } else {
-          _forcedWaypoints[pk].add(wid);
-        }
-        _rebuildPinnedSet();
-        _rerouteWithWaypoints(pk);
-      });
-      layer.addTo(layerGroups.roads);
     });
   });
 
