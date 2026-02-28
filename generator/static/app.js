@@ -222,7 +222,7 @@ function addSite(name, lat, lon, priority) {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, lat, lon, priority})
-  }).then(safeJson).then(data => { sites = data; refresh(); });
+  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
 }
 
 function refresh() {
@@ -280,13 +280,13 @@ function doUpdate() {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, priority})
-  }).then(safeJson).then(data => { sites = data; refresh(); });
+  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
 }
 
 function doDelete() {
   if (selectedIdx < 0) return;
   fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
-    .then(safeJson).then(data => { sites = data; selectedIdx = -1; refresh(); });
+    .then(safeJson).then(data => { sites = data; selectedIdx = -1; _hasRoads = false; refresh(); });
 }
 
 function toggleFetchCity(idx, value) {
@@ -601,9 +601,7 @@ function _refreshProfileIfVisible(changedPairKey) {
   // Only refresh if the changed pair is the one currently shown (or no specific pair given)
   if (changedPairKey && pairKey !== changedPairKey) return;
   let activeId = _activeRoutePerPair[pairKey];
-  if (activeId && activeId !== curRouteId) {
-    sel.value = activeId;
-  }
+  if (activeId) sel.value = activeId;
   doPathProfile();
 }
 
@@ -790,7 +788,7 @@ function doLoadProject() {
       } else if (res.error) {
         // Picker unavailable — fall back to manual path input
         setStatus('');
-        let configPath = prompt('Path to config.yaml:');
+        let configPath = prompt('Path to project directory or config.yaml:\n(e.g. /path/to/my-project or /path/to/my-project/config.yaml)');
         if (configPath) _loadProjectFromPath(configPath);
       } else {
         // User cancelled the dialog
