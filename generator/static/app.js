@@ -836,6 +836,7 @@ function _applyLoadedRoutes(data) {
     _forcedWaypoints[k] = new Set(fw[k]);
   });
   renderRouteList(_allRoutes);
+  applyRouteSelection();
 }
 
 function doLoadProject() {
