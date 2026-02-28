@@ -1430,11 +1430,13 @@ def pick_file():
 
     try:
         if platform.system() == "Darwin":
-            # macOS: use AppleScript — avoids tkinter threading issues on macOS
+            # macOS: use AppleScript with choose folder — avoids tkinter threading issues
+            # and allows selecting optimizer output directories directly.
+            # Note: choose file with of type causes crashes on some macOS versions.
             script = (
                 'tell application "System Events" to activate\n'
-                'set f to POSIX path of (choose file with prompt "Open project config"'
-                ' of type {"yaml", "yml", "public.yaml"})'
+                'set f to POSIX path of (choose folder with prompt'
+                ' "Select project directory (must contain config.yaml)")'
             )
             result = subprocess.run(
                 ["/usr/bin/osascript", "-e", script],
