@@ -454,15 +454,11 @@ function doFetchRoads() {
 
 function doDownloadData() {
   if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
-  if (_hasRoads && _hasElevation) { setStatus('Roads and elevation already downloaded.'); return; }
   let btn = document.getElementById('btn-download');
   btn.disabled = true;
-  let roadsStep = _hasRoads
-    ? Promise.resolve()
-    : (btn.textContent = 'Downloading Roads\u2026', doFetchRoads());
-  roadsStep
+  btn.textContent = 'Downloading Roads\u2026';
+  doFetchRoads()
     .then(function() {
-      if (_hasElevation) return;
       btn.textContent = 'Downloading Elevation\u2026';
       return doFetchElevation();
     })
