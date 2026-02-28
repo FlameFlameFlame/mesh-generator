@@ -3,7 +3,9 @@
 import json
 import logging
 import os
+import queue
 import sys
+import threading
 import webbrowser
 
 # Ensure mesh_calculator (sibling package) and its dependencies are importable
@@ -33,7 +35,7 @@ def _ensure_mesh_calc_importable():
 _ensure_mesh_calc_importable()
 
 import yaml
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, Response, jsonify, render_template, request
 
 from generator.models import SiteModel, SiteStore
 from generator.export import (
@@ -52,6 +54,45 @@ def _get_cache_dir(output_dir: str | None = None) -> str:
     if output_dir:
         return os.path.join(os.path.abspath(output_dir), "cache")
     return os.path.expanduser("~/.cache/lora-mesh")
+
+
+def _write_status_json(output_dir: str, **kwargs) -> None:
+    """Incrementally update status.json in output_dir with given key-value pairs."""
+    if not output_dir:
+        return
+    output_dir = os.path.abspath(output_dir)
+    if not os.path.isdir(output_dir):
+        return
+    path = os.path.join(output_dir, "status.json")
+    try:
+        existing = {}
+        if os.path.isfile(path):
+            with open(path) as f:
+                existing = json.load(f)
+        existing.update(kwargs)
+        with open(path, "w") as f:
+            json.dump(existing, f, indent=2)
+    except Exception:
+        logger.debug("Failed to write status.json to %s", output_dir, exc_info=True)
+
+
+# SSE log queue for streaming optimization output to browser
+_opt_log_queue = queue.Queue()
+_opt_result = {}  # stores final optimization result for the stream endpoint
+_opt_running = False
+
+
+class _QueueLogHandler(logging.Handler):
+    """Forward log records to the SSE queue when optimization is running."""
+    def emit(self, record):
+        if _opt_running:
+            _opt_log_queue.put(self.format(record))
+
+
+# Attach queue handler to mesh_calculator logger at module load time
+_queue_handler = _QueueLogHandler()
+_queue_handler.setFormatter(logging.Formatter("%(name)s: %(message)s"))
+logging.getLogger("mesh_calculator").addHandler(_queue_handler)
 
 
 app = Flask(__name__)
@@ -269,6 +310,7 @@ def download_elevation():
         from generator.elevation import _tiles_for_bbox
         tile_count = len(_tiles_for_bbox(south, west, north, east))
         logger.info("Downloaded elevation: %d tiles, %.1f MB -> %s", tile_count, size_mb, path)
+        _write_status_json(output_dir_for_cache or "", has_elevation=True)
         return jsonify({
             "tiles": tile_count,
             "size_mb": round(size_mb, 1),
@@ -609,13 +651,14 @@ def generate():
         if s.boundary_geojson is not None
     ]
 
+    _write_status_json(payload.get("output_dir", ""), has_roads=True)
+
     return jsonify({
         "road_count": len(roads.get("features", [])),
         "layers": layers,
         "bounds": bounds,
         "city_boundaries": city_boundaries,
     })
-
 
 
 @app.route("/api/roads/filter-p2p", methods=["POST"])
@@ -900,20 +943,10 @@ def _rebuild_roads_geojson():
 def run_optimization():
     """
     Run the mesh_calculator route pipeline on the currently selected routes.
-
-    Body (JSON, all optional):
-        max_towers_per_route: int  (default 8)
-        parameters: dict           (MeshConfig overrides, e.g. h3_resolution, mast_height_m)
-
-    Returns JSON:
-        { towers: GeoJSON FeatureCollection,
-          edges:  GeoJSON FeatureCollection,
-          coverage: GeoJSON FeatureCollection,
-          summary: { total_towers, visibility_edges, total_cells, ... } }
-
-    mesh_calculator must be importable (install it in the same venv).
-    Elevation must have been downloaded first.
+    Launches the pipeline in a background thread and returns immediately.
+    Results are streamed via /api/optimization-stream (SSE).
     """
+    global _opt_running, _opt_result
     try:
         from mesh_calculator.core.config import MeshConfig, RouteSpec
         from mesh_calculator.optimization.route_pipeline import run_route_pipeline
@@ -924,6 +957,9 @@ def run_optimization():
                 f"Install it with: cd mesh_calculator && poetry install  ({exc})"
             )
         }), 500
+
+    if _opt_running:
+        return jsonify({"error": "Optimization already running."}), 409
 
     if not _p2p_routes:
         return jsonify({"error": "No routes found. Run Filter P2P first."}), 400
@@ -943,7 +979,6 @@ def run_optimization():
     # Build RouteSpec list from currently selected routes + their features
     route_specs = []
     for r in _p2p_routes:
-        # Only include routes whose features are in the currently selected roads
         feats = _p2p_all_route_features.get(r["route_id"], [])
         if not feats:
             continue
@@ -971,61 +1006,79 @@ def run_optimization():
     import tempfile
     tmp_dir = tempfile.mkdtemp(prefix="mesh_opt_")
 
-    try:
-        logger.info(
-            "run_optimization: %d routes, max_towers=%d, output=%s",
-            len(route_specs), max_towers, tmp_dir,
-        )
-        summary = run_route_pipeline(
-            routes=route_specs,
-            mesh_config=mesh_config,
-            elevation_path=_elevation_path,
-            city_boundaries_geojson=city_boundaries_geojson,
-            output_dir=tmp_dir,
-        )
+    # Drain any stale messages from previous runs
+    while not _opt_log_queue.empty():
+        try:
+            _opt_log_queue.get_nowait()
+        except queue.Empty:
+            break
 
-        # Load and return the output GeoJSON files
-        import json as _json
-        result = {"summary": summary}
-        for key, fname in [("towers", "towers.geojson"),
-                           ("edges", "visibility_edges.geojson"),
-                           ("coverage", "coverage.geojson"),
-                           ("tower_coverage", "tower_coverage.geojson")]:
-            fpath = os.path.join(tmp_dir, fname)
-            if os.path.isfile(fpath):
-                with open(fpath) as f:
-                    result[key] = _json.load(f)
-                _loaded_layers[key] = result[key]
+    _opt_result = {}
 
-        logger.info(
-            "run_optimization complete: %d towers, %d edges",
-            summary.get("total_towers", 0), summary.get("visibility_edges", 0),
-        )
+    def _run_pipeline():
+        global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _loaded_tower_coverage
+        _opt_running = True
+        try:
+            logger.info(
+                "run_optimization: %d routes, max_towers=%d, output=%s",
+                len(route_specs), max_towers, tmp_dir,
+            )
+            summary = run_route_pipeline(
+                routes=route_specs,
+                mesh_config=mesh_config,
+                elevation_path=_elevation_path,
+                city_boundaries_geojson=city_boundaries_geojson,
+                output_dir=tmp_dir,
+            )
 
-        # Persist results to project output_dir if provided
-        if output_dir:
-            import shutil
-            os.makedirs(output_dir, exist_ok=True)
-            for fname in ["towers.geojson", "visibility_edges.geojson",
-                          "coverage.geojson", "tower_coverage.geojson", "report.json"]:
-                src = os.path.join(tmp_dir, fname)
-                if os.path.isfile(src):
-                    shutil.copy2(src, os.path.join(output_dir, fname))
-            # Update status.json to reflect optimization is done
-            status_path = os.path.join(output_dir, "status.json")
-            if os.path.isfile(status_path):
-                with open(status_path) as f:
-                    status = _json.load(f)
-                status["has_optimization"] = True
-                with open(status_path, "w") as f:
-                    _json.dump(status, f, indent=2)
-            logger.info("Saved optimization results to %s", output_dir)
+            # Load output GeoJSON files
+            result = {"summary": summary}
+            for key, fname in [("towers", "towers.geojson"),
+                               ("edges", "visibility_edges.geojson"),
+                               ("coverage", "coverage.geojson"),
+                               ("tower_coverage", "tower_coverage.geojson")]:
+                fpath = os.path.join(tmp_dir, fname)
+                if os.path.isfile(fpath):
+                    with open(fpath) as f:
+                        result[key] = json.load(f)
+                    _loaded_layers[key] = result[key]
 
-        return jsonify(result)
+            logger.info(
+                "run_optimization complete: %d towers, %d edges",
+                summary.get("total_towers", 0), summary.get("visibility_edges", 0),
+            )
 
-    except Exception as exc:
-        logger.exception("run_optimization failed")
-        return jsonify({"error": str(exc)}), 500
+            # Persist results to project output_dir if provided
+            if output_dir:
+                import shutil
+                os.makedirs(output_dir, exist_ok=True)
+                for fname in ["towers.geojson", "visibility_edges.geojson",
+                              "coverage.geojson", "tower_coverage.geojson", "report.json"]:
+                    src = os.path.join(tmp_dir, fname)
+                    if os.path.isfile(src):
+                        shutil.copy2(src, os.path.join(output_dir, fname))
+                _write_status_json(output_dir, has_optimization=True)
+                logger.info("Saved optimization results to %s", output_dir)
+
+            _opt_result = result
+            _opt_log_queue.put({"done": True, "summary": summary})
+
+        except Exception as exc:
+            logger.exception("run_optimization failed")
+            _opt_log_queue.put({"error": str(exc)})
+        finally:
+            _opt_running = False
+
+    threading.Thread(target=_run_pipeline, daemon=True).start()
+    return jsonify({"started": True})
+
+
+@app.route("/api/optimization-result", methods=["GET"])
+def get_optimization_result():
+    """Return the result from the last completed optimization run."""
+    if not _opt_result:
+        return jsonify({"error": "No optimization result available."}), 404
+    return jsonify(_opt_result)
 
 
 @app.route("/api/export", methods=["POST"])
@@ -1316,6 +1369,49 @@ def _collect_coords(geometry, lats, lons):
                     lats.append(c[1])
 
 
+@app.route("/api/pick-file", methods=["POST"])
+def pick_file():
+    """Open a native OS file picker and return the selected path."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", 1)
+        path = filedialog.askopenfilename(
+            title="Open project config",
+            filetypes=[("YAML config", "*.yaml *.yml"), ("All files", "*")],
+        )
+        root.destroy()
+        return jsonify({"path": path or ""})
+    except Exception as e:
+        logger.warning("File picker failed (tkinter): %s", e)
+        return jsonify({"error": str(e), "path": ""})
+
+
+@app.route("/api/optimization-stream")
+def optimization_stream():
+    """SSE endpoint that streams optimization log lines to the browser."""
+    def generate():
+        while True:
+            try:
+                item = _opt_log_queue.get(timeout=30)
+            except queue.Empty:
+                yield "data: {}\n\n"  # keepalive
+                continue
+            if isinstance(item, dict):
+                yield f"data: {json.dumps(item)}\n\n"
+                if item.get("done") or item.get("error"):
+                    break
+            else:
+                yield f"data: {json.dumps({'log': item})}\n\n"
+    return Response(
+        generate(),
+        mimetype="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 def main():
     logging.basicConfig(
         level=logging.INFO,
@@ -1323,7 +1419,7 @@ def main():
     )
     logger.info("Starting Mesh Site Generator at http://127.0.0.1:5050")
     webbrowser.open("http://127.0.0.1:5050")
-    app.run(host="127.0.0.1", port=5050, debug=False)
+    app.run(host="127.0.0.1", port=5050, debug=False, threaded=True)
 
 
 if __name__ == "__main__":
