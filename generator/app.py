@@ -1199,8 +1199,11 @@ def export():
     if _elevation_path and os.path.isfile(_elevation_path):
         import shutil
         elevation_dest = os.path.join(output_dir, "elevation.tif")
-        shutil.copy2(_elevation_path, elevation_dest)
-        logger.info("Copied elevation to %s", elevation_dest)
+        if os.path.abspath(_elevation_path) != os.path.abspath(elevation_dest):
+            shutil.copy2(_elevation_path, elevation_dest)
+            logger.info("Copied elevation to %s", elevation_dest)
+        else:
+            logger.info("Elevation already at destination, skipping copy")
 
     # Export city boundaries if any site has one
     if any(s.boundary_geojson for s in sites):
