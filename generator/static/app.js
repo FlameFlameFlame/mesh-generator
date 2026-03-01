@@ -18,6 +18,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     edges: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
                     connections: L.layerGroup().addTo(map),
+                    gridCells: L.layerGroup(),
                     coverage: L.layerGroup(),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup() };
@@ -389,6 +390,9 @@ function doClear() {
       coverageFetched = false;
       towerCoverageData = null;
       towerCoverageFetched = false;
+      layerGroups.gridCells.clearLayers();
+      map.removeLayer(layerGroups.gridCells);
+      document.getElementById('chk-grid-cells').checked = false;
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       document.getElementById('chk-tower-coverage').checked = false;
@@ -991,6 +995,28 @@ function renderLayers(layers) {
       if (siteIdx >= 0) siteCityLayers[siteIdx] = layer;
     });
   }
+  // Grid cells (road buffer)
+  layerGroups.gridCells.clearLayers();
+  if (layers.grid_cells) {
+    L.geoJSON(layers.grid_cells, {
+      style: function(feature) {
+        let p = feature.properties || {};
+        let fill = p.is_in_unfit_area ? '#cc4444' : '#4488ff';
+        return { color: fill, weight: 0.5, opacity: 0.6, fillColor: fill, fillOpacity: 0.25 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties || {};
+        layer.bindTooltip(
+          'Elev: ' + (p.elevation != null ? p.elevation.toFixed(0) : '?') + ' m' +
+          (p.is_in_unfit_area ? '<br><i>unfit (city interior)</i>' : ''),
+          {sticky: true}
+        );
+      }
+    }).addTo(layerGroups.gridCells);
+    if (document.getElementById('chk-grid-cells').checked) {
+      layerGroups.gridCells.addTo(map);
+    }
+  }
   // Visibility edges
   layerGroups.edges.clearLayers();
   if (layers.edges) {
@@ -1051,6 +1077,14 @@ function showReport(report) {
     table.appendChild(tr);
   });
   document.getElementById('report-panel').style.display = 'block';
+}
+
+// --- Grid cells layer ---
+
+function toggleGridCells() {
+  let chk = document.getElementById('chk-grid-cells');
+  if (chk.checked) layerGroups.gridCells.addTo(map);
+  else map.removeLayer(layerGroups.gridCells);
 }
 
 // --- Coverage hexagons (lazy loaded) ---
