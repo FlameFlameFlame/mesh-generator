@@ -362,6 +362,7 @@ function doExport() {
     body: JSON.stringify({
       output_dir: dir,
       max_towers_per_route: maxTowers,
+      parameters: getSettings(),
       active_routes: _activeRoutePerPair,
       forced_waypoints: forcedWaypointsSerial,
     })
@@ -1334,11 +1335,13 @@ function getSettings() {
   return {
     h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
     frequency_hz: freqMhz * 1e6,
-    mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 2.0,
+    mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 28,
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
     antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
     receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
     max_towers_per_route: parseInt(document.getElementById('opt-max-towers').value) || 10,
+    road_buffer_m: parseFloat(document.getElementById('set-road-buffer-m').value) || 0,
+    max_coverage_radius_m: parseFloat(document.getElementById('set-coverage-radius-m').value) || 15000,
   };
 }
 
@@ -1351,6 +1354,8 @@ function applySettings(s) {
   if (s.antenna_gain_dbi != null) document.getElementById('set-antenna-gain').value = s.antenna_gain_dbi;
   if (s.receiver_sensitivity_dbm != null) document.getElementById('set-rx-sensitivity').value = s.receiver_sensitivity_dbm;
   if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
+  if (s.road_buffer_m != null) document.getElementById('set-road-buffer-m').value = s.road_buffer_m;
+  if (s.max_coverage_radius_m != null) document.getElementById('set-coverage-radius-m').value = s.max_coverage_radius_m;
 }
 
 function doSaveSettings() {
