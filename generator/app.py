@@ -1075,7 +1075,7 @@ def run_optimization():
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(output_dir, fname))
                 # Write full project state so the directory can be reopened
-                _save_project_to_dir(output_dir)
+                _save_project_to_dir(output_dir, parameters=param_overrides)
                 logger.info("Saved optimization results to %s", output_dir)
 
             _opt_result = result
@@ -1218,10 +1218,12 @@ def export():
         forced_waypoints=forced_waypoints,
     )
 
+    config_path = os.path.join(output_dir, "config.yaml")
     logger.info("Exported %d sites to %s", len(sites), output_dir)
     return jsonify({
         "count": len(sites),
         "output_dir": output_dir,
+        "config_path": config_path,
     })
 
 

@@ -369,6 +369,10 @@ function doExport() {
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
     setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
+    if (data.config_path) {
+      saveProjectState(data.config_path);
+      _saveToHistory(data.config_path);
+    }
   });
 }
 
