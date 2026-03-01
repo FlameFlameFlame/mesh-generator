@@ -89,8 +89,8 @@ def export_city_boundaries_geojson(
                 "type": "Feature",
                 "geometry": site.boundary_geojson,
                 "properties": {
-                    "site_name": site.name,
-                    "city_name": site.boundary_name,
+                    "name": site.name,
+                    "boundary_name": site.boundary_name,
                 },
             })
 
@@ -117,7 +117,7 @@ def export_config_yaml(
     defaults = {
         "h3_resolution": 8,
         "frequency_hz": 868000000.0,
-        "mast_height_m": 2.0,
+        "mast_height_m": 28.0,
         "tx_power_mw": 500.0,
         "antenna_gain_dbi": 2.0,
         "receiver_sensitivity_dbm": -137.0,
