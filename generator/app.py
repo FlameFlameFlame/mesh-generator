@@ -513,6 +513,89 @@ def path_profile():
     })
 
 
+@app.route("/api/link-analysis", methods=["POST"])
+def link_analysis():
+    """Return terrain profile along a straight line between two tower endpoints.
+
+    Accepts: source_lat, source_lon, target_lat, target_lon, clearance_m,
+             source_label, target_label, mast_height_m (all from the edge properties).
+    Returns: points [{dist_m, elevation_m, lat, lon}], tower1/tower2 info,
+             distance_m, clearance_m.
+    """
+    import math
+
+    if not _elevation_path or not os.path.isfile(_elevation_path):
+        return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+
+    body = request.json or {}
+    lat1 = body.get("source_lat")
+    lon1 = body.get("source_lon")
+    lat2 = body.get("target_lat")
+    lon2 = body.get("target_lon")
+    if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
+        return jsonify({"error": "source_lat/lon and target_lat/lon required"}), 400
+
+    clearance_m = body.get("clearance_m")
+    mast_height_m = body.get("mast_height_m", 28)
+    label1 = body.get("source_label", "Tower A")
+    label2 = body.get("target_label", "Tower B")
+
+    try:
+        from mesh_calculator.core.elevation import ElevationProvider
+        elev_provider = ElevationProvider(_elevation_path)
+    except Exception as e:
+        return jsonify({"error": f"Could not open elevation data: {e}"}), 500
+
+    def _hav(a_lat, a_lon, b_lat, b_lon):
+        R = 6371000.0
+        phi1, phi2 = math.radians(a_lat), math.radians(b_lat)
+        dphi = math.radians(b_lat - a_lat)
+        dlam = math.radians(b_lon - a_lon)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
+        return 2 * R * math.asin(math.sqrt(a))
+
+    total_dist_m = _hav(lat1, lon1, lat2, lon2)
+    sample_interval = 100.0
+    n_samples = max(2, int(total_dist_m / sample_interval))
+
+    points = []
+    for i in range(n_samples + 1):
+        frac = i / n_samples
+        lat = lat1 + frac * (lat2 - lat1)
+        lon = lon1 + frac * (lon2 - lon1)
+        elev = elev_provider.get_elevation(lat, lon)
+        points.append({
+            "dist_m": round(frac * total_dist_m, 1),
+            "elevation_m": round(elev, 1),
+            "lat": round(lat, 6),
+            "lon": round(lon, 6),
+        })
+
+    elev1 = elev_provider.get_elevation(lat1, lon1)
+    elev2 = elev_provider.get_elevation(lat2, lon2)
+
+    return jsonify({
+        "distance_m": round(total_dist_m, 1),
+        "clearance_m": clearance_m,
+        "mast_height_m": mast_height_m,
+        "points": points,
+        "tower1": {
+            "label": label1,
+            "lat": round(lat1, 6),
+            "lon": round(lon1, 6),
+            "dist_m": 0,
+            "elevation_m": round(elev1, 1),
+        },
+        "tower2": {
+            "label": label2,
+            "lat": round(lat2, 6),
+            "lon": round(lon2, 6),
+            "dist_m": round(total_dist_m, 1),
+            "elevation_m": round(elev2, 1),
+        },
+    })
+
+
 @app.route("/api/generate", methods=["POST"])
 def generate():
     """Compute boundary from sites, fetch roads from OSM, return layers for visualization."""

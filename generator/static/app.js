@@ -1020,27 +1020,48 @@ function renderLayers(layers) {
   // Visibility edges
   layerGroups.edges.clearLayers();
   if (layers.edges) {
-    L.geoJSON(layers.edges, {
-      style: function(feature) {
-        let d = feature.properties.distance_m || 0;
-        return { color: edgeColor(d), weight: 2, opacity: 0.7 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties;
-        let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(1) : '?';
-        let loss = p.path_loss_db ? p.path_loss_db.toFixed(1) : 'N/A';
-        let clr = p.clearance_m != null ? p.clearance_m.toFixed(1) : 'N/A';
-        layer.bindTooltip(
-          '<b>Link ' + p.source_id + ' &#8596; ' + p.target_id + '</b><br>' +
-          'Distance: ' + distKm + ' km<br>' +
-          'Path loss: ' + loss + ' dB<br>' +
-          'Clearance: ' + clr + ' m',
-          {sticky: true}
-        );
-      }
-    }).addTo(layerGroups.edges);
+    _renderEdgeLayer(layers.edges);
     document.getElementById('chk-edges').checked = true;
   }
+}
+
+/** Render a visibility_edges GeoJSON FeatureCollection into layerGroups.edges.
+ *  Labels links with site names (derived from nearest site to each endpoint).
+ *  Clicking a link opens the link-analysis terrain profile panel. */
+function _renderEdgeLayer(edgesGeojson) {
+  L.geoJSON(edgesGeojson, {
+    style: function(feature) {
+      let d = feature.properties.distance_m || 0;
+      return { color: edgeColor(d), weight: 2.5, opacity: 0.8 };
+    },
+    onEachFeature: function(feature, layer) {
+      let p = feature.properties;
+      let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(2) : '?';
+      let loss = p.path_loss_db != null ? p.path_loss_db.toFixed(1) : 'N/A';
+      let clr  = p.clearance_m  != null ? p.clearance_m.toFixed(1)  : 'N/A';
+
+      // Build human-readable label from nearest site names
+      let lbl1 = p.source_lat != null
+        ? _towerLabel(p.source_lat, p.source_lon, p.source_id)
+        : ('Tower ' + p.source_id);
+      let lbl2 = p.target_lat != null
+        ? _towerLabel(p.target_lat, p.target_lon, p.target_id)
+        : ('Tower ' + p.target_id);
+
+      layer.bindTooltip(
+        '<b>' + lbl1 + ' \u2194 ' + lbl2 + '</b><br>' +
+        'Distance: ' + distKm + ' km<br>' +
+        'Path loss: ' + loss + ' dB<br>' +
+        'Clearance: ' + clr + ' m<br>' +
+        '<span style="color:#888;font-size:0.9em">Click to analyze</span>',
+        {sticky: true}
+      );
+
+      layer.on('click', function() {
+        doLinkAnalysis(p);
+      });
+    }
+  }).addTo(layerGroups.edges);
 }
 
 function showTowerLegend(sourceCounts) {
@@ -1457,25 +1478,7 @@ function _renderOptimizationResult(res) {
 
   layerGroups.edges.clearLayers();
   if (res.edges) {
-    L.geoJSON(res.edges, {
-      style: function(feature) {
-        let d = feature.properties.distance_m || 0;
-        return { color: edgeColor(d), weight: 2, opacity: 0.75 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties;
-        let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(1) : '?';
-        let loss = p.path_loss_db != null ? p.path_loss_db.toFixed(1) : 'N/A';
-        let clr  = p.clearance_m  != null ? p.clearance_m.toFixed(1)  : 'N/A';
-        layer.bindTooltip(
-          '<b>Link ' + p.source_id + ' \u2194 ' + p.target_id + '</b><br>' +
-          'Distance: ' + distKm + ' km<br>' +
-          'Path loss: ' + loss + ' dB<br>' +
-          'Clearance: ' + clr + ' m',
-          {sticky: true}
-        );
-      }
-    }).addTo(layerGroups.edges);
+    _renderEdgeLayer(res.edges);
     document.getElementById('chk-edges').checked = true;
   }
 
@@ -1873,6 +1876,280 @@ function _drawPathProfile(data) {
       ctx.stroke();
     });
   }
+}
+
+// --- Link Analysis ---
+
+let _linkAnalysisHoverMarker = null;
+
+function closeLinkAnalysis() {
+  document.getElementById('link-analysis-panel').style.display = 'none';
+  let canvas = document.getElementById('link-analysis-canvas');
+  if (canvas) { canvas.onmousemove = null; canvas.onmouseleave = null; }
+  if (_linkAnalysisHoverMarker) { map.removeLayer(_linkAnalysisHoverMarker); _linkAnalysisHoverMarker = null; }
+}
+
+/** Build a label for a tower endpoint: nearest site name if within 2 km, else "Tower N". */
+function _towerLabel(lat, lon, towerId) {
+  let bestName = null, bestDist = Infinity;
+  (sites || []).forEach(function(s) {
+    let d = _haversine(lat, lon, s.lat, s.lon);
+    if (d < bestDist) { bestDist = d; bestName = s.name; }
+  });
+  if (bestDist < 2000 && bestName) return bestName;
+  return 'Tower ' + towerId;
+}
+
+function doLinkAnalysis(edgeProps) {
+  if (!edgeProps.source_lat || !edgeProps.target_lat) {
+    alert('Edge data missing coordinates. Re-run optimization to update.');
+    return;
+  }
+  let mastEl = document.getElementById('set-mast-height');
+  let mastH = mastEl ? (parseFloat(mastEl.value) || 28) : 28;
+
+  let label1 = _towerLabel(edgeProps.source_lat, edgeProps.source_lon, edgeProps.source_id);
+  let label2 = _towerLabel(edgeProps.target_lat, edgeProps.target_lon, edgeProps.target_id);
+
+  fetch('/api/link-analysis', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      source_lat: edgeProps.source_lat,
+      source_lon: edgeProps.source_lon,
+      target_lat: edgeProps.target_lat,
+      target_lon: edgeProps.target_lon,
+      clearance_m: edgeProps.clearance_m,
+      mast_height_m: mastH,
+      source_label: label1,
+      target_label: label2,
+    })
+  }).then(safeJson).then(function(data) {
+    if (data.error) { alert('Link analysis error: ' + data.error); return; }
+    _showLinkAnalysis(data);
+  }).catch(function(e) { alert('Error: ' + e); });
+}
+
+function _showLinkAnalysis(data) {
+  let panel = document.getElementById('link-analysis-panel');
+  let title = document.getElementById('link-analysis-title');
+  let meta  = document.getElementById('link-analysis-meta');
+
+  title.textContent = data.tower1.label + ' ↔ ' + data.tower2.label;
+
+  let distKm = (data.distance_m / 1000).toFixed(2);
+  let clr = data.clearance_m != null ? data.clearance_m.toFixed(1) + ' m' : 'N/A';
+  meta.textContent = 'Distance: ' + distKm + ' km  |  Fresnel clearance: ' + clr;
+
+  // Close path profile if open to avoid overlap
+  document.getElementById('path-profile-panel').style.display = 'none';
+  panel.style.display = '';
+
+  _drawLinkAnalysis(data);
+  _attachLinkAnalysisHover(data);
+}
+
+function _drawLinkAnalysis(data) {
+  let canvas = document.getElementById('link-analysis-canvas');
+  canvas.width = canvas.offsetWidth || 560;
+  let ctx = canvas.getContext('2d');
+  let W = canvas.width, H = canvas.height;
+  let pad = {top: 20, right: 16, bottom: 30, left: 52};
+  let cw = W - pad.left - pad.right;
+  let ch = H - pad.top - pad.bottom;
+
+  ctx.clearRect(0, 0, W, H);
+
+  let pts = data.points;
+  let mastH = data.mast_height_m || 28;
+  let elevs = pts.map(function(p) { return p.elevation_m; });
+  let e1 = data.tower1.elevation_m, e2 = data.tower2.elevation_m;
+  // Include mast tops in Y range
+  let minE = Math.min.apply(null, elevs);
+  let maxE = Math.max(Math.max.apply(null, elevs), e1 + mastH, e2 + mastH);
+  let rangeE = maxE - minE || 1;
+  let maxD = data.distance_m;
+
+  function xOf(d) { return pad.left + (d / maxD) * cw; }
+  function yOf(e) { return pad.top + ch - ((e - minE) / rangeE) * ch; }
+
+  // Axes
+  ctx.strokeStyle = '#aaa';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(pad.left, pad.top);
+  ctx.lineTo(pad.left, pad.top + ch);
+  ctx.lineTo(pad.left + cw, pad.top + ch);
+  ctx.stroke();
+
+  // Y axis labels
+  ctx.fillStyle = '#666';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'right';
+  let nTicks = 4;
+  for (let i = 0; i <= nTicks; i++) {
+    let e = minE + (rangeE * i / nTicks);
+    let y = yOf(e);
+    ctx.fillText(Math.round(e) + ' m', pad.left - 4, y + 3);
+    ctx.strokeStyle = '#eee';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(pad.left, y);
+    ctx.lineTo(pad.left + cw, y);
+    ctx.stroke();
+  }
+
+  // X axis labels
+  ctx.fillStyle = '#666';
+  ctx.font = '10px system-ui';
+  ctx.textAlign = 'center';
+  let nXTicks = Math.min(6, Math.floor(maxD / 1000));
+  for (let i = 0; i <= nXTicks; i++) {
+    let d = (i / nXTicks) * maxD;
+    let x = xOf(d);
+    ctx.fillText((d / 1000).toFixed(1), x, pad.top + ch + 14);
+  }
+  ctx.fillText('km', pad.left + cw, pad.top + ch + 26);
+
+  // Terrain fill
+  ctx.beginPath();
+  ctx.moveTo(xOf(pts[0].dist_m), yOf(pts[0].elevation_m));
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(xOf(pts[i].dist_m), yOf(pts[i].elevation_m));
+  }
+  ctx.lineTo(xOf(pts[pts.length - 1].dist_m), pad.top + ch);
+  ctx.lineTo(xOf(pts[0].dist_m), pad.top + ch);
+  ctx.closePath();
+  ctx.fillStyle = 'rgba(100,160,80,0.35)';
+  ctx.fill();
+
+  // Terrain line
+  ctx.beginPath();
+  ctx.moveTo(xOf(pts[0].dist_m), yOf(pts[0].elevation_m));
+  for (let i = 1; i < pts.length; i++) {
+    ctx.lineTo(xOf(pts[i].dist_m), yOf(pts[i].elevation_m));
+  }
+  ctx.strokeStyle = '#4a8a30';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([]);
+  ctx.stroke();
+
+  // Mast tops (antenna height line: straight LOS between antenna tops)
+  let yAnt1 = yOf(e1 + mastH);
+  let yAnt2 = yOf(e2 + mastH);
+  ctx.beginPath();
+  ctx.moveTo(xOf(0), yAnt1);
+  ctx.lineTo(xOf(maxD), yAnt2);
+  ctx.strokeStyle = 'rgba(220,60,60,0.85)';
+  ctx.lineWidth = 1.5;
+  ctx.setLineDash([6, 3]);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  // Fresnel clearance zone (shaded band below the LOS line by clearance_m at each point)
+  if (data.clearance_m != null && data.clearance_m > 0) {
+    ctx.beginPath();
+    ctx.moveTo(xOf(0), yAnt1);
+    ctx.lineTo(xOf(maxD), yAnt2);
+    // draw downward band edge
+    let nBand = 60;
+    let bandPts = [];
+    for (let i = nBand; i >= 0; i--) {
+      let frac = i / nBand;
+      let d = frac * maxD;
+      let antElev = (e1 + mastH) + frac * ((e2 + mastH) - (e1 + mastH));
+      // Fresnel radius narrows at endpoints, max at midpoint
+      let fz = data.clearance_m * Math.sin(Math.PI * frac);
+      bandPts.push([xOf(d), yOf(antElev - fz)]);
+    }
+    ctx.moveTo(xOf(0), yAnt1);
+    ctx.lineTo(xOf(maxD), yAnt2);
+    bandPts.forEach(function(p) { ctx.lineTo(p[0], p[1]); });
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(220,60,60,0.10)';
+    ctx.fill();
+  }
+
+  // Mast vertical lines at endpoints
+  function drawMast(x, groundY, topY, label) {
+    ctx.strokeStyle = '#1a5e8a';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x, groundY);
+    ctx.lineTo(x, topY);
+    ctx.stroke();
+    // Small circle at top
+    ctx.beginPath();
+    ctx.arc(x, topY, 4, 0, 2 * Math.PI);
+    ctx.fillStyle = '#e74c3c';
+    ctx.fill();
+    ctx.strokeStyle = '#900';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    // Label
+    ctx.fillStyle = '#333';
+    ctx.font = 'bold 11px system-ui';
+    ctx.textAlign = x < W / 2 ? 'left' : 'right';
+    ctx.fillText(label, x + (x < W / 2 ? 7 : -7), topY - 5);
+  }
+
+  drawMast(xOf(0),   yOf(e1), yOf(e1 + mastH), data.tower1.label);
+  drawMast(xOf(maxD), yOf(e2), yOf(e2 + mastH), data.tower2.label);
+}
+
+function _attachLinkAnalysisHover(data) {
+  let canvas = document.getElementById('link-analysis-canvas');
+  let tooltip = document.getElementById('link-analysis-tooltip');
+  if (!canvas || !tooltip) return;
+
+  let mastH = data.mast_height_m || 28;
+  let pts = data.points;
+
+  canvas.onmousemove = function(e) {
+    let rect = canvas.getBoundingClientRect();
+    let W = canvas.width;
+    let pad = {top: 20, right: 16, bottom: 30, left: 52};
+    let cw = W - pad.left - pad.right;
+    let mx = (e.clientX - rect.left) * (W / rect.width);
+    if (mx < pad.left || mx > pad.left + cw) {
+      tooltip.style.display = 'none';
+      if (_linkAnalysisHoverMarker) { map.removeLayer(_linkAnalysisHoverMarker); _linkAnalysisHoverMarker = null; }
+      return;
+    }
+    let frac = (mx - pad.left) / cw;
+    let distM = frac * data.distance_m;
+    let terrainElev = _interpolateElev(pts, distM);
+    let latlon = _interpolateLatLon(pts, distM);
+    let lat = latlon[0], lon = latlon[1];
+
+    // LOS elevation at this point (linear interpolation between antenna tops)
+    let losElev = (data.tower1.elevation_m + mastH) +
+      frac * ((data.tower2.elevation_m + mastH) - (data.tower1.elevation_m + mastH));
+    let headroom = losElev - terrainElev;
+
+    tooltip.style.display = 'block';
+    tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
+    tooltip.style.top  = (e.clientY - rect.top  - 32) + 'px';
+    tooltip.innerHTML =
+      '<b>' + (distM / 1000).toFixed(2) + ' km</b><br>' +
+      'Terrain: ' + Math.round(terrainElev) + ' m<br>' +
+      'LOS: ' + Math.round(losElev) + ' m<br>' +
+      'Headroom: ' + Math.round(headroom) + ' m';
+
+    if (_linkAnalysisHoverMarker) {
+      _linkAnalysisHoverMarker.setLatLng([lat, lon]);
+    } else {
+      _linkAnalysisHoverMarker = L.circleMarker([lat, lon], {
+        radius: 6, color: '#e74c3c', weight: 2, fillColor: '#e74c3c', fillOpacity: 0.85
+      }).addTo(map);
+    }
+  };
+
+  canvas.onmouseleave = function() {
+    tooltip.style.display = 'none';
+    if (_linkAnalysisHoverMarker) { map.removeLayer(_linkAnalysisHoverMarker); _linkAnalysisHoverMarker = null; }
+  };
 }
 
 // --- localStorage project state caching ---
