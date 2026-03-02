@@ -108,6 +108,20 @@ function edgeColor(dist_m) {
   return 'rgb(' + r + ',' + g + ',0)';
 }
 
+const LINK_TYPE_COLORS = {
+  'green':  '#22aa44',   // normal DP — confident link
+  'yellow': '#e6a000',   // gap-repair DP — widened buffer was needed
+  'red':    '#dd2222',   // endpoint/peak fallback — unreliable
+};
+
+function _algorithmBadge(alg, dpSteps, repairRound) {
+  if (!alg) return '';
+  let badge = alg;
+  if (dpSteps != null) badge += ' (steps=' + dpSteps + ')';
+  if (repairRound != null) badge += ' round=' + repairRound;
+  return '<br><span style="font-size:0.85em;color:#aaa">algo: ' + badge + '</span>';
+}
+
 function toggleAddMode() {
   addMode = !addMode;
   let btn = document.getElementById('btn-add-site');
@@ -959,12 +973,18 @@ function renderLayers(layers) {
         let src = feature.properties.source || 'unknown';
         sourceCounts[src] = (sourceCounts[src] || 0) + 1;
         let color = TOWER_COLORS[src] || '#ff0';
+        let alg = feature.properties.algorithm;
+        let borderColor = alg === 'dp_repair' ? '#e6a000'
+                        : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
+                        : '#000';
         return L.circleMarker(latlng, {
-          radius: 6, color: '#000', weight: 1, fillColor: color, fillOpacity: 0.9
+          radius: 6, color: borderColor, weight: alg === 'dp' || alg === 'site' ? 1 : 2.5,
+          fillColor: color, fillOpacity: 0.9
         }).bindTooltip(
           '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
           'Source: ' + src + '<br>' +
-          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '...',
+          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '...' +
+          _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
           {direction: 'top'}
         );
       }
@@ -1031,8 +1051,12 @@ function renderLayers(layers) {
 function _renderEdgeLayer(edgesGeojson) {
   L.geoJSON(edgesGeojson, {
     style: function(feature) {
-      let d = feature.properties.distance_m || 0;
-      return { color: edgeColor(d), weight: 2.5, opacity: 0.8 };
+      let lt = feature.properties.link_type;
+      let color = LINK_TYPE_COLORS[lt] || edgeColor(feature.properties.distance_m || 0);
+      let dashed = (lt === 'red') ? '6 4' : null;
+      let opts = { color: color, weight: 2.5, opacity: 0.85 };
+      if (dashed) opts.dashArray = dashed;
+      return opts;
     },
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
@@ -1048,11 +1072,16 @@ function _renderEdgeLayer(edgesGeojson) {
         ? _towerLabel(p.target_lat, p.target_lon, p.target_id)
         : ('Tower ' + p.target_id);
 
+      let linkBadge = p.link_type
+        ? '<br><span style="font-size:0.85em;color:#aaa">link: ' + p.link_type + '</span>'
+        : '';
+
       layer.bindTooltip(
         '<b>' + lbl1 + ' \u2194 ' + lbl2 + '</b><br>' +
         'Distance: ' + distKm + ' km<br>' +
         'Path loss: ' + loss + ' dB<br>' +
-        'Clearance: ' + clr + ' m<br>' +
+        'Clearance: ' + clr + ' m' +
+        linkBadge + '<br>' +
         '<span style="color:#888;font-size:0.9em">Click to analyze</span>',
         {sticky: true}
       );
@@ -1460,14 +1489,20 @@ function _renderOptimizationResult(res) {
         let src = feature.properties.route_id || feature.properties.source || 'route';
         sourceCounts[src] = (sourceCounts[src] || 0) + 1;
         let color = PAIR_COLORS[Object.keys(sourceCounts).indexOf(src) % PAIR_COLORS.length];
+        let alg = feature.properties.algorithm;
+        let borderColor = alg === 'dp_repair' ? '#e6a000'
+                        : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
+                        : '#000';
         let marker = L.circleMarker(latlng, {
-          radius: 7, color: '#000', weight: 1.5, fillColor: color, fillOpacity: 0.9
+          radius: 7, color: borderColor, weight: alg === 'dp' || alg === 'site' ? 1.5 : 3,
+          fillColor: color, fillOpacity: 0.9
         });
         let cityLink = feature.properties.city_link ? ' \ud83c\udfd9 City link' : '';
         marker.bindTooltip(
           '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
           'Route: ' + src + cityLink + '<br>' +
-          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026',
+          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026' +
+          _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
           {direction: 'top'}
         );
         return marker;
@@ -1745,7 +1780,14 @@ function _drawPathProfile(data) {
   let cw = W - pad.left - pad.right;
   let ch = H - pad.top - pad.bottom;
 
-  ctx.clearRect(0, 0, W, H);
+  let dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  let bgColor   = dark ? '#1a1a2e' : '#f8f8ff';
+  let axisColor = dark ? '#888'    : '#aaa';
+  let labelColor= dark ? '#ccc'    : '#666';
+  let gridColor = dark ? 'rgba(255,255,255,0.06)' : '#eee';
+
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
 
   let pts = data.points;
   let elevs = pts.map(function(p) { return p.elevation_m; });
@@ -1758,7 +1800,7 @@ function _drawPathProfile(data) {
   function yOf(elev) { return pad.top + ch - ((elev - minE) / rangeE) * ch; }
 
   // Draw axes
-  ctx.strokeStyle = '#aaa';
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad.left, pad.top);
@@ -1767,7 +1809,7 @@ function _drawPathProfile(data) {
   ctx.stroke();
 
   // Y axis labels
-  ctx.fillStyle = '#666';
+  ctx.fillStyle = labelColor;
   ctx.font = '10px system-ui';
   ctx.textAlign = 'right';
   ctx.fillText(Math.round(maxE) + ' m', pad.left - 4, pad.top + 4);
@@ -1958,7 +2000,15 @@ function _drawLinkAnalysis(data) {
   let cw = W - pad.left - pad.right;
   let ch = H - pad.top - pad.bottom;
 
-  ctx.clearRect(0, 0, W, H);
+  let dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  let bgColor    = dark ? '#1a1a2e' : '#f8f8ff';
+  let axisColor  = dark ? '#888'    : '#aaa';
+  let labelColor = dark ? '#ccc'    : '#666';
+  let gridColor  = dark ? 'rgba(255,255,255,0.06)' : '#eee';
+  let mastLabelColor = dark ? '#ddd' : '#333';
+
+  ctx.fillStyle = bgColor;
+  ctx.fillRect(0, 0, W, H);
 
   let pts = data.points;
   let mastH = data.mast_height_m || 28;
@@ -1974,7 +2024,7 @@ function _drawLinkAnalysis(data) {
   function yOf(e) { return pad.top + ch - ((e - minE) / rangeE) * ch; }
 
   // Axes
-  ctx.strokeStyle = '#aaa';
+  ctx.strokeStyle = axisColor;
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.moveTo(pad.left, pad.top);
@@ -1983,15 +2033,16 @@ function _drawLinkAnalysis(data) {
   ctx.stroke();
 
   // Y axis labels
-  ctx.fillStyle = '#666';
+  ctx.fillStyle = labelColor;
   ctx.font = '10px system-ui';
   ctx.textAlign = 'right';
   let nTicks = 4;
   for (let i = 0; i <= nTicks; i++) {
     let e = minE + (rangeE * i / nTicks);
     let y = yOf(e);
+    ctx.fillStyle = labelColor;
     ctx.fillText(Math.round(e) + ' m', pad.left - 4, y + 3);
-    ctx.strokeStyle = '#eee';
+    ctx.strokeStyle = gridColor;
     ctx.lineWidth = 0.5;
     ctx.beginPath();
     ctx.moveTo(pad.left, y);
@@ -2000,7 +2051,7 @@ function _drawLinkAnalysis(data) {
   }
 
   // X axis labels
-  ctx.fillStyle = '#666';
+  ctx.fillStyle = labelColor;
   ctx.font = '10px system-ui';
   ctx.textAlign = 'center';
   let nXTicks = Math.min(6, Math.floor(maxD / 1000));
@@ -2088,7 +2139,7 @@ function _drawLinkAnalysis(data) {
     ctx.lineWidth = 1;
     ctx.stroke();
     // Label
-    ctx.fillStyle = '#333';
+    ctx.fillStyle = mastLabelColor;
     ctx.font = 'bold 11px system-ui';
     ctx.textAlign = x < W / 2 ? 'left' : 'right';
     ctx.fillText(label, x + (x < W / 2 ? 7 : -7), topY - 5);
@@ -2128,9 +2179,15 @@ function _attachLinkAnalysisHover(data) {
       frac * ((data.tower2.elevation_m + mastH) - (data.tower1.elevation_m + mastH));
     let headroom = losElev - terrainElev;
 
+    // Position tooltip in CSS pixels relative to the canvas wrapper div
+    let cssX = e.clientX - rect.left;
+    let cssY = e.clientY - rect.top;
+    let tipLeft = cssX + 14;
+    let tipTop  = cssY - 70;
+    if (tipTop < 2) tipTop = cssY + 14;
     tooltip.style.display = 'block';
-    tooltip.style.left = (e.clientX - rect.left + 12) + 'px';
-    tooltip.style.top  = (e.clientY - rect.top  - 32) + 'px';
+    tooltip.style.left = tipLeft + 'px';
+    tooltip.style.top  = tipTop  + 'px';
     tooltip.innerHTML =
       '<b>' + (distM / 1000).toFixed(2) + ' km</b><br>' +
       'Terrain: ' + Math.round(terrainElev) + ' m<br>' +
