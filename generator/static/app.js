@@ -21,7 +21,8 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     gridCells: L.layerGroup(),
                     coverage: L.layerGroup(),
                     towerCoverage: L.layerGroup(),
-                    elevation: L.layerGroup() };
+                    elevation: L.layerGroup(),
+                    gapRepairHexes: L.layerGroup() };
 let coverageData = null;  // cached GeoJSON from /api/coverage
 let towerCoverageData = null;  // cached GeoJSON from /api/tower-coverage
 let towerCoverageFetched = false;
@@ -113,6 +114,9 @@ const LINK_TYPE_COLORS = {
   'yellow': '#e6a000',   // gap-repair DP — widened buffer was needed
   'red':    '#dd2222',   // endpoint/peak fallback — unreliable
 };
+
+// Gap repair search area colors by round (round 1 = index 0)
+const GAP_REPAIR_COLORS = ['#ff6600', '#cc00ff', '#00ccff', '#ffcc00', '#00ff88'];
 
 function _algorithmBadge(alg, dpSteps, repairRound) {
   if (!alg) return '';
@@ -407,6 +411,9 @@ function doClear() {
       layerGroups.gridCells.clearLayers();
       map.removeLayer(layerGroups.gridCells);
       document.getElementById('chk-grid-cells').checked = false;
+      layerGroups.gapRepairHexes.clearLayers();
+      map.removeLayer(layerGroups.gapRepairHexes);
+      document.getElementById('chk-gap-repair-hexes').checked = false;
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       document.getElementById('chk-tower-coverage').checked = false;
@@ -1036,6 +1043,27 @@ function renderLayers(layers) {
     if (document.getElementById('chk-grid-cells').checked) {
       layerGroups.gridCells.addTo(map);
     }
+  }
+  // Gap repair search hexagons
+  layerGroups.gapRepairHexes.clearLayers();
+  if (layers.gap_repair_hexes) {
+    L.geoJSON(layers.gap_repair_hexes, {
+      style: function(feature) {
+        let round = feature.properties.repair_round || 1;
+        let color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
+        return { color: color, weight: 1, opacity: 0.7, fillColor: color, fillOpacity: 0.2 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties;
+        layer.bindTooltip(
+          'Gap repair round ' + p.repair_round +
+          '<br>Gap idx: ' + p.gap_idx +
+          '<br>Buffer ring: ' + p.buffer_ring,
+          { sticky: true }
+        );
+      }
+    }).addTo(layerGroups.gapRepairHexes);
+    // Not shown by default; user must enable the checkbox
   }
   // Visibility edges
   layerGroups.edges.clearLayers();

@@ -1137,7 +1137,8 @@ def run_optimization():
                                ("edges", "visibility_edges.geojson"),
                                ("coverage", "coverage.geojson"),
                                ("tower_coverage", "tower_coverage.geojson"),
-                               ("grid_cells", "grid_cells.geojson")]:
+                               ("grid_cells", "grid_cells.geojson"),
+                               ("gap_repair_hexes", "gap_repair_hexes.geojson")]:
                 fpath = os.path.join(tmp_dir, fname)
                 if os.path.isfile(fpath):
                     with open(fpath) as f:
@@ -1155,7 +1156,8 @@ def run_optimization():
                 os.makedirs(output_dir, exist_ok=True)
                 for fname in ["towers.geojson", "visibility_edges.geojson",
                               "coverage.geojson", "tower_coverage.geojson",
-                              "grid_cells.geojson", "report.json"]:
+                              "grid_cells.geojson", "gap_repair_hexes.geojson",
+                              "report.json"]:
                     src = os.path.join(tmp_dir, fname)
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(output_dir, fname))
@@ -1385,6 +1387,7 @@ def load_project():
         "edges": resolve(outputs.get("visibility_edges")),
         "city_boundaries": resolve(inputs.get("city_boundaries")),
         "grid_cells": os.path.join(config_dir, "grid_cells.geojson"),
+        "gap_repair_hexes": os.path.join(config_dir, "gap_repair_hexes.geojson"),
     }
     for key, fpath in layer_files.items():
         if fpath and os.path.isfile(fpath):
