@@ -79,6 +79,7 @@
                          padding: 8px 12px; box-shadow: 0 -2px 8px rgba(0,0,0,0.15); }
   #link-analysis-header { display: flex; justify-content: space-between; align-items: center;
                            margin-bottom: 4px; }
+  #link-analysis-meta { color: #555; }
   #link-analysis-canvas { display: block; width: 100%; border: 1px solid #ddd; background: #f8f8ff; }
 
   /* Toolbar separators */
@@ -250,6 +251,7 @@
   #toolbar input { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
   #path-profile-canvas { border-color: var(--panel-border); background: var(--bg); }
   #link-analysis-panel { background: var(--sidebar-bg); }
+  #link-analysis-meta { color: var(--muted); }
   #link-analysis-canvas { border-color: var(--panel-border); background: var(--bg); }
 }
 
