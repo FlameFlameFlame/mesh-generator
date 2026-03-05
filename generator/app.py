@@ -8,6 +8,7 @@ import sys
 import threading
 import webbrowser
 
+import h3
 # Ensure mesh_calculator (sibling package) and its dependencies are importable
 # regardless of how this app is launched (e.g. outside the poetry venv).
 # Find the poetry venv that has mesh_calculator installed (contains a .pth file
@@ -114,7 +115,7 @@ _roads_geojson = None  # stored roads from Generate or Load
 _full_roads_geojson = None  # full downloaded roads (never filtered by P2P)
 _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
-_loaded_tower_coverage = None  # tower_coverage.geojson dict (lazy-served)
+_runtime_tower_coverage = None  # runtime-only tower coverage FeatureCollection
 _elevation_path = None  # path to downloaded elevation GeoTIFF
 _p2p_routes = []             # list of route dicts from find_p2p_roads
 _p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
@@ -208,7 +209,7 @@ def detect_city_boundary(idx):
 def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _full_roads_geojson, _loaded_layers, _loaded_report
-    global _loaded_coverage, _loaded_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
+    global _loaded_coverage, _runtime_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
     global _p2p_display_features, _forced_waypoints
     store._sites.clear()
     _counter = 0
@@ -217,7 +218,7 @@ def clear_project():
     _loaded_layers = {}
     _loaded_report = None
     _loaded_coverage = None
-    _loaded_tower_coverage = None
+    _runtime_tower_coverage = None
     _p2p_routes = []
     _p2p_all_route_features = {}
     _p2p_display_features = {}
@@ -235,7 +236,7 @@ def clear_project():
 @app.route("/api/clear-calculations", methods=["POST"])
 def clear_calculations():
     """Delete mesh_calculator output files from disk and reset server-side layer state."""
-    global _loaded_layers, _loaded_report, _loaded_coverage, _loaded_tower_coverage
+    global _loaded_layers, _loaded_report, _loaded_coverage, _runtime_tower_coverage
     data = request.json or {}
     output_dir = os.path.abspath(data.get("output_dir", "output"))
     files_to_delete = [
@@ -253,7 +254,7 @@ def clear_calculations():
     _loaded_layers.pop("coverage", None)
     _loaded_report = None
     _loaded_coverage = None
-    _loaded_tower_coverage = None
+    _runtime_tower_coverage = None
     logger.info("Cleared %d calculation file(s) from %s", deleted, output_dir)
     return jsonify({"deleted": deleted, "output_dir": output_dir})
 
@@ -268,10 +269,141 @@ def get_coverage():
 
 @app.route("/api/tower-coverage", methods=["GET"])
 def get_tower_coverage():
-    """Serve cached tower radial coverage GeoJSON (lazy-loaded by frontend on toggle)."""
-    if _loaded_tower_coverage is None:
-        return jsonify({"error": "No tower coverage data loaded"}), 404
-    return jsonify(_loaded_tower_coverage)
+    """Serve last runtime tower coverage GeoJSON."""
+    if _runtime_tower_coverage is None:
+        return jsonify({"error": "No tower coverage data calculated"}), 404
+    return jsonify(_runtime_tower_coverage)
+
+
+def _coverage_results_to_geojson(results: list[dict]) -> dict:
+    features = []
+    for rec in results:
+        boundary = h3.cell_to_boundary(rec["h3_index"])
+        coords = [[lon, lat] for lat, lon in boundary]
+        coords.append(coords[0])
+        props = {k: v for k, v in rec.items() if k not in ("lat", "lon")}
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+            "properties": props,
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _parse_coverage_sources(payload: list, mesh_config) -> list:
+    from mesh_calculator.network.tower_coverage import CoverageSource
+
+    sources = []
+    for idx, raw in enumerate(payload):
+        if not isinstance(raw, dict):
+            raise ValueError("Each source must be an object")
+
+        source_id = raw.get("source_id")
+        h3_index = raw.get("h3_index")
+        lat = raw.get("lat")
+        lon = raw.get("lon")
+
+        if h3_index is None:
+            if lat is None or lon is None:
+                raise ValueError("Each source requires h3_index or lat/lon")
+            h3_index = h3.latlng_to_cell(float(lat), float(lon), mesh_config.h3_resolution)
+
+        if lat is None or lon is None:
+            lat, lon = h3.cell_to_latlng(h3_index)
+        else:
+            lat = float(lat)
+            lon = float(lon)
+
+        if source_id is None:
+            source_id = raw.get("tower_id")
+        if source_id is None:
+            source_id = f"source_{idx}"
+
+        sources.append(CoverageSource(
+            source_id=source_id,
+            h3_index=h3_index,
+            lat=lat,
+            lon=lon,
+        ))
+    return sources
+
+
+def _run_runtime_tower_coverage(sources_payload: list, body: dict):
+    global _runtime_tower_coverage
+
+    if not _elevation_path or not os.path.isfile(_elevation_path):
+        return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+
+    try:
+        from mesh_calculator.core.config import MeshConfig
+        from mesh_calculator.core.elevation import ElevationProvider
+        from mesh_calculator.data.cache import LOSCache
+        from mesh_calculator.network.tower_coverage import compute_h3_tower_coverage
+    except ImportError as exc:
+        return jsonify({"error": f"mesh_calculator import failed: {exc}"}), 500
+
+    params = body.get("parameters", {}) or {}
+    mesh_config = MeshConfig(**{
+        k: v for k, v in params.items()
+        if k in MeshConfig.__dataclass_fields__
+    })
+
+    try:
+        sources = _parse_coverage_sources(sources_payload, mesh_config)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    max_radius_m = body.get("max_radius_m")
+    if max_radius_m is not None:
+        try:
+            max_radius_m = float(max_radius_m)
+        except (TypeError, ValueError):
+            return jsonify({"error": "max_radius_m must be numeric"}), 400
+
+    elev_provider = ElevationProvider(_elevation_path)
+    try:
+        los_cache = LOSCache()
+        results = compute_h3_tower_coverage(
+            sources=sources,
+            base_cells={},
+            config=mesh_config,
+            elevation_provider=elev_provider,
+            los_cache=los_cache,
+            max_radius_m=max_radius_m,
+        )
+    finally:
+        elev_provider.close()
+
+    geojson = _coverage_results_to_geojson(results)
+    _runtime_tower_coverage = geojson
+    return jsonify({
+        "coverage": geojson,
+        "source_count": len(sources),
+        "feature_count": len(geojson.get("features", [])),
+        "h3_resolution": mesh_config.h3_resolution,
+        "max_radius_m": max_radius_m if max_radius_m is not None else mesh_config.max_coverage_radius_m,
+    })
+
+
+@app.route("/api/tower-coverage/calculate", methods=["POST"])
+def calculate_tower_coverage_single():
+    body = request.json or {}
+    source = body.get("source")
+    sources = body.get("sources")
+    if source is not None and sources is None:
+        sources = [source]
+    if not isinstance(sources, list) or not sources:
+        return jsonify({"error": "Provide source or non-empty sources list"}), 400
+    return _run_runtime_tower_coverage(sources, body)
+
+
+@app.route("/api/tower-coverage/calculate-batch", methods=["POST"])
+def calculate_tower_coverage_batch():
+    body = request.json or {}
+    sources = body.get("sources")
+    if not isinstance(sources, list) or not sources:
+        return jsonify({"error": "Provide non-empty sources list"}), 400
+    return _run_runtime_tower_coverage(sources, body)
 
 
 @app.route("/api/elevation", methods=["POST"])
@@ -1123,7 +1255,7 @@ def run_optimization():
         import tempfile
         from concurrent.futures import ThreadPoolExecutor, as_completed
 
-        global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _loaded_tower_coverage
+        global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _runtime_tower_coverage
         _opt_running = True
         try:
             tmp_dir_dp = tempfile.mkdtemp(prefix="mesh_opt_dp_")
@@ -1166,7 +1298,6 @@ def run_optimization():
                 ("towers", "towers.geojson"),
                 ("edges", "visibility_edges.geojson"),
                 ("coverage", "coverage.geojson"),
-                ("tower_coverage", "tower_coverage.geojson"),
                 ("grid_cells", "grid_cells.geojson"),
                 ("gap_repair_hexes", "gap_repair_hexes.geojson"),
             ]
@@ -1203,7 +1334,7 @@ def run_optimization():
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
                 for fname in ["towers.geojson", "visibility_edges.geojson",
-                              "coverage.geojson", "tower_coverage.geojson",
+                              "coverage.geojson",
                               "grid_cells.geojson", "gap_repair_hexes.geojson",
                               "report.json"]:
                     src = os.path.join(tmp_dir_dp, fname)
@@ -1219,6 +1350,8 @@ def run_optimization():
                 # Write full project state so the directory can be reopened
                 _save_project_to_dir(output_dir, parameters=param_overrides)
                 logger.info("Saved optimization results to %s", output_dir)
+
+            _runtime_tower_coverage = None
 
             _opt_result = dual_result
             _opt_log_queue.put({"done": True, "summary": dp_summary})
@@ -1390,7 +1523,9 @@ def export():
 @app.route("/api/load", methods=["POST"])
 def load_project():
     """Load a project from a config.yaml path (or directory containing one)."""
-    global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson, _loaded_report, _loaded_coverage, _loaded_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
+    global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson
+    global _loaded_report, _loaded_coverage, _runtime_tower_coverage
+    global _elevation_path, _p2p_routes, _p2p_all_route_features
     data = request.json
     path = data.get("path", "").strip()
 
@@ -1489,14 +1624,8 @@ def load_project():
         logger.info("Loaded coverage from %s (%d features)",
                      coverage_path, len(_loaded_coverage.get("features", [])))
 
-    # Load tower radial coverage (cached for lazy serving via /api/tower-coverage)
-    _loaded_tower_coverage = None
-    tower_coverage_path = resolve(outputs.get("tower_coverage"))
-    if tower_coverage_path and os.path.isfile(tower_coverage_path):
-        with open(tower_coverage_path) as f:
-            _loaded_tower_coverage = json.load(f)
-        logger.info("Loaded tower coverage from %s (%d features)",
-                     tower_coverage_path, len(_loaded_tower_coverage.get("features", [])))
+    # Runtime tower coverage is always computed on demand (not loaded from disk)
+    _runtime_tower_coverage = None
 
     # Load elevation if available
     elevation_file = resolve(inputs.get("elevation"))
