@@ -19,3 +19,8 @@
 - 2026-03-05: Added strict-LOS disconnect guidance in optimization status when DP/Greedy returns multiple clusters and surfaced real `num_clusters` in the report panel.
 - 2026-03-05: Fixed project load parameter precedence so `config.yaml` parameters override stale `status.json` values (prevents accidental reuse of old mast height during optimization).
 - 2026-03-05: Added regression test `test_load_prefers_config_parameters_over_stale_status` in `tests/test_visualizer.py`.
+- 2026-03-06: Added runtime tower-coverage resolution override (`coverage_h3_resolution`) to single/batch APIs; backend now re-snaps sources by lat/lon at requested coverage resolution and returns applied resolution in response.
+- 2026-03-06: Added UI control for independent tower-coverage H3 resolution (initialized from planning H3 once, then persisted separately in project state/local storage).
+- 2026-03-06: Added gap/search-hex visualization filters (`algorithm`, `phase`) and renderer styling by `(algorithm, phase)` for DP/greedy/combined views.
+- 2026-03-06: Updated tower-coverage rendering/filtering to use serving source (`serving_tower_id`) first, with `closest_tower_id` fallback for backward compatibility.
+- 2026-03-06: Added API regression coverage for forwarding `coverage_h3_resolution` in runtime tower-coverage calculate requests.

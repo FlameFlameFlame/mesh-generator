@@ -77,3 +77,26 @@ def test_calculate_batch_calls_runtime_helper(monkeypatch):
         })
     assert resp.status_code == 200
     assert len(captured["sources"]) == 2
+
+
+def test_calculate_single_forwards_coverage_resolution(monkeypatch):
+    captured = {}
+
+    def _fake_run(sources, body):
+        captured["body"] = body
+        return jsonify({
+            "coverage": {"type": "FeatureCollection", "features": []},
+            "source_count": len(sources),
+            "feature_count": 0,
+            "coverage_h3_resolution": body.get("coverage_h3_resolution"),
+        })
+
+    monkeypatch.setattr(app_mod, "_run_runtime_tower_coverage", _fake_run)
+    with app.test_client() as client:
+        resp = client.post("/api/tower-coverage/calculate", json={
+            "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},
+            "parameters": {"h3_resolution": 8},
+            "coverage_h3_resolution": 10,
+        })
+    assert resp.status_code == 200
+    assert captured["body"]["coverage_h3_resolution"] == 10

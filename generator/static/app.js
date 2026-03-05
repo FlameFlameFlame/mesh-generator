@@ -32,6 +32,7 @@ let towerCoverageFetched = false;
 let _selectedTowerCoverageSource = null;  // {source_id, h3_index, lat, lon}
 let _pointCoverageMode = false;
 let _pointCoverageMarker = null;
+let _towerCoverageResolutionInitialized = false;
 let hasCoverage = false;  // server says coverage file exists
 let coverageFetched = false;
 
@@ -432,6 +433,9 @@ function doClear() {
       layerGroups.gapRepairHexes.clearLayers();
       map.removeLayer(layerGroups.gapRepairHexes);
       document.getElementById('chk-gap-repair-hexes').checked = false;
+      _cachedGapRepairGeojson = null;
+      let gapRow = document.getElementById('gap-repair-filter-row');
+      if (gapRow) gapRow.style.display = 'none';
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       document.getElementById('chk-tower-coverage').checked = false;
@@ -982,6 +986,68 @@ function renderRoads() {
 let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
 let _cachedEdgesGeojson = null;
+let _cachedGapRepairGeojson = null;
+
+function _gapRepairStyle(feature) {
+  let p = feature.properties || {};
+  let algorithm = (p.algorithm || 'dp').toLowerCase();
+  let phase = (p.phase || 'gap_repair').toLowerCase();
+  let color = '#ff6600';
+  if (algorithm === 'greedy') {
+    if (phase === 'initial') color = '#22aa66';
+    else if (phase === 'fallback_initial') color = '#117744';
+    else color = '#66cc88';
+  } else {
+    if (phase === 'initial') color = '#3b82f6';
+    else if (phase === 'fallback_initial') color = '#8b5cf6';
+    else {
+      let round = p.repair_round || 1;
+      color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
+    }
+  }
+  return { color: color, weight: 1, opacity: 0.75, fillColor: color, fillOpacity: 0.2 };
+}
+
+function _filteredGapRepairFeatures(features) {
+  let algoEl = document.getElementById('gap-repair-algo-filter');
+  let phaseEl = document.getElementById('gap-repair-phase-filter');
+  let algo = algoEl ? algoEl.value : 'all';
+  let phase = phaseEl ? phaseEl.value : 'all';
+  return (features || []).filter(function(f) {
+    let p = f.properties || {};
+    let fAlgo = (p.algorithm || 'dp').toLowerCase();
+    let fPhase = (p.phase || 'gap_repair').toLowerCase();
+    if (algo !== 'all' && fAlgo !== algo) return false;
+    if (phase !== 'all' && fPhase !== phase) return false;
+    return true;
+  });
+}
+
+function rerenderGapRepairHexes() {
+  layerGroups.gapRepairHexes.clearLayers();
+  let row = document.getElementById('gap-repair-filter-row');
+  if (!_cachedGapRepairGeojson) {
+    if (row) row.style.display = 'none';
+    return;
+  }
+  if (row) row.style.display = '';
+  let feats = _filteredGapRepairFeatures(_cachedGapRepairGeojson.features || []);
+  L.geoJSON({type: 'FeatureCollection', features: feats}, {
+    style: _gapRepairStyle,
+    onEachFeature: function(feature, layer) {
+      let p = feature.properties || {};
+      layer.bindTooltip(
+        'Algorithm: ' + (p.algorithm || 'dp') +
+        '<br>Phase: ' + (p.phase || 'gap_repair') +
+        '<br>Attempt: ' + (p.attempt_id != null ? p.attempt_id : '0') +
+        '<br>Round: ' + (p.repair_round != null ? p.repair_round : 'N/A') +
+        '<br>Radius: ' + (p.search_radius_m != null ? p.search_radius_m : 'N/A') + ' m' +
+        '<br>Ring: ' + (p.search_ring != null ? p.search_ring : (p.buffer_ring != null ? p.buffer_ring : 'N/A')),
+        { sticky: true }
+      );
+    }
+  }).addTo(layerGroups.gapRepairHexes);
+}
 
 
 
@@ -1073,24 +1139,15 @@ function renderLayers(layers) {
   }
   // Gap repair search hexagons
   layerGroups.gapRepairHexes.clearLayers();
-  if (layers.gap_repair_hexes) {
-    L.geoJSON(layers.gap_repair_hexes, {
-      style: function(feature) {
-        let round = feature.properties.repair_round || 1;
-        let color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
-        return { color: color, weight: 1, opacity: 0.7, fillColor: color, fillOpacity: 0.2 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties;
-        layer.bindTooltip(
-          'Gap repair round ' + p.repair_round +
-          '<br>Gap idx: ' + p.gap_idx +
-          '<br>Buffer ring: ' + p.buffer_ring,
-          { sticky: true }
-        );
-      }
-    }).addTo(layerGroups.gapRepairHexes);
-    // Not shown by default; user must enable the checkbox
+  _cachedGapRepairGeojson = layers.gap_repair_hexes || null;
+  if (_cachedGapRepairGeojson) {
+    rerenderGapRepairHexes();
+    if (document.getElementById('chk-gap-repair-hexes').checked) {
+      layerGroups.gapRepairHexes.addTo(map);
+    }
+  } else {
+    let row = document.getElementById('gap-repair-filter-row');
+    if (row) row.style.display = 'none';
   }
   // Visibility edges
   layerGroups.edges.clearLayers();
@@ -1288,7 +1345,7 @@ function _populateTowerFilter() {
   if (!sel || !towerCoverageData) return;
   let ids = new Set();
   (towerCoverageData.features || []).forEach(function(f) {
-    let tid = (f.properties || {}).closest_tower_id;
+    let tid = _coverageTowerId(f.properties || {});
     if (tid != null) ids.add(tid);
   });
   let sorted = Array.from(ids).sort(function(a, b) { return a - b; });
@@ -1299,6 +1356,18 @@ function _populateTowerFilter() {
     opt.textContent = 'Tower ' + tid;
     sel.appendChild(opt);
   });
+}
+
+function _coverageTowerId(props) {
+  if (!props) return null;
+  if (props.serving_tower_id != null) return props.serving_tower_id;
+  return props.closest_tower_id;
+}
+
+function getTowerCoverageResolution() {
+  let val = parseInt(document.getElementById('tower-coverage-h3-resolution').value);
+  if (!Number.isFinite(val)) return null;
+  return Math.max(6, Math.min(11, val));
 }
 
 function _setSelectedTowerCoverageSource(source) {
@@ -1374,13 +1443,17 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     towerCoverageData = data.coverage || null;
     if (!towerCoverageData) { setStatus('Tower coverage failed: empty response'); return; }
     towerCoverageFetched = true;
+    if (data.coverage_h3_resolution != null) {
+      document.getElementById('tower-coverage-h3-resolution').value = data.coverage_h3_resolution;
+    }
     _populateTowerFilter();
     renderTowerCoverage();
     document.getElementById('chk-tower-coverage').checked = true;
     document.getElementById('tower-coverage-metric-row').style.display = 'block';
     layerGroups.towerCoverage.addTo(map);
     let n = (towerCoverageData.features || []).length;
-    setStatus((successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells');
+    let resTxt = data.coverage_h3_resolution != null ? (' @ H3 ' + data.coverage_h3_resolution) : '';
+    setStatus((successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' + resTxt);
   }).catch(function(err) {
     setStatus('Tower coverage failed');
   });
@@ -1394,6 +1467,7 @@ function calculateSelectedTowerCoverage() {
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
     source: _selectedTowerCoverageSource,
     parameters: getSettings(),
+    coverage_h3_resolution: getTowerCoverageResolution(),
   }, 'Selected antenna coverage');
 }
 
@@ -1406,6 +1480,7 @@ function calculateAllShownTowerCoverage() {
   _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
     sources: sources,
     parameters: getSettings(),
+    coverage_h3_resolution: getTowerCoverageResolution(),
   }, 'Batch coverage');
 }
 
@@ -1450,6 +1525,7 @@ function calculatePointCoverage(lat, lon) {
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
     source: {source_id: 'point', lat: lat, lon: lon},
     parameters: getSettings(),
+    coverage_h3_resolution: getTowerCoverageResolution(),
   }, 'Point coverage');
 }
 
@@ -1484,6 +1560,7 @@ function toggleTowerCoverage() {
           _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
             sources: sources,
             parameters: getSettings(),
+            coverage_h3_resolution: getTowerCoverageResolution(),
           }, 'Auto batch coverage');
         });
     } else if (towerCoverageData) {
@@ -1514,27 +1591,28 @@ function renderTowerCoverage() {
   let features = (filterTid === 'all')
     ? allFeatures
     : allFeatures.filter(function(f) {
-        return String((f.properties || {}).closest_tower_id) === String(filterTid);
+        return String(_coverageTowerId(f.properties || {})) === String(filterTid);
       });
 
   if (metric === 'tower_id') {
     // Build ordered tower ID list for consistent color assignment
     let towerIds = [];
     allFeatures.forEach(function(f) {
-      let tid = (f.properties || {}).closest_tower_id;
+      let tid = _coverageTowerId(f.properties || {});
       if (tid != null && towerIds.indexOf(tid) === -1) towerIds.push(tid);
     });
     towerIds.sort(function(a, b) { return a - b; });
     L.geoJSON({type: 'FeatureCollection', features: features}, {
       style: function(feature) {
-        let tid = (feature.properties || {}).closest_tower_id;
+        let tid = _coverageTowerId(feature.properties || {});
         let idx = towerIds.indexOf(tid);
         let color = TOWER_HEX_COLORS[idx % TOWER_HEX_COLORS.length];
         return { fillColor: color, fillOpacity: 0.55, color: '#222', weight: 0.2 };
       },
       onEachFeature: function(feature, layer) {
         let p = feature.properties;
-        let tid = p.closest_tower_id != null ? p.closest_tower_id : 'N/A';
+        let tid = _coverageTowerId(p);
+        if (tid == null) tid = 'N/A';
         let lines = [
           'Tower ID: ' + tid,
           'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
@@ -1562,8 +1640,11 @@ function renderTowerCoverage() {
     },
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
+      let servingId = _coverageTowerId(p);
+      let nearestId = p.closest_tower_id;
       let lines = [
-        'Tower ID: ' + (p.closest_tower_id != null ? p.closest_tower_id : 'N/A'),
+        'Tower ID: ' + (servingId != null ? servingId : 'N/A'),
+        'Nearest: ' + (nearestId != null ? nearestId : 'N/A'),
         'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
         'Path loss: ' + (p.path_loss_db != null ? p.path_loss_db.toFixed(1) + ' dB' : 'N/A'),
         'Distance: ' + (p.distance_m != null ? (p.distance_m / 1000).toFixed(2) + ' km' : 'N/A'),
@@ -1676,8 +1757,16 @@ function showElevationLegend(minElev, maxElev) {
 
 function toggleLayer(name) {
   let chk = document.getElementById('chk-' + name);
-  if (chk.checked) layerGroups[name].addTo(map);
-  else map.removeLayer(layerGroups[name]);
+  if (chk.checked) {
+    if (name === 'gapRepairHexes') rerenderGapRepairHexes();
+    layerGroups[name].addTo(map);
+  } else {
+    map.removeLayer(layerGroups[name]);
+  }
+  if (name === 'gapRepairHexes') {
+    let row = document.getElementById('gap-repair-filter-row');
+    if (row) row.style.display = (chk.checked && _cachedGapRepairGeojson) ? '' : 'none';
+  }
 }
 
 function setStatus(msg) {
@@ -1727,6 +1816,10 @@ function applySettings(s) {
   if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
   if (s.road_buffer_m != null) document.getElementById('set-road-buffer-m').value = s.road_buffer_m;
   if (s.max_coverage_radius_m != null) document.getElementById('set-coverage-radius-m').value = s.max_coverage_radius_m;
+  if (!_towerCoverageResolutionInitialized && s.h3_resolution != null) {
+    document.getElementById('tower-coverage-h3-resolution').value = s.h3_resolution;
+    _towerCoverageResolutionInitialized = true;
+  }
 }
 
 function doSaveSettings() {
@@ -1749,6 +1842,9 @@ function doClearCalculations() {
     layerGroups.coverage.clearLayers();
     layerGroups.towerCoverage.clearLayers();
     layerGroups.gapRepairHexes.clearLayers();
+    _cachedGapRepairGeojson = null;
+    let gapRow = document.getElementById('gap-repair-filter-row');
+    if (gapRow) gapRow.style.display = 'none';
     dpLayerGroup.clearLayers();
     greedyLayerGroup.clearLayers();
     _optDualResult = null;
@@ -1831,6 +1927,16 @@ function _edgesEnabled() {
   return !chk || chk.checked;
 }
 
+function _mergeGapRepairCollections(parts) {
+  let features = [];
+  (parts || []).forEach(function(fc) {
+    if (!fc || !fc.features) return;
+    features = features.concat(fc.features);
+  });
+  if (!features.length) return null;
+  return {type: 'FeatureCollection', features: features};
+}
+
 /** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
 function _applyAlgoToggle(mode) {
   _activeAlgo = mode;
@@ -1857,6 +1963,18 @@ function _applyAlgoToggle(mode) {
   } else {
     map.removeLayer(greedyLayerGroup);
   }
+
+  if (mode === 'dp') {
+    _cachedGapRepairGeojson = (_optDualResult.dp || {}).gap_repair_hexes || null;
+  } else if (mode === 'greedy') {
+    _cachedGapRepairGeojson = (_optDualResult.greedy || {}).gap_repair_hexes || null;
+  } else {
+    _cachedGapRepairGeojson = _mergeGapRepairCollections([
+      (_optDualResult.dp || {}).gap_repair_hexes,
+      (_optDualResult.greedy || {}).gap_repair_hexes,
+    ]);
+  }
+  rerenderGapRepairHexes();
 
   showTowerLegend(allSourceCounts);
 }
@@ -1903,24 +2021,8 @@ function _renderOptimizationResult(res) {
 
   // Gap repair hexes from DP result
   layerGroups.gapRepairHexes.clearLayers();
-  if (dpData.gap_repair_hexes) {
-    L.geoJSON(dpData.gap_repair_hexes, {
-      style: function(feature) {
-        let round = feature.properties.repair_round || 1;
-        let color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
-        return { color: color, weight: 1, opacity: 0.7, fillColor: color, fillOpacity: 0.2 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties;
-        layer.bindTooltip(
-          'Gap repair round ' + p.repair_round +
-          '<br>Gap idx: ' + p.gap_idx +
-          '<br>Buffer ring: ' + p.buffer_ring,
-          { sticky: true }
-        );
-      }
-    }).addTo(layerGroups.gapRepairHexes);
-  }
+  _cachedGapRepairGeojson = dpData.gap_repair_hexes || null;
+  if (_cachedGapRepairGeojson) rerenderGapRepairHexes();
 
   // Show algo toggle and reset to DP
   let toggle = document.getElementById('algo-toggle');
@@ -2667,6 +2769,7 @@ function saveProjectState(projectPath) {
       outputDir: document.getElementById('output-dir').value,
       bbox: _bboxBounds,
       settings: getSettings(),
+      towerCoverageResolution: getTowerCoverageResolution(),
       activeRoutes: _activeRoutePerPair,
       forcedWaypoints: forcedWaypointsSerial,
     });
@@ -2743,6 +2846,13 @@ document.querySelectorAll('input[name="algo"]').forEach(function(r) {
   });
 });
 
+let _towerCoverageResInput = document.getElementById('tower-coverage-h3-resolution');
+if (_towerCoverageResInput) {
+  _towerCoverageResInput.addEventListener('change', function() {
+    _towerCoverageResolutionInitialized = true;
+  });
+}
+
 // --- Dark mode ---
 
 const _THEME_KEY = 'meshColorScheme';
@@ -2792,6 +2902,10 @@ function restoreProjectState() {
       document.getElementById('bbox-status').style.display = '';
     }
     if (state.settings) applySettings(state.settings);
+    if (state.towerCoverageResolution != null) {
+      document.getElementById('tower-coverage-h3-resolution').value = state.towerCoverageResolution;
+      _towerCoverageResolutionInitialized = true;
+    }
     setStatus('Restoring project from ' + state.projectPath + '...');
     fetch('/api/load', {
       method: 'POST',
