@@ -141,13 +141,27 @@
           <option value="distance_m">Distance to tower (m)</option>
           <option value="elevation">Elevation (m)</option>
         </select>
-        <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
-          <option value="all">All towers</option>
-        </select>
-        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
-          <button onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
-          <button onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
-          <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to calculate from a random point (requires elevation)">Point Coverage</button>
+        <label title="Choose source type for runtime coverage">
+          Coverage Source
+          <select id="tower-coverage-source-mode" onchange="onCoverageSourceModeChange()">
+            <option value="manual">Manual (map click)</option>
+            <option value="towers">Existing towers</option>
+          </select>
+        </label>
+        <div id="tower-coverage-manual-row" style="margin-top:6px;">
+          <div style="font-size:0.8em;opacity:0.9;margin-bottom:4px;">Click map to place/recalculate coverage.</div>
+          <div style="display:flex;gap:4px;flex-wrap:wrap;">
+            <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to place a temporary tower and calculate coverage">Place Tower</button>
+          </div>
+        </div>
+        <div id="tower-coverage-towers-row" style="display:none;margin-top:6px;">
+          <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
+            <option value="all">All towers</option>
+          </select>
+          <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+            <button id="btn-calc-selected-coverage" onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
+            <button id="btn-calc-all-coverage" onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
+          </div>
         </div>
       </div>
       <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>

@@ -30,7 +30,9 @@ let coverageData = null;  // cached GeoJSON from /api/coverage
 let towerCoverageData = null;  // runtime coverage GeoJSON from /api/tower-coverage
 let towerCoverageFetched = false;
 let _selectedTowerCoverageSource = null;  // {source_id, h3_index, lat, lon}
-let _pointCoverageMode = false;
+let _coverageSourceMode = 'manual';  // 'manual' | 'towers'
+let _manualCoverageModeActive = false;
+let _manualCoverageSource = null;    // {source_id, lat, lon, h3_index?}
 let _pointCoverageMarker = null;
 let _towerCoverageResolutionInitialized = false;
 let _selectedEdgeKey = null;
@@ -341,7 +343,7 @@ map.on('mouseup', function(e) {
 });
 
 map.on('click', function(e) {
-  if (_pointCoverageMode) {
+  if (_manualCoverageModeActive && _coverageSourceMode === 'manual') {
     calculatePointCoverage(e.latlng.lat, e.latlng.lng);
     return;
   }
@@ -525,6 +527,8 @@ function doClear() {
       towerCoverageData = null;
       towerCoverageFetched = false;
       _selectedTowerCoverageSource = null;
+      _manualCoverageSource = null;
+      _coverageSourceMode = 'manual';
       _resetPointCoverageMode();
       if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
       layerGroups.gridCells.clearLayers();
@@ -568,6 +572,7 @@ function doClear() {
       _hasRoutes = false;
       _hasElevation = false;
       _updateOptimizeBtn();
+      _syncCoverageFeatureUI();
       try { localStorage.removeItem(_STATE_KEY); } catch(e) {}
     });
 }
@@ -977,6 +982,7 @@ function doFetchElevation() {
       document.getElementById('chk-elevation').disabled = false;
       _hasElevation = true;
       _updateOptimizeBtn();
+      _autoCoverageModeFromCurrentState(false);
       saveProjectState(null);
     }).catch(err => {
       prog.style.display = 'none';
@@ -1042,6 +1048,7 @@ function _loadProjectFromPath(configPath) {
     towerCoverageData = null;
     towerCoverageFetched = false;
     _selectedTowerCoverageSource = null;
+    _manualCoverageSource = null;
     if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
     _resetPointCoverageMode();
     refresh();
@@ -1049,6 +1056,7 @@ function _loadProjectFromPath(configPath) {
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     if (data.report) showReport(data.report);
     applyProjectStatus(data.project_status, data);
+    _autoCoverageModeFromCurrentState(true);
     _applyLoadedRoutes(data);
     saveProjectState(data.config_path || configPath);
     _saveToHistory(data.config_path || configPath);
@@ -1073,6 +1081,7 @@ function applyProjectStatus(ps, loadData) {
     hasCoverage = loadData.has_coverage || false;
   }
   if (ps.parameters) applySettings(ps.parameters);
+  _autoCoverageModeFromCurrentState(false);
   _updateOptimizeBtn();
 }
 
@@ -1262,6 +1271,7 @@ function renderLayers(layers) {
   } else {
     _cachedEdgesGeojson = null;
   }
+  _syncCoverageFeatureUI();
 }
 
 /** Render a visibility_edges GeoJSON FeatureCollection into layerGroups.edges.
@@ -1454,6 +1464,108 @@ function toggleCoverage() {
   }
 }
 
+function _hasTowerCoverageSources() {
+  if (_optDualResult) {
+    return _visibleTowerCoverageSources().length > 0;
+  }
+  return !!(_cachedTowersGeojson && (_cachedTowersGeojson.features || []).length);
+}
+
+function _clearRuntimeTowerCoverageView() {
+  towerCoverageData = null;
+  towerCoverageFetched = false;
+  layerGroups.towerCoverage.clearLayers();
+  map.removeLayer(layerGroups.towerCoverage);
+  let chk = document.getElementById('chk-tower-coverage');
+  if (chk) chk.checked = false;
+}
+
+function _setCoverageSourceMode(mode, opts) {
+  opts = opts || {};
+  let clearRuntime = !Object.prototype.hasOwnProperty.call(opts, 'clearRuntimeCoverageOnModeChange')
+    || !!opts.clearRuntimeCoverageOnModeChange;
+  let prev = _coverageSourceMode;
+  let towersAvailable = _hasTowerCoverageSources();
+  let next = mode === 'towers' ? 'towers' : 'manual';
+  if (!_hasElevation) next = 'manual';
+  if (next === 'towers' && !towersAvailable) next = 'manual';
+  _coverageSourceMode = next;
+
+  if (prev !== _coverageSourceMode && clearRuntime) {
+    _clearRuntimeTowerCoverageView();
+  }
+  if (_coverageSourceMode !== 'manual') {
+    _resetPointCoverageMode();
+  }
+  _syncCoverageFeatureUI();
+}
+
+function onCoverageSourceModeChange() {
+  let sel = document.getElementById('tower-coverage-source-mode');
+  if (!sel) return;
+  _setCoverageSourceMode(sel.value, {clearRuntimeCoverageOnModeChange: true});
+}
+
+function _syncCoverageFeatureUI() {
+  let sourceSel = document.getElementById('tower-coverage-source-mode');
+  let manualRow = document.getElementById('tower-coverage-manual-row');
+  let towersRow = document.getElementById('tower-coverage-towers-row');
+  let metricRow = document.getElementById('tower-coverage-metric-row');
+  let chk = document.getElementById('chk-tower-coverage');
+  let manualBtn = document.getElementById('btn-point-coverage');
+  let calcSelBtn = document.getElementById('btn-calc-selected-coverage');
+  let calcAllBtn = document.getElementById('btn-calc-all-coverage');
+  if (!sourceSel || !manualRow || !towersRow || !metricRow || !chk) return;
+
+  let towersAvailable = _hasTowerCoverageSources();
+  if (!_hasElevation) {
+    _coverageSourceMode = 'manual';
+    _resetPointCoverageMode();
+    _manualCoverageSource = null;
+    if (_pointCoverageMarker) {
+      map.removeLayer(_pointCoverageMarker);
+      _pointCoverageMarker = null;
+    }
+    chk.checked = false;
+    metricRow.style.display = 'none';
+    layerGroups.towerCoverage.clearLayers();
+    map.removeLayer(layerGroups.towerCoverage);
+  }
+
+  sourceSel.disabled = !_hasElevation;
+  for (let i = 0; i < sourceSel.options.length; i++) {
+    let opt = sourceSel.options[i];
+    if (opt.value === 'towers') opt.disabled = !towersAvailable;
+  }
+  if (_coverageSourceMode === 'towers' && !towersAvailable) {
+    _coverageSourceMode = 'manual';
+  }
+  sourceSel.value = _coverageSourceMode;
+  manualRow.style.display = (_coverageSourceMode === 'manual') ? '' : 'none';
+  towersRow.style.display = (_coverageSourceMode === 'towers') ? '' : 'none';
+
+  if (manualBtn) manualBtn.disabled = !_hasElevation;
+  if (calcSelBtn) calcSelBtn.disabled = (!_hasElevation || !towersAvailable);
+  if (calcAllBtn) calcAllBtn.disabled = (!_hasElevation || !towersAvailable);
+  metricRow.style.opacity = _hasElevation ? '1' : '0.6';
+}
+
+function _autoCoverageModeFromCurrentState(preferTowers) {
+  if (!_hasElevation) {
+    _setCoverageSourceMode('manual', {clearRuntimeCoverageOnModeChange: false});
+    return;
+  }
+  if (preferTowers && _hasTowerCoverageSources()) {
+    _setCoverageSourceMode('towers', {clearRuntimeCoverageOnModeChange: true});
+    return;
+  }
+  if (_coverageSourceMode === 'towers' && !_hasTowerCoverageSources()) {
+    _setCoverageSourceMode('manual', {clearRuntimeCoverageOnModeChange: true});
+    return;
+  }
+  _syncCoverageFeatureUI();
+}
+
 function _populateTowerFilter() {
   let sel = document.getElementById('tower-coverage-filter');
   if (!sel || !towerCoverageData) return;
@@ -1565,6 +1677,7 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     document.getElementById('chk-tower-coverage').checked = true;
     document.getElementById('tower-coverage-metric-row').style.display = 'block';
     layerGroups.towerCoverage.addTo(map);
+    _syncCoverageFeatureUI();
     let n = (towerCoverageData.features || []).length;
     let resTxt = data.coverage_h3_resolution != null ? (' @ H3 ' + data.coverage_h3_resolution) : '';
     setStatus((successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' + resTxt);
@@ -1574,6 +1687,10 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
 }
 
 function calculateSelectedTowerCoverage() {
+  if (_coverageSourceMode !== 'towers') {
+    setStatus('Switch Coverage Source to Existing towers.');
+    return;
+  }
   if (!_selectedTowerCoverageSource) {
     setStatus('Select a tower marker first.');
     return;
@@ -1586,6 +1703,10 @@ function calculateSelectedTowerCoverage() {
 }
 
 function calculateAllShownTowerCoverage() {
+  if (_coverageSourceMode !== 'towers') {
+    setStatus('Switch Coverage Source to Existing towers.');
+    return;
+  }
   let sources = _visibleTowerCoverageSources();
   if (!sources.length) {
     setStatus('No towers available for coverage calculation.');
@@ -1603,49 +1724,60 @@ function togglePointCoverageMode() {
     setStatus('Download Elevation first.');
     return;
   }
-  _pointCoverageMode = !_pointCoverageMode;
+  if (_coverageSourceMode !== 'manual') {
+    _setCoverageSourceMode('manual', {clearRuntimeCoverageOnModeChange: true});
+  }
+  _manualCoverageModeActive = !_manualCoverageModeActive;
   let btn = document.getElementById('btn-point-coverage');
-  if (_pointCoverageMode) {
+  if (_manualCoverageModeActive) {
     btn.classList.add('active');
     btn.textContent = 'Click Map...';
     document.getElementById('map').style.cursor = 'crosshair';
-    setStatus('Point coverage mode: click on map.');
+    setStatus('Manual coverage mode: click map to place tower and calculate.');
   } else {
     btn.classList.remove('active');
-    btn.textContent = 'Point Coverage';
+    btn.textContent = 'Place Tower';
     document.getElementById('map').style.cursor = '';
     setStatus('');
   }
 }
 
 function _resetPointCoverageMode() {
-  _pointCoverageMode = false;
+  _manualCoverageModeActive = false;
   document.getElementById('map').style.cursor = '';
   let btn = document.getElementById('btn-point-coverage');
   if (btn) {
     btn.classList.remove('active');
-    btn.textContent = 'Point Coverage';
+    btn.textContent = 'Place Tower';
   }
 }
 
 function calculatePointCoverage(lat, lon) {
   _resetPointCoverageMode();
+  _manualCoverageSource = {source_id: 'manual_point', lat: lat, lon: lon};
 
   if (_pointCoverageMarker) map.removeLayer(_pointCoverageMarker);
   _pointCoverageMarker = L.circleMarker([lat, lon], {
     radius: 6, color: '#111', weight: 2, fillColor: '#fff', fillOpacity: 0.8,
-  }).addTo(map).bindTooltip('Coverage source point');
+  }).addTo(map).bindTooltip('Manual coverage tower');
 
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
-    source: {source_id: 'point', lat: lat, lon: lon},
+    source: _manualCoverageSource,
     parameters: getSettings(),
     coverage_h3_resolution: getTowerCoverageResolution(),
-  }, 'Point coverage');
+  }, 'Manual tower coverage');
 }
 
 function toggleTowerCoverage() {
   let chk = document.getElementById('chk-tower-coverage');
   let metricRow = document.getElementById('tower-coverage-metric-row');
+  if (!_hasElevation) {
+    chk.checked = false;
+    metricRow.style.display = 'none';
+    setStatus('Download Elevation first.');
+    return;
+  }
+  _syncCoverageFeatureUI();
   if (chk.checked) {
     metricRow.style.display = 'block';
     if (!towerCoverageData && !towerCoverageFetched) {
@@ -1663,6 +1795,11 @@ function toggleTowerCoverage() {
           layerGroups.towerCoverage.addTo(map);
           setStatus('Runtime tower coverage loaded: ' + (data.features || []).length + ' cells');
         }).catch(err => {
+          if (_coverageSourceMode === 'manual') {
+            towerCoverageFetched = false;
+            setStatus('No runtime tower coverage. Use Place Tower and click map to calculate.');
+            return;
+          }
           let sources = _visibleTowerCoverageSources();
           if (!sources.length) {
             setStatus('No runtime tower coverage and no visible towers to calculate.');
@@ -1955,6 +2092,8 @@ function doClearCalculations() {
     layerGroups.edges.clearLayers();
     layerGroups.coverage.clearLayers();
     layerGroups.towerCoverage.clearLayers();
+    document.getElementById('chk-tower-coverage').checked = false;
+    document.getElementById('tower-coverage-metric-row').style.display = 'none';
     layerGroups.gapRepairHexes.clearLayers();
     _cachedGapRepairGeojson = null;
     let gapRow = document.getElementById('gap-repair-filter-row');
@@ -1970,11 +2109,15 @@ function doClearCalculations() {
     if (optProg) optProg.style.display = 'none';
     hasCoverage = false; coverageFetched = false;
     towerCoverageData = null; towerCoverageFetched = false;
+    _cachedTowersGeojson = null;
     _selectedTowerCoverageSource = null;
+    _manualCoverageSource = null;
+    _coverageSourceMode = 'manual';
     _resetPointCoverageMode();
     if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
     _selectedEdgeKey = null;
     closeLinkAnalysis();
+    _syncCoverageFeatureUI();
     setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
   });
 }
@@ -2095,6 +2238,7 @@ function _applyAlgoToggle(mode) {
   rerenderGapRepairHexes();
 
   showTowerLegend(allSourceCounts);
+  _syncCoverageFeatureUI();
 }
 
 function _renderOptimizationResult(res) {
@@ -2134,6 +2278,7 @@ function _renderOptimizationResult(res) {
   towerCoverageData = null;
   towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
+  _manualCoverageSource = null;
   _resetPointCoverageMode();
   if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
 
@@ -2152,6 +2297,7 @@ function _renderOptimizationResult(res) {
 
   // Render initial view (DP only)
   _applyAlgoToggle('dp');
+  _autoCoverageModeFromCurrentState(true);
   document.getElementById('chk-edges').checked = true;
 
   if (dpSummary.total_towers != null) {
@@ -2189,6 +2335,8 @@ function doRunOptimization() {
   layerGroups.edges.clearLayers();
   layerGroups.coverage.clearLayers();
   layerGroups.towerCoverage.clearLayers();
+  document.getElementById('chk-tower-coverage').checked = false;
+  document.getElementById('tower-coverage-metric-row').style.display = 'none';
   dpLayerGroup.clearLayers();
   greedyLayerGroup.clearLayers();
   _optDualResult = null;
@@ -2199,9 +2347,11 @@ function doRunOptimization() {
   hasCoverage = false; coverageFetched = false;
   towerCoverageData = null; towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
+  _manualCoverageSource = null;
   _resetPointCoverageMode();
   if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
   coverageData = null;
+  _autoCoverageModeFromCurrentState(false);
 
   // Show and clear log panel
   let logPanel = document.getElementById('opt-log-panel');
@@ -2898,6 +3048,7 @@ function saveProjectState(projectPath) {
       bbox: _bboxBounds,
       settings: getSettings(),
       towerCoverageResolution: getTowerCoverageResolution(),
+      coverageSourceMode: _coverageSourceMode,
       activeRoutes: _activeRoutePerPair,
       forcedWaypoints: forcedWaypointsSerial,
     });
@@ -3046,6 +3197,7 @@ function restoreProjectState() {
       coverageData = null; coverageFetched = false;
       towerCoverageData = null; towerCoverageFetched = false;
       _selectedTowerCoverageSource = null;
+      _manualCoverageSource = null;
       _resetPointCoverageMode();
       if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
       refresh();
@@ -3058,6 +3210,12 @@ function restoreProjectState() {
       if (state.hasRoutes) ps.has_routes = true;
       if (state.hasElevation) ps.has_elevation = true;
       applyProjectStatus(ps, data);
+      _autoCoverageModeFromCurrentState(true);
+      if (state.coverageSourceMode) {
+        _setCoverageSourceMode(state.coverageSourceMode, {clearRuntimeCoverageOnModeChange: false});
+      } else {
+        _syncCoverageFeatureUI();
+      }
       _applyLoadedRoutes(data);
       setStatus('Project restored: ' + (data.config_path || state.projectPath));
       if (data.bounds) map.fitBounds(data.bounds);
@@ -3068,4 +3226,5 @@ function restoreProjectState() {
 }
 
 // Restore state on page load
+_syncCoverageFeatureUI();
 restoreProjectState();
