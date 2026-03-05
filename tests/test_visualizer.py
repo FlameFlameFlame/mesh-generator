@@ -4,7 +4,9 @@ import os
 
 import yaml
 
+from generator import app as app_mod
 from generator.app import app
+from generator.models import SiteModel, SiteStore
 
 
 def _write_fixture(tmp_path):
@@ -213,3 +215,49 @@ class TestClearResetsState:
             data = resp.get_json()
 
         assert data["report"]["total_towers"] == 5
+
+
+def test_save_project_routes_export_uses_runtime_parameters(tmp_path, monkeypatch):
+    store = SiteStore()
+    store.add(SiteModel(name="A", lat=40.0, lon=44.0, priority=1))
+    monkeypatch.setattr(app_mod, "store", store)
+    monkeypatch.setattr(app_mod, "_roads_geojson", {"type": "FeatureCollection", "features": []})
+    monkeypatch.setattr(app_mod, "_elevation_path", "")
+    monkeypatch.setattr(app_mod, "_loaded_layers", {})
+
+    route_feature = {
+        "type": "Feature",
+        "geometry": {"type": "LineString", "coordinates": [[44.0, 40.0], [44.1, 40.1]]},
+        "properties": {"osm_way_id": 123},
+    }
+    route = {
+        "route_id": "route_0",
+        "site1": {"name": "A", "lat": 40.0, "lon": 44.0},
+        "site2": {"name": "B", "lat": 40.1, "lon": 44.1},
+        "pair_idx": 0,
+        "feature_indices": [0],
+        "way_ids": [123],
+        "features": [route_feature],
+    }
+    monkeypatch.setattr(app_mod, "_p2p_routes", [route])
+    monkeypatch.setattr(app_mod, "_p2p_all_route_features", {"route_0": [route_feature]})
+
+    params = {
+        "h3_resolution": 9,
+        "frequency_hz": 915000000,
+        "mast_height_m": 2,
+        "max_towers_per_route": 5,
+        "road_buffer_m": 100,
+    }
+    app_mod._save_project_to_dir(str(tmp_path), parameters=params)
+
+    with open(tmp_path / "routes.json") as f:
+        routes_data = json.load(f)
+    with open(tmp_path / "status.json") as f:
+        status_data = json.load(f)
+
+    assert routes_data["parameters"]["h3_resolution"] == 9
+    assert routes_data["parameters"]["frequency_hz"] == 915000000
+    assert routes_data["parameters"]["mast_height_m"] == 2
+    assert routes_data["routes"][0]["max_towers_per_route"] == 5
+    assert status_data["parameters"]["mast_height_m"] == 2
