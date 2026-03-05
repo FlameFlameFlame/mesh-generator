@@ -108,7 +108,7 @@
           <option value="distance_to_closest_tower">Distance to tower (m)</option>
         </select>
       </div>
-      <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Radial Coverage</label>
+      <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
       <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
         <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
           <option value="tower_id">Color by tower</option>
@@ -120,6 +120,11 @@
         <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
           <option value="all">All towers</option>
         </select>
+        <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+          <button onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
+          <button onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
+          <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to calculate from a random point (requires elevation)">Point Coverage</button>
+        </div>
       </div>
       <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>
       <div class="sub-control" id="elevation-opacity-row" style="display:none;">

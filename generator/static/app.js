@@ -27,8 +27,11 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
 let dpLayerGroup = L.layerGroup().addTo(map);
 let greedyLayerGroup = L.layerGroup();
 let coverageData = null;  // cached GeoJSON from /api/coverage
-let towerCoverageData = null;  // cached GeoJSON from /api/tower-coverage
+let towerCoverageData = null;  // runtime coverage GeoJSON from /api/tower-coverage
 let towerCoverageFetched = false;
+let _selectedTowerCoverageSource = null;  // {source_id, h3_index, lat, lon}
+let _pointCoverageMode = false;
+let _pointCoverageMarker = null;
 let hasCoverage = false;  // server says coverage file exists
 let coverageFetched = false;
 
@@ -235,6 +238,10 @@ map.on('mouseup', function(e) {
 });
 
 map.on('click', function(e) {
+  if (_pointCoverageMode) {
+    calculatePointCoverage(e.latlng.lat, e.latlng.lng);
+    return;
+  }
   if (!addMode) return;
   let count = sites.length + 1;
   let name = prompt('Site name:', 'Site_' + count);
@@ -414,6 +421,9 @@ function doClear() {
       coverageFetched = false;
       towerCoverageData = null;
       towerCoverageFetched = false;
+      _selectedTowerCoverageSource = null;
+      _resetPointCoverageMode();
+      if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
       layerGroups.gridCells.clearLayers();
       map.removeLayer(layerGroups.gridCells);
       document.getElementById('chk-grid-cells').checked = false;
@@ -921,6 +931,9 @@ function _loadProjectFromPath(configPath) {
     coverageFetched = false;
     towerCoverageData = null;
     towerCoverageFetched = false;
+    _selectedTowerCoverageSource = null;
+    if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
+    _resetPointCoverageMode();
     refresh();
     renderLayers(data.layers || {});
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
@@ -990,7 +1003,7 @@ function renderLayers(layers) {
         let borderColor = alg === 'dp_repair' ? '#e6a000'
                         : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
                         : '#000';
-        return L.circleMarker(latlng, {
+        let marker = L.circleMarker(latlng, {
           radius: 6, color: borderColor, weight: alg === 'dp' || alg === 'site' ? 1 : 2.5,
           fillColor: color, fillOpacity: 0.9
         }).bindTooltip(
@@ -1000,6 +1013,11 @@ function renderLayers(layers) {
           _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
           {direction: 'top'}
         );
+        marker.on('click', function() {
+          let selected = _sourceFromTowerFeature(feature);
+          if (selected) _setSelectedTowerCoverageSource(selected);
+        });
+        return marker;
       }
     }).addTo(layerGroups.towers);
     showTowerLegend(sourceCounts);
@@ -1231,6 +1249,158 @@ function _populateTowerFilter() {
   });
 }
 
+function _setSelectedTowerCoverageSource(source) {
+  _selectedTowerCoverageSource = source;
+  if (source) {
+    setStatus('Selected antenna for coverage: ' + (source.source_id != null ? source.source_id : source.h3_index));
+  }
+}
+
+function _sourceFromTowerFeature(feature) {
+  if (!feature || !feature.geometry || !feature.properties) return null;
+  if (feature.geometry.type !== 'Point') return null;
+  let coords = feature.geometry.coordinates || [];
+  if (coords.length < 2) return null;
+  let p = feature.properties || {};
+  return {
+    source_id: p.tower_id != null ? p.tower_id : (p.source_id != null ? p.source_id : (p.h3_index || null)),
+    h3_index: p.h3_index || null,
+    lat: coords[1],
+    lon: coords[0],
+  };
+}
+
+function _collectCoverageSourcesFromTowerGeojson(geojson) {
+  let out = [];
+  let seen = new Set();
+  if (!geojson || !geojson.features) return out;
+  (geojson.features || []).forEach(function(f) {
+    let src = _sourceFromTowerFeature(f);
+    if (!src) return;
+    let key = src.h3_index || (src.lat.toFixed(6) + ',' + src.lon.toFixed(6));
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(src);
+  });
+  return out;
+}
+
+function _visibleTowerCoverageSources() {
+  if (_optDualResult) {
+    let all = [];
+    if (_activeAlgo === 'dp' || _activeAlgo === 'both') {
+      all = all.concat(_collectCoverageSourcesFromTowerGeojson((_optDualResult.dp || {}).towers));
+    }
+    if (_activeAlgo === 'greedy' || _activeAlgo === 'both') {
+      all = all.concat(_collectCoverageSourcesFromTowerGeojson((_optDualResult.greedy || {}).towers));
+    }
+    let dedup = [];
+    let seen = new Set();
+    all.forEach(function(src) {
+      let key = src.h3_index || (src.lat.toFixed(6) + ',' + src.lon.toFixed(6));
+      if (seen.has(key)) return;
+      seen.add(key);
+      dedup.push(src);
+    });
+    return dedup;
+  }
+  return _collectCoverageSourcesFromTowerGeojson(_cachedTowersGeojson);
+}
+
+function _runTowerCoverageRequest(url, payload, successPrefix) {
+  if (!_hasElevation) {
+    setStatus('Download Elevation first.');
+    return;
+  }
+  setStatus('Calculating tower coverage...');
+  fetch(url, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(payload),
+  }).then(safeJson).then(function(data) {
+    if (data.error) { setStatus('Tower coverage failed: ' + data.error); return; }
+    towerCoverageData = data.coverage || null;
+    if (!towerCoverageData) { setStatus('Tower coverage failed: empty response'); return; }
+    towerCoverageFetched = true;
+    _populateTowerFilter();
+    renderTowerCoverage();
+    document.getElementById('chk-tower-coverage').checked = true;
+    document.getElementById('tower-coverage-metric-row').style.display = 'block';
+    layerGroups.towerCoverage.addTo(map);
+    let n = (towerCoverageData.features || []).length;
+    setStatus((successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells');
+  }).catch(function(err) {
+    setStatus('Tower coverage failed');
+  });
+}
+
+function calculateSelectedTowerCoverage() {
+  if (!_selectedTowerCoverageSource) {
+    setStatus('Select a tower marker first.');
+    return;
+  }
+  _runTowerCoverageRequest('/api/tower-coverage/calculate', {
+    source: _selectedTowerCoverageSource,
+    parameters: getSettings(),
+  }, 'Selected antenna coverage');
+}
+
+function calculateAllShownTowerCoverage() {
+  let sources = _visibleTowerCoverageSources();
+  if (!sources.length) {
+    setStatus('No towers available for coverage calculation.');
+    return;
+  }
+  _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
+    sources: sources,
+    parameters: getSettings(),
+  }, 'Batch coverage');
+}
+
+function togglePointCoverageMode() {
+  if (!_hasElevation) {
+    setStatus('Download Elevation first.');
+    return;
+  }
+  _pointCoverageMode = !_pointCoverageMode;
+  let btn = document.getElementById('btn-point-coverage');
+  if (_pointCoverageMode) {
+    btn.classList.add('active');
+    btn.textContent = 'Click Map...';
+    document.getElementById('map').style.cursor = 'crosshair';
+    setStatus('Point coverage mode: click on map.');
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = 'Point Coverage';
+    document.getElementById('map').style.cursor = '';
+    setStatus('');
+  }
+}
+
+function _resetPointCoverageMode() {
+  _pointCoverageMode = false;
+  document.getElementById('map').style.cursor = '';
+  let btn = document.getElementById('btn-point-coverage');
+  if (btn) {
+    btn.classList.remove('active');
+    btn.textContent = 'Point Coverage';
+  }
+}
+
+function calculatePointCoverage(lat, lon) {
+  _resetPointCoverageMode();
+
+  if (_pointCoverageMarker) map.removeLayer(_pointCoverageMarker);
+  _pointCoverageMarker = L.circleMarker([lat, lon], {
+    radius: 6, color: '#111', weight: 2, fillColor: '#fff', fillOpacity: 0.8,
+  }).addTo(map).bindTooltip('Coverage source point');
+
+  _runTowerCoverageRequest('/api/tower-coverage/calculate', {
+    source: {source_id: 'point', lat: lat, lon: lon},
+    parameters: getSettings(),
+  }, 'Point coverage');
+}
+
 function toggleTowerCoverage() {
   let chk = document.getElementById('chk-tower-coverage');
   let metricRow = document.getElementById('tower-coverage-metric-row');
@@ -1238,17 +1408,17 @@ function toggleTowerCoverage() {
     metricRow.style.display = 'block';
     if (!towerCoverageData && !towerCoverageFetched) {
       towerCoverageFetched = true;
-      setStatus('Loading tower coverage data...');
+      setStatus('Loading runtime tower coverage...');
       fetch('/api/tower-coverage')
-        .then(r => { if (!r.ok) throw new Error('No tower coverage'); return r.json(); })
+        .then(r => { if (!r.ok) throw new Error('No runtime tower coverage'); return r.json(); })
         .then(data => {
           towerCoverageData = data;
           _populateTowerFilter();
           renderTowerCoverage();
           layerGroups.towerCoverage.addTo(map);
-          setStatus('Tower coverage loaded: ' + (data.features || []).length + ' cells');
+          setStatus('Runtime tower coverage loaded: ' + (data.features || []).length + ' cells');
         }).catch(err => {
-          setStatus('Tower coverage not available');
+          setStatus('No runtime tower coverage. Use Calc buttons first.');
           chk.checked = false;
           metricRow.style.display = 'none';
           towerCoverageFetched = false;
@@ -1517,6 +1687,9 @@ function doClearCalculations() {
     document.getElementById('report-panel').style.display = 'none';
     hasCoverage = false; coverageFetched = false;
     towerCoverageData = null; towerCoverageFetched = false;
+    _selectedTowerCoverageSource = null;
+    _resetPointCoverageMode();
+    if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
     setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
   });
 }
@@ -1554,6 +1727,10 @@ function _renderAlgorithmTowers(algoData, targetLayerGroup, algo) {
         _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
         {direction: 'top'}
       );
+      marker.on('click', function() {
+        let selected = _sourceFromTowerFeature(feature);
+        if (selected) _setSelectedTowerCoverageSource(selected);
+      });
       return marker;
     }
   }).addTo(targetLayerGroup);
@@ -1633,7 +1810,11 @@ function _renderOptimizationResult(res) {
 
   // Coverage/grid from DP result
   if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
-  if (dpData.tower_coverage) { towerCoverageData = dpData.tower_coverage; towerCoverageFetched = true; }
+  towerCoverageData = null;
+  towerCoverageFetched = false;
+  _selectedTowerCoverageSource = null;
+  _resetPointCoverageMode();
+  if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
 
   // Gap repair hexes from DP result
   layerGroups.gapRepairHexes.clearLayers();
@@ -1704,6 +1885,9 @@ function doRunOptimization() {
   if (toggleEl) toggleEl.style.display = 'none';
   hasCoverage = false; coverageFetched = false;
   towerCoverageData = null; towerCoverageFetched = false;
+  _selectedTowerCoverageSource = null;
+  _resetPointCoverageMode();
+  if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
   coverageData = null;
 
   // Show and clear log panel
@@ -2518,6 +2702,9 @@ function restoreProjectState() {
       hasCoverage = data.has_coverage || false;
       coverageData = null; coverageFetched = false;
       towerCoverageData = null; towerCoverageFetched = false;
+      _selectedTowerCoverageSource = null;
+      _resetPointCoverageMode();
+      if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
       refresh();
       renderLayers(data.layers || {});
       if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
