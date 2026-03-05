@@ -979,6 +979,7 @@ function renderRoads() {
 
 let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
+let _cachedEdgesGeojson = null;
 
 
 
@@ -1092,8 +1093,11 @@ function renderLayers(layers) {
   // Visibility edges
   layerGroups.edges.clearLayers();
   if (layers.edges) {
+    _cachedEdgesGeojson = layers.edges;
     _renderEdgeLayer(layers.edges);
     document.getElementById('chk-edges').checked = true;
+  } else {
+    _cachedEdgesGeojson = null;
   }
 }
 
@@ -1103,12 +1107,26 @@ function renderLayers(layers) {
  *  @param {object} [styleOverrides] — optional Leaflet path style overrides (e.g. {dashArray: '6 4'})
  */
 function _renderEdgeLayer(edgesGeojson, styleOverrides) {
-  L.geoJSON(edgesGeojson, {
+  let losFilterEl = document.getElementById('edge-los-filter');
+  let losFilter = losFilterEl ? losFilterEl.value : 'all';
+  let allFeatures = (edgesGeojson && edgesGeojson.features) ? edgesGeojson.features : [];
+  let features = allFeatures.filter(function(feature) {
+    let p = feature.properties || {};
+    let losState = p.los_state || ((p.clearance_m != null && p.clearance_m < 0) ? 'nlos' : 'los');
+    if (losFilter === 'los') return losState === 'los';
+    if (losFilter === 'nlos') return losState === 'nlos';
+    return true;
+  });
+
+  L.geoJSON({type: 'FeatureCollection', features: features}, {
     style: function(feature) {
-      let lt = feature.properties.link_type;
+      let p = feature.properties || {};
+      let lt = p.link_type;
+      let losState = p.los_state || ((p.clearance_m != null && p.clearance_m < 0) ? 'nlos' : 'los');
+      let isNlos = (losState === 'nlos');
       let color = LINK_TYPE_COLORS[lt] || edgeColor(feature.properties.distance_m || 0);
-      let dashed = (lt === 'red') ? '6 4' : null;
-      let opts = { color: color, weight: 2.5, opacity: 0.85 };
+      let dashed = (lt === 'red' || isNlos) ? '6 4' : null;
+      let opts = { color: color, weight: 2.5, opacity: isNlos ? 0.45 : 0.85 };
       if (dashed) opts.dashArray = dashed;
       if (styleOverrides) Object.assign(opts, styleOverrides);
       return opts;
@@ -1118,6 +1136,8 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
       let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(2) : '?';
       let loss = p.path_loss_db != null ? p.path_loss_db.toFixed(1) : 'N/A';
       let clr  = p.clearance_m  != null ? p.clearance_m.toFixed(1)  : 'N/A';
+      let losState = p.los_state || ((p.clearance_m != null && p.clearance_m < 0) ? 'nlos' : 'los');
+      let losLabel = (losState === 'nlos') ? 'NLOS' : 'LOS';
 
       // Build human-readable label from nearest site names
       let lbl1 = p.source_lat != null
@@ -1135,7 +1155,8 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
         '<b>' + lbl1 + ' \u2194 ' + lbl2 + '</b><br>' +
         'Distance: ' + distKm + ' km<br>' +
         'Path loss: ' + loss + ' dB<br>' +
-        'Clearance: ' + clr + ' m' +
+        'Clearance: ' + clr + ' m<br>' +
+        'State: ' + losLabel +
         linkBadge + '<br>' +
         '<span style="color:#888;font-size:0.9em">Click to analyze</span>',
         {sticky: true}
@@ -1146,6 +1167,35 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
       });
     }
   }).addTo(layerGroups.edges);
+}
+
+function rerenderEdges() {
+  let chk = document.getElementById('chk-edges');
+  if (chk && !chk.checked) return;
+  if (_optDualResult) {
+    _applyAlgoToggle(_activeAlgo);
+    return;
+  }
+  layerGroups.edges.clearLayers();
+  if (_cachedEdgesGeojson) _renderEdgeLayer(_cachedEdgesGeojson);
+}
+
+function toggleEdges() {
+  let chk = document.getElementById('chk-edges');
+  if (_optDualResult) {
+    _applyAlgoToggle(_activeAlgo);
+    return;
+  }
+  if (chk.checked) {
+    if (_cachedEdgesGeojson) {
+      layerGroups.edges.addTo(map);
+      rerenderEdges();
+    } else {
+      layerGroups.edges.addTo(map);
+    }
+  } else {
+    map.removeLayer(layerGroups.edges);
+  }
 }
 
 /** Render edges with style overrides into the currently targeted layerGroups.edges. */
@@ -1410,7 +1460,10 @@ function toggleTowerCoverage() {
       towerCoverageFetched = true;
       setStatus('Loading runtime tower coverage...');
       fetch('/api/tower-coverage')
-        .then(r => { if (!r.ok) throw new Error('No runtime tower coverage'); return r.json(); })
+        .then(function(r) {
+          if (!r.ok) throw new Error('No runtime tower coverage');
+          return r.json();
+        })
         .then(data => {
           towerCoverageData = data;
           _populateTowerFilter();
@@ -1418,10 +1471,18 @@ function toggleTowerCoverage() {
           layerGroups.towerCoverage.addTo(map);
           setStatus('Runtime tower coverage loaded: ' + (data.features || []).length + ' cells');
         }).catch(err => {
-          setStatus('No runtime tower coverage. Use Calc buttons first.');
-          chk.checked = false;
-          metricRow.style.display = 'none';
-          towerCoverageFetched = false;
+          let sources = _visibleTowerCoverageSources();
+          if (!sources.length) {
+            setStatus('No runtime tower coverage and no visible towers to calculate.');
+            chk.checked = false;
+            metricRow.style.display = 'none';
+            towerCoverageFetched = false;
+            return;
+          }
+          _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
+            sources: sources,
+            parameters: getSettings(),
+          }, 'Auto batch coverage');
         });
     } else if (towerCoverageData) {
       _populateTowerFilter();
@@ -1755,6 +1816,11 @@ function _renderAlgorithmEdges(algoData, targetLayerGroup, algo) {
   layerGroups.edges = saved;
 }
 
+function _edgesEnabled() {
+  let chk = document.getElementById('chk-edges');
+  return !chk || chk.checked;
+}
+
 /** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
 function _applyAlgoToggle(mode) {
   _activeAlgo = mode;
@@ -1767,12 +1833,12 @@ function _applyAlgoToggle(mode) {
   if (mode === 'dp' || mode === 'both') {
     let sc = _renderAlgorithmTowers(_optDualResult.dp, dpLayerGroup, 'dp');
     Object.assign(allSourceCounts, sc);
-    _renderAlgorithmEdges(_optDualResult.dp, dpLayerGroup, 'dp');
+    if (_edgesEnabled()) _renderAlgorithmEdges(_optDualResult.dp, dpLayerGroup, 'dp');
   }
   if (mode === 'greedy' || mode === 'both') {
     let sc = _renderAlgorithmTowers(_optDualResult.greedy, greedyLayerGroup, 'greedy');
     if (mode === 'greedy') Object.assign(allSourceCounts, sc);
-    _renderAlgorithmEdges(_optDualResult.greedy, greedyLayerGroup, 'greedy');
+    if (_edgesEnabled()) _renderAlgorithmEdges(_optDualResult.greedy, greedyLayerGroup, 'greedy');
   }
 
   // Show/hide greedy layer
@@ -2305,6 +2371,7 @@ function doLinkAnalysis(edgeProps) {
     })
   }).then(safeJson).then(function(data) {
     if (data.error) { alert('Link analysis error: ' + data.error); return; }
+    data.los_state = edgeProps.los_state || ((edgeProps.clearance_m != null && edgeProps.clearance_m < 0) ? 'nlos' : 'los');
     _showLinkAnalysis(data);
   }).catch(function(e) { alert('Error: ' + e); });
 }
@@ -2318,7 +2385,8 @@ function _showLinkAnalysis(data) {
 
   let distKm = (data.distance_m / 1000).toFixed(2);
   let clr = data.clearance_m != null ? data.clearance_m.toFixed(1) + ' m' : 'N/A';
-  meta.textContent = 'Distance: ' + distKm + ' km  |  Fresnel clearance: ' + clr;
+  let losState = (data.los_state === 'nlos') ? 'NLOS' : 'LOS';
+  meta.textContent = 'Distance: ' + distKm + ' km  |  Fresnel clearance: ' + clr + '  |  State: ' + losState;
 
   // Close path profile if open to avoid overlap
   document.getElementById('path-profile-panel').style.display = 'none';

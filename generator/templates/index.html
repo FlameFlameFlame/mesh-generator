@@ -93,7 +93,14 @@
       <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
       <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
-      <label><input type="checkbox" id="chk-edges" onchange="toggleLayer('edges')" checked> Visibility Links</label>
+      <label><input type="checkbox" id="chk-edges" onchange="toggleEdges()" checked> Visibility Links</label>
+      <div class="sub-control" id="edge-filter-row">
+        <select id="edge-los-filter" onchange="rerenderEdges()">
+          <option value="all">All links</option>
+          <option value="los">LOS only</option>
+          <option value="nlos">NLOS only</option>
+        </select>
+      </div>
       <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
