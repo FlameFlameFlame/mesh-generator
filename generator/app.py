@@ -1298,6 +1298,15 @@ def run_optimization():
                 len(route_specs), max_towers,
             )
 
+            def _make_progress_callback(strategy: str):
+                def _callback(event: dict):
+                    if not isinstance(event, dict):
+                        return
+                    payload = dict(event)
+                    payload["algorithm"] = strategy
+                    _opt_log_queue.put({"progress": payload})
+                return _callback
+
             def _run_one(strategy, out_dir):
                 _thread_local.strategy_label = strategy
                 config_copy = copy.deepcopy(mesh_config)
@@ -1308,6 +1317,7 @@ def run_optimization():
                     city_boundaries_geojson=city_boundaries_geojson,
                     output_dir=out_dir,
                     strategy=strategy,
+                    progress_callback=_make_progress_callback(strategy),
                 )
 
             pipeline_results = {}
@@ -1323,6 +1333,18 @@ def run_optimization():
                         pipeline_results[label] = future.result()
                     except Exception as exc:
                         pipeline_errors[label] = str(exc)
+                        _opt_log_queue.put({
+                            "progress": {
+                                "algorithm": label,
+                                "stage": "error",
+                                "step": f"Error: {exc}",
+                                "percent": 100.0,
+                                "route_index": 0,
+                                "route_total": len(route_specs),
+                                "route_id": None,
+                                "route_label": None,
+                            }
+                        })
                         logger.error("Pipeline '%s' failed: %s", label, exc)
 
             # Load output GeoJSON files for each strategy
@@ -1347,6 +1369,21 @@ def run_optimization():
                         with open(fpath) as f:
                             algo_result[key] = json.load(f)
                 dual_result[label] = algo_result
+                _opt_log_queue.put({
+                    "progress": {
+                        "algorithm": label,
+                        "stage": "done",
+                        "step": (
+                            f"Done • {summary.get('total_towers', 0)} towers • "
+                            f"{summary.get('visibility_edges', 0)} links"
+                        ),
+                        "percent": 100.0,
+                        "route_index": len(route_specs),
+                        "route_total": len(route_specs),
+                        "route_id": None,
+                        "route_label": None,
+                    }
+                })
 
             # Update _loaded_layers from DP result (primary algorithm for coverage/grid UI)
             dp_data = dual_result.get('dp', {})

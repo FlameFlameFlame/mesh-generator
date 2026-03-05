@@ -165,6 +165,18 @@
     </div>
     <div id="opt-log-panel">
       <strong>Optimization Log</strong>
+      <div id="opt-progress-panel" style="display:none;">
+        <div class="opt-progress-row" id="opt-progress-row-dp">
+          <div class="opt-progress-head"><span class="opt-progress-algo">DP</span><span id="opt-progress-pct-dp">0%</span></div>
+          <progress id="opt-progress-bar-dp" max="100" value="0"></progress>
+          <div class="opt-progress-label" id="opt-progress-label-dp">Queued…</div>
+        </div>
+        <div class="opt-progress-row" id="opt-progress-row-greedy">
+          <div class="opt-progress-head"><span class="opt-progress-algo">Greedy</span><span id="opt-progress-pct-greedy">0%</span></div>
+          <progress id="opt-progress-bar-greedy" max="100" value="0"></progress>
+          <div class="opt-progress-label" id="opt-progress-label-greedy">Queued…</div>
+        </div>
+      </div>
       <pre id="opt-log"></pre>
     </div>
     <div id="settings-panel" style="display:none;">
