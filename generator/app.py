@@ -82,6 +82,7 @@ _opt_log_queue = queue.Queue()
 _opt_result = {}  # stores final optimization result for the stream endpoint
 _opt_running = False
 _thread_local = threading.local()  # per-thread strategy label for log prefixing
+_LOW_MAST_WARN_THRESHOLD_M = 5.0
 
 
 class _QueueLogHandler(logging.Handler):
@@ -121,6 +122,18 @@ _p2p_routes = []             # list of route dicts from find_p2p_roads
 _p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
 _p2p_display_features = {}   # route_id → clipped feature dicts (frontend rendering)
 _forced_waypoints = {}       # pair_key → list of osm_way_ids
+
+
+def _normalize_mesh_parameters(param_overrides: dict | None) -> dict:
+    """
+    Normalize optimization parameter overrides from UI.
+
+    mesh-generator default is strict LOS unless explicitly overridden.
+    """
+    params = dict(param_overrides or {})
+    if "min_fresnel_clearance_m" not in params:
+        params["min_fresnel_clearance_m"] = 0.0
+    return params
 
 
 @app.route("/")
@@ -1206,12 +1219,19 @@ def run_optimization():
 
     body = request.json or {}
     max_towers = int(body.get("max_towers_per_route", 8))
-    param_overrides = body.get("parameters", {})
+    param_overrides = _normalize_mesh_parameters(body.get("parameters", {}))
     output_dir = body.get("output_dir", "")
 
     # Build MeshConfig (with optional overrides from request body)
     valid_fields = MeshConfig.__dataclass_fields__
     mesh_config = MeshConfig(**{k: v for k, v in param_overrides.items() if k in valid_fields})
+    low_mast_warning = None
+    if mesh_config.mast_height_m < _LOW_MAST_WARN_THRESHOLD_M:
+        low_mast_warning = (
+            f"Low mast height ({mesh_config.mast_height_m:.1f} m) strongly increases "
+            "NLOS/disconnected outcomes. Consider raising mast height or max_towers_per_route."
+        )
+        logger.warning(low_mast_warning)
 
     # Build RouteSpec list from currently selected routes + their features
     route_specs = []
@@ -1246,6 +1266,8 @@ def run_optimization():
             _opt_log_queue.get_nowait()
         except queue.Empty:
             break
+    if low_mast_warning:
+        _opt_log_queue.put(f"WARNING: {low_mast_warning}")
 
     _opt_result = {}
 
@@ -1363,7 +1385,7 @@ def run_optimization():
             _opt_running = False
 
     threading.Thread(target=_run_pipeline, daemon=True).start()
-    return jsonify({"started": True})
+    return jsonify({"started": True, "warning": low_mast_warning})
 
 
 @app.route("/api/optimization-result", methods=["GET"])

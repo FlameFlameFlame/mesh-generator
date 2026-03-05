@@ -65,6 +65,8 @@ let _activeAlgo = 'dp';     // 'dp' | 'greedy' | 'both'
 let _hasRoads = false;
 let _hasRoutes = false;
 let _hasElevation = false;
+let _lowMastWarningActive = false;
+const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
   let ready = _hasRoutes && _hasElevation;
@@ -1693,6 +1695,7 @@ function toggleSettings() {
 
 function getSettings() {
   let freqMhz = parseFloat(document.getElementById('set-frequency-mhz').value) || 868;
+  let losPolicy = document.getElementById('set-los-policy').value || 'strict';
   return {
     h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
     frequency_hz: freqMhz * 1e6,
@@ -1700,6 +1703,7 @@ function getSettings() {
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
     antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
     receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
+    min_fresnel_clearance_m: (losPolicy === 'budget') ? null : 0.0,
     max_towers_per_route: parseInt(document.getElementById('opt-max-towers').value) || 10,
     road_buffer_m: parseFloat(document.getElementById('set-road-buffer-m').value) || 0,
     max_coverage_radius_m: parseFloat(document.getElementById('set-coverage-radius-m').value) || 15000,
@@ -1714,6 +1718,12 @@ function applySettings(s) {
   if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
   if (s.antenna_gain_dbi != null) document.getElementById('set-antenna-gain').value = s.antenna_gain_dbi;
   if (s.receiver_sensitivity_dbm != null) document.getElementById('set-rx-sensitivity').value = s.receiver_sensitivity_dbm;
+  if (Object.prototype.hasOwnProperty.call(s, 'min_fresnel_clearance_m') &&
+      s.min_fresnel_clearance_m === null) {
+    document.getElementById('set-los-policy').value = 'budget';
+  } else {
+    document.getElementById('set-los-policy').value = 'strict';
+  }
   if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
   if (s.road_buffer_m != null) document.getElementById('set-road-buffer-m').value = s.road_buffer_m;
   if (s.max_coverage_radius_m != null) document.getElementById('set-coverage-radius-m').value = s.max_coverage_radius_m;
@@ -1860,12 +1870,17 @@ function _renderOptimizationResult(res) {
   let dpSummary = dpData.summary || {};
   let greedySummary = greedyData.summary || {};
 
-  setStatus(
+  let status = (
     'Optimization complete — DP: ' + (dpSummary.total_towers || 0) + ' towers / ' +
     (dpSummary.visibility_edges || 0) + ' links' +
     '  |  Greedy: ' + (greedySummary.total_towers || 0) + ' towers / ' +
     (greedySummary.visibility_edges || 0) + ' links'
   );
+  if (_lowMastWarningActive) {
+    status += '  |  Warning: mast height < ' + _LOW_MAST_WARN_THRESHOLD_M +
+      ' m can cause NLOS/disconnected results; increase mast or towers/route.';
+  }
+  setStatus(status);
 
   // Clear legacy tower/edge layers (they are now managed by dp/greedyLayerGroup)
   layerGroups.towers.clearLayers();
@@ -1934,8 +1949,16 @@ function doRunOptimization() {
   let btn = document.getElementById('btn-optimize');
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let parameters = getSettings();
+  _lowMastWarningActive = parameters.mast_height_m < _LOW_MAST_WARN_THRESHOLD_M;
   btn.disabled = true;
-  setStatus('Running optimization\u2026');
+  if (_lowMastWarningActive) {
+    setStatus(
+      'Warning: mast height < ' + _LOW_MAST_WARN_THRESHOLD_M +
+      ' m often causes NLOS/disconnected links. Running optimization…'
+    );
+  } else {
+    setStatus('Running optimization\u2026');
+  }
 
   // Clear stale results
   layerGroups.towers.clearLayers();
@@ -1972,6 +1995,10 @@ function doRunOptimization() {
       btn.disabled = false;
       setStatus('Optimization failed: ' + res.error);
       return;
+    }
+    if (res.warning) {
+      setStatus('Running optimization… ' + res.warning);
+      _lowMastWarningActive = true;
     }
     // Pipeline started in background — connect SSE stream
     let es = new EventSource('/api/optimization-stream');
@@ -2351,7 +2378,9 @@ function doLinkAnalysis(edgeProps) {
     return;
   }
   let mastEl = document.getElementById('set-mast-height');
-  let mastH = mastEl ? (parseFloat(mastEl.value) || 28) : 28;
+  let uiMastH = mastEl ? (parseFloat(mastEl.value) || 28) : 28;
+  let edgeMastH = parseFloat(edgeProps.mast_height_m);
+  let mastH = Number.isFinite(edgeMastH) ? edgeMastH : uiMastH;
 
   let label1 = _towerLabel(edgeProps.source_lat, edgeProps.source_lon, edgeProps.source_id);
   let label2 = _towerLabel(edgeProps.target_lat, edgeProps.target_lon, edgeProps.target_id);

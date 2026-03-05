@@ -12,3 +12,7 @@
 - 2026-03-05: Added edge LOS-state UX in UI: LOS filter (`All/LOS/NLOS`), NLOS dashed/low-opacity rendering, and explicit LOS/NLOS label in link analysis.
 - 2026-03-05: Updated tower coverage layer toggle to auto-run batch runtime coverage calculation when no cached runtime coverage exists.
 - 2026-03-05: Removed two outdated tests (`test_structure_and_paths`, `test_site_store_to_list`) that no longer matched current relative-path export and `fetch_city` serialization behavior.
+- 2026-03-05: Added LOS policy control in settings (`Strict LOS` default vs `Budget + Diffraction`), mapped to `min_fresnel_clearance_m` in optimization parameters and persisted in project state.
+- 2026-03-05: Enforced mesh-generator scoped strict-LOS default in backend (`min_fresnel_clearance_m=0.0` when omitted) via `_normalize_mesh_parameters`.
+- 2026-03-05: Added low-mast warnings (<5 m) to optimization status/SSE log stream and made link-analysis use edge `mast_height_m` when available.
+- 2026-03-05: Added regression tests in `tests/test_optimization_defaults.py` for strict-default parameter normalization behavior.
