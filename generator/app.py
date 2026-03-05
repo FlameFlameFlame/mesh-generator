@@ -1565,6 +1565,9 @@ def load_project():
 
     inputs = config.get("inputs", {})
     outputs = config.get("outputs", {})
+    config_parameters = config.get("parameters", {})
+    if not isinstance(config_parameters, dict):
+        config_parameters = {}
 
     def resolve(p):
         if not p:
@@ -1678,6 +1681,15 @@ def load_project():
             if os.path.isfile(ep):
                 _elevation_path = ep
                 logger.info("Restored elevation path from status: %s", ep)
+
+    # Keep config.yaml parameters as canonical on load. status.json can be stale
+    # when users edit config manually or reuse older optimization outputs.
+    if config_parameters:
+        merged_params = {}
+        if isinstance(project_status.get("parameters"), dict):
+            merged_params.update(project_status["parameters"])
+        merged_params.update(config_parameters)
+        project_status["parameters"] = merged_params
 
     # Restore routes from routes.json if present
     _p2p_routes = []
