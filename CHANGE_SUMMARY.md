@@ -27,3 +27,4 @@
 - 2026-03-06: Added dual optimization progress bars (DP + Greedy) in the Optimization Log panel with route-aware labels and weighted percent updates.
 - 2026-03-06: Extended optimization SSE payloads with additive structured `progress` events while keeping existing `log`/`done`/`error` compatibility.
 - 2026-03-06: Added backend regression tests for progress streaming (`tests/test_optimization_progress.py`) covering monotonic per-algorithm progress and mixed success/failure runs.
+- 2026-03-06: Fixed link-analysis panel deselection behavior: clicking the same visibility link toggles profile off, and profile auto-closes if selected link is hidden by filters/layer toggle/clear actions.

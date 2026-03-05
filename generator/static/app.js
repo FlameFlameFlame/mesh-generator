@@ -33,6 +33,7 @@ let _selectedTowerCoverageSource = null;  // {source_id, h3_index, lat, lon}
 let _pointCoverageMode = false;
 let _pointCoverageMarker = null;
 let _towerCoverageResolutionInitialized = false;
+let _selectedEdgeKey = null;
 let hasCoverage = false;  // server says coverage file exists
 let coverageFetched = false;
 
@@ -190,6 +191,34 @@ function edgeColor(dist_m) {
   let r = Math.round(255 * t);
   let g = Math.round(255 * (1 - t));
   return 'rgb(' + r + ',' + g + ',0)';
+}
+
+function _edgeKeyFromProps(props) {
+  props = props || {};
+  let a = props.source_h3;
+  let b = props.target_h3;
+  if (!a || !b) {
+    let sa = (props.source_lat != null && props.source_lon != null)
+      ? (Number(props.source_lat).toFixed(6) + ',' + Number(props.source_lon).toFixed(6))
+      : String(props.source_id);
+    let sb = (props.target_lat != null && props.target_lon != null)
+      ? (Number(props.target_lat).toFixed(6) + ',' + Number(props.target_lon).toFixed(6))
+      : String(props.target_id);
+    a = sa;
+    b = sb;
+  }
+  return (a <= b) ? (a + '|' + b) : (b + '|' + a);
+}
+
+function _syncSelectedEdgeVisibility(features) {
+  if (!_selectedEdgeKey) return;
+  let stillVisible = (features || []).some(function(f) {
+    return _edgeKeyFromProps((f || {}).properties || {}) === _selectedEdgeKey;
+  });
+  if (!stillVisible) {
+    _selectedEdgeKey = null;
+    closeLinkAnalysis();
+  }
 }
 
 const LINK_TYPE_COLORS = {
@@ -532,6 +561,8 @@ function doClear() {
       document.getElementById('report-panel').style.display = 'none';
       let optProg = document.getElementById('opt-progress-panel');
       if (optProg) optProg.style.display = 'none';
+      _selectedEdgeKey = null;
+      closeLinkAnalysis();
       setStatus('');
       _hasRoads = false;
       _hasRoutes = false;
@@ -1295,10 +1326,18 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
       );
 
       layer.on('click', function() {
+        let edgeKey = _edgeKeyFromProps(p);
+        if (_selectedEdgeKey === edgeKey) {
+          _selectedEdgeKey = null;
+          closeLinkAnalysis();
+          return;
+        }
+        _selectedEdgeKey = edgeKey;
         doLinkAnalysis(p);
       });
     }
   }).addTo(layerGroups.edges);
+  _syncSelectedEdgeVisibility(features);
 }
 
 function rerenderEdges() {
@@ -1327,6 +1366,8 @@ function toggleEdges() {
     }
   } else {
     map.removeLayer(layerGroups.edges);
+    _selectedEdgeKey = null;
+    closeLinkAnalysis();
   }
 }
 
@@ -1932,6 +1973,8 @@ function doClearCalculations() {
     _selectedTowerCoverageSource = null;
     _resetPointCoverageMode();
     if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
+    _selectedEdgeKey = null;
+    closeLinkAnalysis();
     setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
   });
 }
@@ -2545,6 +2588,7 @@ function _drawPathProfile(data) {
 let _linkAnalysisHoverMarker = null;
 
 function closeLinkAnalysis() {
+  _selectedEdgeKey = null;
   document.getElementById('link-analysis-panel').style.display = 'none';
   let canvas = document.getElementById('link-analysis-canvas');
   if (canvas) { canvas.onmousemove = null; canvas.onmouseleave = null; }
