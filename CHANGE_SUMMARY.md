@@ -24,3 +24,6 @@
 - 2026-03-06: Added gap/search-hex visualization filters (`algorithm`, `phase`) and renderer styling by `(algorithm, phase)` for DP/greedy/combined views.
 - 2026-03-06: Updated tower-coverage rendering/filtering to use serving source (`serving_tower_id`) first, with `closest_tower_id` fallback for backward compatibility.
 - 2026-03-06: Added API regression coverage for forwarding `coverage_h3_resolution` in runtime tower-coverage calculate requests.
+- 2026-03-06: Added dual optimization progress bars (DP + Greedy) in the Optimization Log panel with route-aware labels and weighted percent updates.
+- 2026-03-06: Extended optimization SSE payloads with additive structured `progress` events while keeping existing `log`/`done`/`error` compatibility.
+- 2026-03-06: Added backend regression tests for progress streaming (`tests/test_optimization_progress.py`) covering monotonic per-algorithm progress and mixed success/failure runs.

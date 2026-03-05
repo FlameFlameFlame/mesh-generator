@@ -68,6 +68,11 @@ let _hasRoutes = false;
 let _hasElevation = false;
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
+const _OPT_PROGRESS_ALGOS = ['dp', 'greedy'];
+let _optProgressState = {
+  dp: {percent: 0, label: 'Queued…', error: false},
+  greedy: {percent: 0, label: 'Queued…', error: false},
+};
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
   let ready = _hasRoutes && _hasElevation;
@@ -75,6 +80,72 @@ function _updateOptimizeBtn() {
   btn.title = ready
     ? 'Run mesh_calculator optimization'
     : 'Requires: Filter P2P + Download Elevation';
+}
+
+function _titleCaseAlgo(algo) {
+  return algo === 'dp' ? 'DP' : 'Greedy';
+}
+
+function _setOptimizationProgressRow(algo, percent, label, hasError) {
+  let bar = document.getElementById('opt-progress-bar-' + algo);
+  let pct = document.getElementById('opt-progress-pct-' + algo);
+  let lbl = document.getElementById('opt-progress-label-' + algo);
+  let row = document.getElementById('opt-progress-row-' + algo);
+  if (!bar || !pct || !lbl || !row) return;
+  let val = Math.max(0, Math.min(100, percent || 0));
+  bar.value = val;
+  pct.textContent = Math.round(val) + '%';
+  lbl.textContent = label || 'Running…';
+  if (hasError) row.classList.add('error');
+  else row.classList.remove('error');
+}
+
+function _resetOptimizationProgressUI() {
+  _optProgressState = {
+    dp: {percent: 0, label: 'Queued…', error: false},
+    greedy: {percent: 0, label: 'Queued…', error: false},
+  };
+  let panel = document.getElementById('opt-progress-panel');
+  if (panel) panel.style.display = 'grid';
+  _OPT_PROGRESS_ALGOS.forEach(function(algo) {
+    _setOptimizationProgressRow(algo, 0, 'Queued…', false);
+  });
+}
+
+function _formatOptimizationProgressLabel(progress) {
+  let stage = String(progress.stage || '').toLowerCase();
+  let step = progress.step || '';
+  if (stage === 'route') {
+    let idx = progress.route_index || 0;
+    let total = progress.route_total || 0;
+    let routeLabel = progress.route_label || progress.route_id || 'route';
+    if (idx > 0 && total > 0) {
+      return 'Route ' + idx + '/' + total + ' • ' + routeLabel + ' • ' + step;
+    }
+    return routeLabel + ' • ' + step;
+  }
+  if (stage === 'done') return step || 'Done';
+  if (stage === 'error') return step || 'Error';
+  return step || 'Running…';
+}
+
+function _handleOptimizationProgress(progress) {
+  if (!progress || typeof progress !== 'object') return;
+  let algo = String(progress.algorithm || '').toLowerCase();
+  if (_OPT_PROGRESS_ALGOS.indexOf(algo) < 0) return;
+  let prev = _optProgressState[algo] || {percent: 0, label: 'Queued…', error: false};
+  let rawPct = Number(progress.percent);
+  let pct = Number.isFinite(rawPct) ? rawPct : prev.percent;
+  let stage = String(progress.stage || '').toLowerCase();
+  if (stage !== 'error') {
+    pct = Math.max(prev.percent, pct);
+  } else {
+    pct = Math.max(prev.percent, pct);
+  }
+  let hasError = stage === 'error';
+  let label = _formatOptimizationProgressLabel(progress);
+  _optProgressState[algo] = {percent: pct, label: label, error: hasError};
+  _setOptimizationProgressRow(algo, pct, label, hasError);
 }
 
 // Viridis-like 5-stop color scale
@@ -459,6 +530,8 @@ function doClear() {
       document.getElementById('color-legend').style.display = 'none';
       document.getElementById('tower-legend').style.display = 'none';
       document.getElementById('report-panel').style.display = 'none';
+      let optProg = document.getElementById('opt-progress-panel');
+      if (optProg) optProg.style.display = 'none';
       setStatus('');
       _hasRoads = false;
       _hasRoutes = false;
@@ -1852,6 +1925,8 @@ function doClearCalculations() {
     if (toggleEl2) toggleEl2.style.display = 'none';
     document.getElementById('tower-legend').style.display = 'none';
     document.getElementById('report-panel').style.display = 'none';
+    let optProg = document.getElementById('opt-progress-panel');
+    if (optProg) optProg.style.display = 'none';
     hasCoverage = false; coverageFetched = false;
     towerCoverageData = null; towerCoverageFetched = false;
     _selectedTowerCoverageSource = null;
@@ -2090,6 +2165,7 @@ function doRunOptimization() {
   let logPre = document.getElementById('opt-log');
   logPanel.style.display = 'block';
   logPre.textContent = '';
+  _resetOptimizationProgressUI();
 
   let outputDir = document.getElementById('output-dir').value.trim();
   fetch('/api/run-optimization', {
@@ -2100,6 +2176,8 @@ function doRunOptimization() {
     if (res.error) {
       btn.disabled = false;
       setStatus('Optimization failed: ' + res.error);
+      let panel = document.getElementById('opt-progress-panel');
+      if (panel) panel.style.display = 'none';
       return;
     }
     if (res.warning) {
@@ -2115,6 +2193,9 @@ function doRunOptimization() {
         logPre.textContent += d.log + '\n';
         logPre.scrollTop = logPre.scrollHeight;
       }
+      if (d.progress) {
+        _handleOptimizationProgress(d.progress);
+      }
       if (d.done) {
         es.close();
         btn.disabled = false;
@@ -2127,6 +2208,9 @@ function doRunOptimization() {
       if (d.error) {
         es.close();
         btn.disabled = false;
+        _OPT_PROGRESS_ALGOS.forEach(function(algo) {
+          _setOptimizationProgressRow(algo, _optProgressState[algo].percent, 'Error: ' + d.error, true);
+        });
         setStatus('Optimization error: ' + d.error);
       }
     };

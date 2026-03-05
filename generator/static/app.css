@@ -136,6 +136,43 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
+  #opt-progress-panel {
+    margin-top: 6px;
+    margin-bottom: 6px;
+    display: grid;
+    gap: 8px;
+  }
+  .opt-progress-row {
+    background: rgba(127, 127, 127, 0.08);
+    border: 1px solid var(--panel-border);
+    border-radius: 5px;
+    padding: 6px 8px;
+  }
+  .opt-progress-row.error {
+    border-color: #cc6666;
+    background: rgba(204, 102, 102, 0.12);
+  }
+  .opt-progress-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 4px;
+    font-size: 0.86em;
+  }
+  .opt-progress-algo {
+    font-weight: 700;
+  }
+  .opt-progress-row progress {
+    width: 100%;
+    height: 12px;
+  }
+  .opt-progress-label {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 0.82em;
+    line-height: 1.35;
+    min-height: 1.35em;
+  }
 
   /* --- Dark mode --- */
   :root {
