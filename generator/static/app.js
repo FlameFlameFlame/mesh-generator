@@ -1880,6 +1880,10 @@ function _renderOptimizationResult(res) {
     status += '  |  Warning: mast height < ' + _LOW_MAST_WARN_THRESHOLD_M +
       ' m can cause NLOS/disconnected results; increase mast or towers/route.';
   }
+  let strictLos = document.getElementById('set-los-policy').value !== 'budget';
+  if (strictLos && ((dpSummary.num_clusters || 1) > 1 || (greedySummary.num_clusters || 1) > 1)) {
+    status += '  |  Strict LOS produced disconnected clusters. Increase mast height or towers/route.';
+  }
   setStatus(status);
 
   // Clear legacy tower/edge layers (they are now managed by dp/greedyLayerGroup)
@@ -1935,7 +1939,7 @@ function _renderOptimizationResult(res) {
       total_cells: dpSummary.total_cells || 0,
       cells_with_towers: dpSummary.total_towers || 0,
       total_towers: dpSummary.total_towers || 0,
-      num_clusters: 1,
+      num_clusters: dpSummary.num_clusters || 1,
       towers_by_source: (dpSummary.route_summaries || []).reduce(function(acc, r) {
         acc[r.route_id] = (r.towers_new || 0) + (r.towers_reused || 0);
         return acc;
