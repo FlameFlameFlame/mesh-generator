@@ -80,13 +80,18 @@ def _write_status_json(output_dir: str, **kwargs) -> None:
 _opt_log_queue = queue.Queue()
 _opt_result = {}  # stores final optimization result for the stream endpoint
 _opt_running = False
+_thread_local = threading.local()  # per-thread strategy label for log prefixing
 
 
 class _QueueLogHandler(logging.Handler):
     """Forward log records to the SSE queue when optimization is running."""
     def emit(self, record):
         if _opt_running:
-            _opt_log_queue.put(self.format(record))
+            msg = self.format(record)
+            label = getattr(_thread_local, 'strategy_label', '')
+            if label:
+                msg = f'[{label}] {msg}'
+            _opt_log_queue.put(msg)
 
 
 # Attach queue handler to mesh_calculator logger at module load time
@@ -1103,9 +1108,6 @@ def run_optimization():
     if city_features:
         city_boundaries_geojson = {"type": "FeatureCollection", "features": city_features}
 
-    import tempfile
-    tmp_dir = tempfile.mkdtemp(prefix="mesh_opt_")
-
     # Drain any stale messages from previous runs
     while not _opt_log_queue.empty():
         try:
@@ -1116,57 +1118,110 @@ def run_optimization():
     _opt_result = {}
 
     def _run_pipeline():
+        import copy
+        import shutil
+        import tempfile
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _loaded_tower_coverage
         _opt_running = True
         try:
-            logger.info(
-                "run_optimization: %d routes, max_towers=%d, output=%s",
-                len(route_specs), max_towers, tmp_dir,
-            )
-            summary = run_route_pipeline(
-                routes=route_specs,
-                mesh_config=mesh_config,
-                elevation_path=_elevation_path,
-                city_boundaries_geojson=city_boundaries_geojson,
-                output_dir=tmp_dir,
-            )
-
-            # Load output GeoJSON files
-            result = {"summary": summary}
-            for key, fname in [("towers", "towers.geojson"),
-                               ("edges", "visibility_edges.geojson"),
-                               ("coverage", "coverage.geojson"),
-                               ("tower_coverage", "tower_coverage.geojson"),
-                               ("grid_cells", "grid_cells.geojson"),
-                               ("gap_repair_hexes", "gap_repair_hexes.geojson")]:
-                fpath = os.path.join(tmp_dir, fname)
-                if os.path.isfile(fpath):
-                    with open(fpath) as f:
-                        result[key] = json.load(f)
-                    _loaded_layers[key] = result[key]
+            tmp_dir_dp = tempfile.mkdtemp(prefix="mesh_opt_dp_")
+            tmp_dir_greedy = tempfile.mkdtemp(prefix="mesh_opt_greedy_")
 
             logger.info(
-                "run_optimization complete: %d towers, %d edges",
-                summary.get("total_towers", 0), summary.get("visibility_edges", 0),
+                "run_optimization: %d routes, max_towers=%d (DP + Greedy in parallel)",
+                len(route_specs), max_towers,
             )
 
-            # Persist results to project output_dir if provided
+            def _run_one(strategy, out_dir):
+                _thread_local.strategy_label = strategy
+                config_copy = copy.deepcopy(mesh_config)
+                return run_route_pipeline(
+                    routes=route_specs,
+                    mesh_config=config_copy,
+                    elevation_path=_elevation_path,
+                    city_boundaries_geojson=city_boundaries_geojson,
+                    output_dir=out_dir,
+                    strategy=strategy,
+                )
+
+            pipeline_results = {}
+            pipeline_errors = {}
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = {
+                    pool.submit(_run_one, 'dp', tmp_dir_dp): 'dp',
+                    pool.submit(_run_one, 'greedy', tmp_dir_greedy): 'greedy',
+                }
+                for future in as_completed(futures):
+                    label = futures[future]
+                    try:
+                        pipeline_results[label] = future.result()
+                    except Exception as exc:
+                        pipeline_errors[label] = str(exc)
+                        logger.error("Pipeline '%s' failed: %s", label, exc)
+
+            # Load output GeoJSON files for each strategy
+            output_keys = [
+                ("towers", "towers.geojson"),
+                ("edges", "visibility_edges.geojson"),
+                ("coverage", "coverage.geojson"),
+                ("tower_coverage", "tower_coverage.geojson"),
+                ("grid_cells", "grid_cells.geojson"),
+                ("gap_repair_hexes", "gap_repair_hexes.geojson"),
+            ]
+
+            dual_result = {}
+            for label, tmp_dir in [('dp', tmp_dir_dp), ('greedy', tmp_dir_greedy)]:
+                if label in pipeline_errors:
+                    dual_result[label] = {"error": pipeline_errors[label]}
+                    continue
+                summary = pipeline_results[label]
+                algo_result = {"summary": summary}
+                for key, fname in output_keys:
+                    fpath = os.path.join(tmp_dir, fname)
+                    if os.path.isfile(fpath):
+                        with open(fpath) as f:
+                            algo_result[key] = json.load(f)
+                dual_result[label] = algo_result
+
+            # Update _loaded_layers from DP result (primary algorithm for coverage/grid UI)
+            dp_data = dual_result.get('dp', {})
+            for key, _ in output_keys:
+                if key in dp_data:
+                    _loaded_layers[key] = dp_data[key]
+
+            dp_summary = pipeline_results.get('dp', {})
+            greedy_summary = pipeline_results.get('greedy', {})
+            logger.info(
+                "run_optimization complete: DP=%d towers/%d edges, Greedy=%d towers/%d edges",
+                dp_summary.get("total_towers", 0), dp_summary.get("visibility_edges", 0),
+                greedy_summary.get("total_towers", 0), greedy_summary.get("visibility_edges", 0),
+            )
+
+            # Persist DP results to project output_dir if provided
             if output_dir:
-                import shutil
                 os.makedirs(output_dir, exist_ok=True)
                 for fname in ["towers.geojson", "visibility_edges.geojson",
                               "coverage.geojson", "tower_coverage.geojson",
                               "grid_cells.geojson", "gap_repair_hexes.geojson",
                               "report.json"]:
-                    src = os.path.join(tmp_dir, fname)
+                    src = os.path.join(tmp_dir_dp, fname)
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(output_dir, fname))
+                # Also save greedy results in a subdirectory
+                greedy_out = os.path.join(output_dir, "greedy")
+                os.makedirs(greedy_out, exist_ok=True)
+                for fname in ["towers.geojson", "visibility_edges.geojson", "report.json"]:
+                    src = os.path.join(tmp_dir_greedy, fname)
+                    if os.path.isfile(src):
+                        shutil.copy2(src, os.path.join(greedy_out, fname))
                 # Write full project state so the directory can be reopened
                 _save_project_to_dir(output_dir, parameters=param_overrides)
                 logger.info("Saved optimization results to %s", output_dir)
 
-            _opt_result = result
-            _opt_log_queue.put({"done": True, "summary": summary})
+            _opt_result = dual_result
+            _opt_log_queue.put({"done": True, "summary": dp_summary})
 
         except Exception as exc:
             logger.exception("run_optimization failed")
@@ -1193,6 +1248,21 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
     present — so calling this from the optimizer (which runs after export) does
     not overwrite freshly-exported data.
     """
+    default_params = {
+        "h3_resolution": 8,
+        "frequency_hz": 868_000_000,
+        "mast_height_m": 28,
+        "tx_power_mw": 500,
+        "antenna_gain_dbi": 2.0,
+        "receiver_sensitivity_dbm": -137,
+        "max_towers_per_route": 10,
+        "road_buffer_m": 0,
+        "max_coverage_radius_m": 15000,
+    }
+    export_params = dict(default_params)
+    if parameters:
+        export_params.update(parameters)
+
     sites = list(store)
     sites_path = os.path.join(output_dir, "sites.geojson")
     boundary_path = os.path.join(output_dir, "boundary.geojson")
@@ -1216,15 +1286,15 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
             roads_path=roads_export_path,
             elevation_path=elevation_export_path,
             city_boundaries_path=city_boundaries_export,
-            parameters=parameters or {},
+            parameters=export_params,
         )
         logger.info("Saved config.yaml to %s", output_dir)
 
     if _p2p_routes:
         routes_path = os.path.join(output_dir, "routes.json")
-        max_towers = (parameters or {}).get("max_towers_per_route", 8)
+        max_towers = export_params.get("max_towers_per_route", 8)
         routes_export = {
-            "parameters": {"h3_resolution": 8, "frequency_hz": 868_000_000, "mast_height_m": 28},
+            "parameters": export_params,
             "routes": [
                 dict(r,
                      max_towers_per_route=max_towers,
@@ -1242,7 +1312,7 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
         "has_routes": bool(_p2p_routes),
         "has_optimization": bool(_loaded_layers.get("towers")),
         "elevation_path": _elevation_path or "",
-        "parameters": parameters or {},
+        "parameters": export_params,
     }
     if active_routes:
         status["active_routes"] = active_routes
