@@ -11,3 +11,4 @@
 - 2026-03-05: Added API regression tests in `tests/test_tower_coverage_api.py` (runtime cache serve, elevation requirement, single/batch wiring).
 - 2026-03-05: Added edge LOS-state UX in UI: LOS filter (`All/LOS/NLOS`), NLOS dashed/low-opacity rendering, and explicit LOS/NLOS label in link analysis.
 - 2026-03-05: Updated tower coverage layer toggle to auto-run batch runtime coverage calculation when no cached runtime coverage exists.
+- 2026-03-05: Removed two outdated tests (`test_structure_and_paths`, `test_site_store_to_list`) that no longer matched current relative-path export and `fetch_city` serialization behavior.

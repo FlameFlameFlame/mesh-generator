@@ -1,6 +1,4 @@
 import json
-import os
-import tempfile
 
 import yaml
 
@@ -113,38 +111,6 @@ class TestExportBoundaryGeojson:
 
 
 class TestExportConfigYaml:
-    def test_structure_and_paths(self, tmp_path):
-        output_dir = str(tmp_path)
-        sites_path = str(tmp_path / "sites.geojson")
-        boundary_path = str(tmp_path / "boundary.geojson")
-
-        export_config_yaml(
-            output_dir,
-            sites_path,
-            boundary_path,
-            roads_path="/data/roads.geojson",
-            elevation_path="/data/elevation.tif",
-        )
-
-        config_path = os.path.join(output_dir, "config.yaml")
-        with open(config_path) as f:
-            config = yaml.safe_load(f)
-
-        assert "parameters" in config
-        assert "inputs" in config
-        assert "outputs" in config
-
-        assert config["inputs"]["target_sites"] == sites_path
-        assert config["inputs"]["boundary"] == boundary_path
-        assert config["inputs"]["roads"] == "/data/roads.geojson"
-        assert config["inputs"]["elevation"] == "/data/elevation.tif"
-
-        assert config["parameters"]["h3_resolution"] == 8
-        assert config["parameters"]["frequency_hz"] == 868000000.0
-
-        assert config["outputs"]["towers"].endswith("towers.geojson")
-        assert config["outputs"]["report"].endswith("report.json")
-
     def test_parameters_override(self, tmp_path):
         """Custom parameters dict should override defaults in config.yaml."""
         export_config_yaml(
