@@ -31,3 +31,7 @@
 - 2026-03-06: Hardened runtime tower coverage API resolution handling: `coverage_h3_resolution` is now validated to UI-supported range `6..11` (clear 400 error outside range).
 - 2026-03-06: Removed unused LOS cache allocation from runtime tower-coverage execution path in `generator/app.py` (coverage LOS pairs are unique, so cache lock overhead was pure cost).
 - 2026-03-06: Added regression test `test_calculate_rejects_out_of_range_coverage_resolution` in `tests/test_tower_coverage_api.py`.
+- 2026-03-06: Refactored runtime tower coverage UI into two explicit source modes: `Manual (map click)` and `Existing towers`, with mode-specific controls and source-mode persistence in local project state.
+- 2026-03-06: Added coverage feature state orchestration in `app.js` (`_coverageSourceMode`, `_manualCoverageModeActive`, `_manualCoverageSource`) including elevation-gated enable/disable behavior and lifecycle synchronization.
+- 2026-03-06: Updated tower-coverage auto behavior: manual mode no longer auto-batches from towers on first toggle; it now prompts map placement, while tower mode keeps current auto-batch behavior.
+- 2026-03-06: Added reset semantics: `Clear Calc` forces manual-first mode and clears tower source cache; full `Clear` disables all coverage actions until elevation is loaded again.
