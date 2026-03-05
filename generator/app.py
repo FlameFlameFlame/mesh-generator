@@ -316,16 +316,16 @@ def _parse_coverage_sources(payload: list, mesh_config) -> list:
         lat = raw.get("lat")
         lon = raw.get("lon")
 
-        if h3_index is None:
-            if lat is None or lon is None:
-                raise ValueError("Each source requires h3_index or lat/lon")
-            h3_index = h3.latlng_to_cell(float(lat), float(lon), mesh_config.h3_resolution)
-
-        if lat is None or lon is None:
-            lat, lon = h3.cell_to_latlng(h3_index)
-        else:
+        # If lat/lon is provided, always snap to requested coverage resolution.
+        # This keeps coverage resolution independent from optimization H3.
+        if lat is not None and lon is not None:
             lat = float(lat)
             lon = float(lon)
+            h3_index = h3.latlng_to_cell(lat, lon, mesh_config.h3_resolution)
+        else:
+            if h3_index is None:
+                raise ValueError("Each source requires h3_index or lat/lon")
+            lat, lon = h3.cell_to_latlng(h3_index)
 
         if source_id is None:
             source_id = raw.get("tower_id")
@@ -360,6 +360,15 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         k: v for k, v in params.items()
         if k in MeshConfig.__dataclass_fields__
     })
+    coverage_h3_resolution = body.get("coverage_h3_resolution")
+    if coverage_h3_resolution is not None:
+        try:
+            coverage_h3_resolution = int(coverage_h3_resolution)
+        except (TypeError, ValueError):
+            return jsonify({"error": "coverage_h3_resolution must be an integer"}), 400
+        if coverage_h3_resolution < 0:
+            return jsonify({"error": "coverage_h3_resolution must be non-negative"}), 400
+        mesh_config.h3_resolution = coverage_h3_resolution
 
     try:
         sources = _parse_coverage_sources(sources_payload, mesh_config)
@@ -394,6 +403,7 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         "source_count": len(sources),
         "feature_count": len(geojson.get("features", [])),
         "h3_resolution": mesh_config.h3_resolution,
+        "coverage_h3_resolution": mesh_config.h3_resolution,
         "max_radius_m": max_radius_m if max_radius_m is not None else mesh_config.max_coverage_radius_m,
     })
 

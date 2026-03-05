@@ -105,6 +105,19 @@
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
       <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Gap Repair Search Hexes</label>
+      <div class="sub-control" id="gap-repair-filter-row" style="display:none;">
+        <select id="gap-repair-algo-filter" onchange="rerenderGapRepairHexes()">
+          <option value="all">All algorithms</option>
+          <option value="dp">DP only</option>
+          <option value="greedy">Greedy only</option>
+        </select>
+        <select id="gap-repair-phase-filter" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+          <option value="all">All phases</option>
+          <option value="initial">Initial</option>
+          <option value="gap_repair">Gap repair</option>
+          <option value="fallback_initial">Fallback initial</option>
+        </select>
+      </div>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons (roads)</label>
       <div class="sub-control" id="coverage-metric-row" style="display:none;">
         <select id="coverage-metric" onchange="renderCoverage()">
@@ -117,6 +130,10 @@
       </div>
       <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
       <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
+        <label title="H3 resolution used only for runtime tower coverage">
+          Tower coverage H3
+          <input id="tower-coverage-h3-resolution" type="number" value="8" min="6" max="11" step="1" style="width:70px;">
+        </label>
         <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
           <option value="tower_id">Color by tower</option>
           <option value="received_power_dbm">Received power (dBm)</option>
