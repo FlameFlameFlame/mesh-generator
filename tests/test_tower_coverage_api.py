@@ -100,3 +100,15 @@ def test_calculate_single_forwards_coverage_resolution(monkeypatch):
         })
     assert resp.status_code == 200
     assert captured["body"]["coverage_h3_resolution"] == 10
+
+
+def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
+    monkeypatch.setattr(app_mod, "_elevation_path", __file__)
+    with app.test_client() as client:
+        resp = client.post("/api/tower-coverage/calculate", json={
+            "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},
+            "parameters": {"h3_resolution": 8},
+            "coverage_h3_resolution": 12,
+        })
+    assert resp.status_code == 400
+    assert "between 6 and 11" in resp.get_json()["error"]
