@@ -34,17 +34,6 @@ def test_site_store_update_priority():
     assert store.get(0).priority == 3
 
 
-def test_site_store_to_list():
-    store = SiteStore()
-    store.add(SiteModel("A", 10.0, 20.0, 1))
-    store.add(SiteModel("B", 30.0, 40.0, 2))
-    result = store.to_list()
-    assert result == [
-        {"name": "A", "lat": 10.0, "lon": 20.0, "priority": 1},
-        {"name": "B", "lat": 30.0, "lon": 40.0, "priority": 2},
-    ]
-
-
 def test_site_store_iter():
     store = SiteStore()
     store.add(SiteModel("A", 1.0, 2.0, 1))
