@@ -1,0 +1,34 @@
+{
+  "total_cells": 145,
+  "cells_with_towers": 11,
+  "total_towers": 11,
+  "physical_towers": 9,
+  "virtual_towers": 2,
+  "towers_by_source": {
+    "site": 2,
+    "priority_1": 9
+  },
+  "num_clusters": 10,
+  "cluster_info": {
+    "total_clusters": 10,
+    "cluster_sizes": {
+      "1": 1,
+      "2": 1,
+      "3": 1,
+      "4": 1,
+      "5": 2,
+      "7": 1,
+      "8": 1,
+      "9": 1,
+      "10": 1,
+      "11": 1
+    }
+  },
+  "coverage": {
+    "covered_cells": 39,
+    "total_cells": 145,
+    "coverage_pct": 26.9,
+    "tx_power_dbm": 26.99,
+    "link_budget_db": 167.99
+  }
+}

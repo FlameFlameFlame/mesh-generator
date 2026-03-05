@@ -23,6 +23,9 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup(),
                     gapRepairHexes: L.layerGroup() };
+// Per-algorithm sublayer groups for dual-result display
+let dpLayerGroup = L.layerGroup().addTo(map);
+let greedyLayerGroup = L.layerGroup();
 let coverageData = null;  // cached GeoJSON from /api/coverage
 let towerCoverageData = null;  // cached GeoJSON from /api/tower-coverage
 let towerCoverageFetched = false;
@@ -52,6 +55,9 @@ let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
 let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
 let _sharedWayIds = new Set();   // way_ids used by 2+ active routes (for shared-road style)
 let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by multiple routes
+// Dual-algorithm optimization results
+let _optDualResult = null;  // { dp: {...}, greedy: {...} } from last optimization
+let _activeAlgo = 'dp';     // 'dp' | 'greedy' | 'both'
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
 let _hasRoutes = false;
@@ -1075,8 +1081,10 @@ function renderLayers(layers) {
 
 /** Render a visibility_edges GeoJSON FeatureCollection into layerGroups.edges.
  *  Labels links with site names (derived from nearest site to each endpoint).
- *  Clicking a link opens the link-analysis terrain profile panel. */
-function _renderEdgeLayer(edgesGeojson) {
+ *  Clicking a link opens the link-analysis terrain profile panel.
+ *  @param {object} [styleOverrides] — optional Leaflet path style overrides (e.g. {dashArray: '6 4'})
+ */
+function _renderEdgeLayer(edgesGeojson, styleOverrides) {
   L.geoJSON(edgesGeojson, {
     style: function(feature) {
       let lt = feature.properties.link_type;
@@ -1084,6 +1092,7 @@ function _renderEdgeLayer(edgesGeojson) {
       let dashed = (lt === 'red') ? '6 4' : null;
       let opts = { color: color, weight: 2.5, opacity: 0.85 };
       if (dashed) opts.dashArray = dashed;
+      if (styleOverrides) Object.assign(opts, styleOverrides);
       return opts;
     },
     onEachFeature: function(feature, layer) {
@@ -1119,6 +1128,11 @@ function _renderEdgeLayer(edgesGeojson) {
       });
     }
   }).addTo(layerGroups.edges);
+}
+
+/** Render edges with style overrides into the currently targeted layerGroups.edges. */
+function _renderEdgeLayerStyled(edgesGeojson, styleOverrides) {
+  _renderEdgeLayer(edgesGeojson, styleOverrides);
 }
 
 function showTowerLegend(sourceCounts) {
@@ -1493,6 +1507,12 @@ function doClearCalculations() {
     layerGroups.edges.clearLayers();
     layerGroups.coverage.clearLayers();
     layerGroups.towerCoverage.clearLayers();
+    layerGroups.gapRepairHexes.clearLayers();
+    dpLayerGroup.clearLayers();
+    greedyLayerGroup.clearLayers();
+    _optDualResult = null;
+    let toggleEl2 = document.getElementById('algo-toggle');
+    if (toggleEl2) toggleEl2.style.display = 'none';
     document.getElementById('tower-legend').style.display = 'none';
     document.getElementById('report-panel').style.display = 'none';
     hasCoverage = false; coverageFetched = false;
@@ -1501,60 +1521,160 @@ function doClearCalculations() {
   });
 }
 
+/** Render towers from a single algorithm's data into targetLayerGroup.
+ * algo: 'dp' | 'greedy' — controls visual style
+ */
+function _renderAlgorithmTowers(algoData, targetLayerGroup, algo) {
+  if (!algoData || !algoData.towers) return {};
+  let sourceCounts = {};
+  L.geoJSON(algoData.towers, {
+    pointToLayer: function(feature, latlng) {
+      let src = feature.properties.route_id || feature.properties.source || 'route';
+      sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+      let color = PAIR_COLORS[Object.keys(sourceCounts).indexOf(src) % PAIR_COLORS.length];
+      let alg = feature.properties.algorithm;
+      let borderColor = alg === 'dp_repair' ? '#e6a000'
+                      : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
+                      : '#000';
+      // Greedy: hollow circles with thicker border; DP: filled (standard style)
+      let isGreedy = (algo === 'greedy');
+      let marker = L.circleMarker(latlng, {
+        radius: 7,
+        color: isGreedy ? '#e67e22' : borderColor,
+        weight: isGreedy ? 3 : (alg === 'dp' || alg === 'site' ? 1.5 : 3),
+        fillColor: color,
+        fillOpacity: isGreedy ? 0 : 0.9,
+      });
+      let cityLink = feature.properties.city_link ? ' \ud83c\udfd9 City link' : '';
+      let algoLabel = isGreedy ? ' [Greedy]' : ' [DP]';
+      marker.bindTooltip(
+        '<b>Tower ' + (feature.properties.tower_id || '') + '</b>' + algoLabel + '<br>' +
+        'Route: ' + src + cityLink + '<br>' +
+        'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026' +
+        _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
+        {direction: 'top'}
+      );
+      return marker;
+    }
+  }).addTo(targetLayerGroup);
+  return sourceCounts;
+}
+
+/** Render visibility edges from a single algorithm's data into targetLayerGroup.
+ * algo: 'dp' | 'greedy' — greedy uses dashed lines
+ */
+function _renderAlgorithmEdges(algoData, targetLayerGroup, algo) {
+  if (!algoData || !algoData.edges) return;
+  let isGreedy = (algo === 'greedy');
+  // Use a temporary swap of layerGroups.edges so _renderEdgeLayer targets targetLayerGroup
+  let saved = layerGroups.edges;
+  layerGroups.edges = targetLayerGroup;
+  if (isGreedy) {
+    // Render greedy edges with dashed style by injecting dash override
+    _renderEdgeLayerStyled(algoData.edges, {dashArray: '6 4'});
+  } else {
+    _renderEdgeLayer(algoData.edges);
+  }
+  layerGroups.edges = saved;
+}
+
+/** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
+function _applyAlgoToggle(mode) {
+  _activeAlgo = mode;
+  dpLayerGroup.clearLayers();
+  greedyLayerGroup.clearLayers();
+
+  if (!_optDualResult) return;
+
+  let allSourceCounts = {};
+  if (mode === 'dp' || mode === 'both') {
+    let sc = _renderAlgorithmTowers(_optDualResult.dp, dpLayerGroup, 'dp');
+    Object.assign(allSourceCounts, sc);
+    _renderAlgorithmEdges(_optDualResult.dp, dpLayerGroup, 'dp');
+  }
+  if (mode === 'greedy' || mode === 'both') {
+    let sc = _renderAlgorithmTowers(_optDualResult.greedy, greedyLayerGroup, 'greedy');
+    if (mode === 'greedy') Object.assign(allSourceCounts, sc);
+    _renderAlgorithmEdges(_optDualResult.greedy, greedyLayerGroup, 'greedy');
+  }
+
+  // Show/hide greedy layer
+  if (mode === 'greedy' || mode === 'both') {
+    greedyLayerGroup.addTo(map);
+  } else {
+    map.removeLayer(greedyLayerGroup);
+  }
+
+  showTowerLegend(allSourceCounts);
+}
+
 function _renderOptimizationResult(res) {
-  let s = res.summary || {};
+  // res is { dp: {...}, greedy: {...} }
+  _optDualResult = res;
+
+  let dpData = res.dp || {};
+  let greedyData = res.greedy || {};
+  let dpSummary = dpData.summary || {};
+  let greedySummary = greedyData.summary || {};
+
   setStatus(
-    'Optimization complete: ' + (s.total_towers || 0) + ' towers, ' +
-    (s.visibility_edges || 0) + ' links'
+    'Optimization complete — DP: ' + (dpSummary.total_towers || 0) + ' towers / ' +
+    (dpSummary.visibility_edges || 0) + ' links' +
+    '  |  Greedy: ' + (greedySummary.total_towers || 0) + ' towers / ' +
+    (greedySummary.visibility_edges || 0) + ' links'
   );
 
+  // Clear legacy tower/edge layers (they are now managed by dp/greedyLayerGroup)
   layerGroups.towers.clearLayers();
-  let sourceCounts = {};
-  if (res.towers) {
-    _cachedTowersGeojson = res.towers;
-    L.geoJSON(res.towers, {
-      pointToLayer: function(feature, latlng) {
-        let src = feature.properties.route_id || feature.properties.source || 'route';
-        sourceCounts[src] = (sourceCounts[src] || 0) + 1;
-        let color = PAIR_COLORS[Object.keys(sourceCounts).indexOf(src) % PAIR_COLORS.length];
-        let alg = feature.properties.algorithm;
-        let borderColor = alg === 'dp_repair' ? '#e6a000'
-                        : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
-                        : '#000';
-        let marker = L.circleMarker(latlng, {
-          radius: 7, color: borderColor, weight: alg === 'dp' || alg === 'site' ? 1.5 : 3,
-          fillColor: color, fillOpacity: 0.9
-        });
-        let cityLink = feature.properties.city_link ? ' \ud83c\udfd9 City link' : '';
-        marker.bindTooltip(
-          '<b>Tower ' + (feature.properties.tower_id || '') + '</b><br>' +
-          'Route: ' + src + cityLink + '<br>' +
-          'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026' +
-          _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
-          {direction: 'top'}
-        );
-        return marker;
-      }
-    }).addTo(layerGroups.towers);
-    showTowerLegend(sourceCounts);
-  }
-
   layerGroups.edges.clearLayers();
-  if (res.edges) {
-    _renderEdgeLayer(res.edges);
-    document.getElementById('chk-edges').checked = true;
+
+  // Cache DP towers for profile/other tools that reference _cachedTowersGeojson
+  if (dpData.towers) _cachedTowersGeojson = dpData.towers;
+
+  // Coverage/grid from DP result
+  if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
+  if (dpData.tower_coverage) { towerCoverageData = dpData.tower_coverage; towerCoverageFetched = true; }
+
+  // Gap repair hexes from DP result
+  layerGroups.gapRepairHexes.clearLayers();
+  if (dpData.gap_repair_hexes) {
+    L.geoJSON(dpData.gap_repair_hexes, {
+      style: function(feature) {
+        let round = feature.properties.repair_round || 1;
+        let color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
+        return { color: color, weight: 1, opacity: 0.7, fillColor: color, fillOpacity: 0.2 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties;
+        layer.bindTooltip(
+          'Gap repair round ' + p.repair_round +
+          '<br>Gap idx: ' + p.gap_idx +
+          '<br>Buffer ring: ' + p.buffer_ring,
+          { sticky: true }
+        );
+      }
+    }).addTo(layerGroups.gapRepairHexes);
   }
 
-  if (res.coverage) { coverageData = res.coverage; coverageFetched = true; }
-  if (res.tower_coverage) { towerCoverageData = res.tower_coverage; towerCoverageFetched = true; }
+  // Show algo toggle and reset to DP
+  let toggle = document.getElementById('algo-toggle');
+  if (toggle) {
+    toggle.style.display = 'inline-flex';
+    let radios = document.querySelectorAll('input[name="algo"]');
+    radios.forEach(r => { r.checked = (r.value === 'dp'); });
+  }
 
-  if (s.total_towers != null) {
+  // Render initial view (DP only)
+  _applyAlgoToggle('dp');
+  document.getElementById('chk-edges').checked = true;
+
+  if (dpSummary.total_towers != null) {
     showReport({
-      total_cells: s.total_cells || 0,
-      cells_with_towers: s.total_towers || 0,
-      total_towers: s.total_towers || 0,
+      total_cells: dpSummary.total_cells || 0,
+      cells_with_towers: dpSummary.total_towers || 0,
+      total_towers: dpSummary.total_towers || 0,
       num_clusters: 1,
-      towers_by_source: (s.route_summaries || []).reduce(function(acc, r) {
+      towers_by_source: (dpSummary.route_summaries || []).reduce(function(acc, r) {
         acc[r.route_id] = (r.towers_new || 0) + (r.towers_reused || 0);
         return acc;
       }, {}),
@@ -1575,8 +1695,13 @@ function doRunOptimization() {
   layerGroups.edges.clearLayers();
   layerGroups.coverage.clearLayers();
   layerGroups.towerCoverage.clearLayers();
+  dpLayerGroup.clearLayers();
+  greedyLayerGroup.clearLayers();
+  _optDualResult = null;
   document.getElementById('tower-legend').style.display = 'none';
   document.getElementById('report-panel').style.display = 'none';
+  let toggleEl = document.getElementById('algo-toggle');
+  if (toggleEl) toggleEl.style.display = 'none';
   hasCoverage = false; coverageFetched = false;
   towerCoverageData = null; towerCoverageFetched = false;
   coverageData = null;
@@ -2324,6 +2449,13 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('#history-dropdown') && !e.target.closest('#btn-history')) {
     dd.style.display = 'none';
   }
+});
+
+// Algorithm toggle (DP / Greedy / Both) — shown after optimization completes
+document.querySelectorAll('input[name="algo"]').forEach(function(r) {
+  r.addEventListener('change', function(e) {
+    _applyAlgoToggle(e.target.value);
+  });
 });
 
 // --- Dark mode ---

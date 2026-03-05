@@ -1,0 +1,28 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            44.20569675952752,
+            40.71629501256778
+          ],
+          [
+            44.21479355987589,
+            40.71152036477259
+          ]
+        ]
+      },
+      "properties": {
+        "source_id": 5,
+        "target_id": 6,
+        "distance_m": 933.7929992153076,
+        "clearance_m": 2.0,
+        "path_loss_db": 90.61540677626607
+      }
+    }
+  ]
+}
