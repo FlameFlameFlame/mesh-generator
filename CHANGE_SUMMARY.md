@@ -9,3 +9,5 @@
 - 2026-03-05: Added UI controls for runtime tower coverage: `Calc Selected`, `Calc All Shown`, and map-click `Point Coverage` mode.
 - 2026-03-05: Added tower-marker source selection and algorithm-aware batch source collection (`dp`/`greedy`/`both`) with H3 deduplication.
 - 2026-03-05: Added API regression tests in `tests/test_tower_coverage_api.py` (runtime cache serve, elevation requirement, single/batch wiring).
+- 2026-03-05: Added edge LOS-state UX in UI: LOS filter (`All/LOS/NLOS`), NLOS dashed/low-opacity rendering, and explicit LOS/NLOS label in link analysis.
+- 2026-03-05: Updated tower coverage layer toggle to auto-run batch runtime coverage calculation when no cached runtime coverage exists.
