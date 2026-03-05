@@ -350,7 +350,6 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
     try:
         from mesh_calculator.core.config import MeshConfig
         from mesh_calculator.core.elevation import ElevationProvider
-        from mesh_calculator.data.cache import LOSCache
         from mesh_calculator.network.tower_coverage import compute_h3_tower_coverage
     except ImportError as exc:
         return jsonify({"error": f"mesh_calculator import failed: {exc}"}), 500
@@ -366,8 +365,8 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
             coverage_h3_resolution = int(coverage_h3_resolution)
         except (TypeError, ValueError):
             return jsonify({"error": "coverage_h3_resolution must be an integer"}), 400
-        if coverage_h3_resolution < 0:
-            return jsonify({"error": "coverage_h3_resolution must be non-negative"}), 400
+        if coverage_h3_resolution < 6 or coverage_h3_resolution > 11:
+            return jsonify({"error": "coverage_h3_resolution must be between 6 and 11"}), 400
         mesh_config.h3_resolution = coverage_h3_resolution
 
     try:
@@ -384,13 +383,12 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
 
     elev_provider = ElevationProvider(_elevation_path)
     try:
-        los_cache = LOSCache()
         results = compute_h3_tower_coverage(
             sources=sources,
             base_cells={},
             config=mesh_config,
             elevation_provider=elev_provider,
-            los_cache=los_cache,
+            los_cache=None,
             max_radius_m=max_radius_m,
         )
     finally:

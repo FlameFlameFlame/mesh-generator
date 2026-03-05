@@ -28,3 +28,6 @@
 - 2026-03-06: Extended optimization SSE payloads with additive structured `progress` events while keeping existing `log`/`done`/`error` compatibility.
 - 2026-03-06: Added backend regression tests for progress streaming (`tests/test_optimization_progress.py`) covering monotonic per-algorithm progress and mixed success/failure runs.
 - 2026-03-06: Fixed link-analysis panel deselection behavior: clicking the same visibility link toggles profile off, and profile auto-closes if selected link is hidden by filters/layer toggle/clear actions.
+- 2026-03-06: Hardened runtime tower coverage API resolution handling: `coverage_h3_resolution` is now validated to UI-supported range `6..11` (clear 400 error outside range).
+- 2026-03-06: Removed unused LOS cache allocation from runtime tower-coverage execution path in `generator/app.py` (coverage LOS pairs are unique, so cache lock overhead was pure cost).
+- 2026-03-06: Added regression test `test_calculate_rejects_out_of_range_coverage_resolution` in `tests/test_tower_coverage_api.py`.
