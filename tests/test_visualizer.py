@@ -173,6 +173,30 @@ class TestLoadProject:
         assert data["report"] is None
         assert data["has_coverage"] is False
 
+    def test_load_prefers_config_parameters_over_stale_status(self, tmp_path):
+        config_path = _write_fixture(tmp_path)
+        status_path = tmp_path / "status.json"
+        with open(status_path, "w") as f:
+            json.dump({
+                "has_roads": True,
+                "parameters": {
+                    "mast_height_m": 2,
+                    "h3_resolution": 8,
+                },
+            }, f)
+
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        cfg["parameters"]["mast_height_m"] = 28
+        with open(config_path, "w") as f:
+            yaml.safe_dump(cfg, f)
+
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert data["project_status"]["parameters"]["mast_height_m"] == 28
+
 
 class TestCoverageEndpoint:
     def test_coverage_after_load(self, tmp_path):

@@ -17,3 +17,5 @@
 - 2026-03-05: Added low-mast warnings (<5 m) to optimization status/SSE log stream and made link-analysis use edge `mast_height_m` when available.
 - 2026-03-05: Added regression tests in `tests/test_optimization_defaults.py` for strict-default parameter normalization behavior.
 - 2026-03-05: Added strict-LOS disconnect guidance in optimization status when DP/Greedy returns multiple clusters and surfaced real `num_clusters` in the report panel.
+- 2026-03-05: Fixed project load parameter precedence so `config.yaml` parameters override stale `status.json` values (prevents accidental reuse of old mast height during optimization).
+- 2026-03-05: Added regression test `test_load_prefers_config_parameters_over_stale_status` in `tests/test_visualizer.py`.
