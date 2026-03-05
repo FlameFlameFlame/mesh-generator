@@ -170,6 +170,13 @@
       <label title="Minimum receivable signal level">RX sensitivity (dBm)
         <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1">
       </label>
+      <label title="How Fresnel clearance affects link acceptance">
+        LOS policy
+        <select id="set-los-policy">
+          <option value="strict" selected>Strict LOS (clearance &gt;= 0)</option>
+          <option value="budget">Budget + Diffraction (allow NLOS)</option>
+        </select>
+      </label>
       <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses H3 res 10 for fine terrain sampling.">Road buffer (m)
         <input id="set-road-buffer-m" type="number" value="0" min="0" max="2000" step="50">
       </label>

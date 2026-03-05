@@ -67,6 +67,7 @@
   #settings-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
   #settings-panel label { display: block; margin: 4px 0; color: #555; }
   #settings-panel input { width: 100%; padding: 3px 5px; margin-top: 2px; }
+  #settings-panel select { width: 100%; padding: 3px 5px; margin-top: 2px; }
   #path-profile-panel { position: absolute; bottom: 0; left: 0; right: 380px;
                         background: #fff; border-top: 2px solid #8ab; z-index: 900;
                         padding: 8px 12px; box-shadow: 0 -2px 8px rgba(0,0,0,0.15); }
@@ -231,6 +232,7 @@
   #settings-panel { border-top-color: var(--panel-border); }
   #settings-panel label { color: var(--muted); }
   #settings-panel input { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
+  #settings-panel select { background: var(--input-bg); border-color: var(--input-border); color: var(--fg); }
   #status-bar { background: var(--status-bg); border-top-color: var(--status-border); }
   .route-card { background: var(--card-bg); border-color: var(--card-border); }
   .route-card:hover { border-color: var(--muted); background: var(--card-hover); }
