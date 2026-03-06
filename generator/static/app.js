@@ -2220,7 +2220,10 @@ function showElevationLegend(minElev, maxElev) {
 }
 
 function toggleLayer(name) {
-  let chk = document.getElementById('chk-' + name);
+  let checkboxId = 'chk-' + name;
+  if (name === 'gapRepairHexes') checkboxId = 'chk-gap-repair-hexes';
+  let chk = document.getElementById(checkboxId);
+  if (!chk) return;
   if (chk.checked) {
     if (name === 'gapRepairHexes') rerenderGapRepairHexes();
     layerGroups[name].addTo(map);

@@ -47,3 +47,4 @@
 - 2026-03-07: Fixed optimization-result grid layer rendering by introducing per-algorithm grid caches (`_cachedGridCellsByAlgo`, `_cachedGridCellsFullByAlgo`) and active-algorithm rerendering, so `Grid Cells (road buffer)` and `Grid Cells (full boundary)` work immediately after optimization without project reload.
 - 2026-03-07: Upgraded search-hex UI to “Search Hexes (all attempts)” with additive filters (`algorithm`, `phase`, `scope`) and color modes (`buffer growth` default or `phase`), plus scope/step/radius-aware tooltips.
 - 2026-03-07: Added buffer-growth legend and resolution-aware grid tooltips (`h3_resolution`, `effective_h3_resolution`) plus optimization status summary text showing DP/Greedy effective H3 resolution and auto-refine reason when present.
+- 2026-03-07: Fixed non-rendering Search Hexes toggle by mapping `gapRepairHexes` layer to the actual checkbox id `chk-gap-repair-hexes` in `toggleLayer(...)`; layer now toggles/renderers correctly.
