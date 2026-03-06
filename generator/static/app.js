@@ -19,6 +19,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     cities: L.layerGroup().addTo(map),
                     connections: L.layerGroup().addTo(map),
                     gridCells: L.layerGroup(),
+                    gridCellsFull: L.layerGroup(),
                     coverage: L.layerGroup(),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup(),
@@ -546,6 +547,9 @@ function doClear() {
       layerGroups.gridCells.clearLayers();
       map.removeLayer(layerGroups.gridCells);
       document.getElementById('chk-grid-cells').checked = false;
+      layerGroups.gridCellsFull.clearLayers();
+      map.removeLayer(layerGroups.gridCellsFull);
+      document.getElementById('chk-grid-cells-full').checked = false;
       layerGroups.gapRepairHexes.clearLayers();
       map.removeLayer(layerGroups.gapRepairHexes);
       document.getElementById('chk-gap-repair-hexes').checked = false;
@@ -1262,6 +1266,27 @@ function renderLayers(layers) {
       layerGroups.gridCells.addTo(map);
     }
   }
+  // Full boundary grid cells
+  layerGroups.gridCellsFull.clearLayers();
+  if (layers.grid_cells_full) {
+    L.geoJSON(layers.grid_cells_full, {
+      style: function(feature) {
+        let p = feature.properties || {};
+        let fill = p.is_in_unfit_area ? '#d46a6a' : '#66c2a5';
+        return { color: fill, weight: 0.4, opacity: 0.55, fillColor: fill, fillOpacity: 0.12 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties || {};
+        layer.bindTooltip(
+          'Elev(max): ' + (p.elevation != null ? p.elevation.toFixed(0) : '?') + ' m',
+          {sticky: true}
+        );
+      }
+    }).addTo(layerGroups.gridCellsFull);
+    if (document.getElementById('chk-grid-cells-full').checked) {
+      layerGroups.gridCellsFull.addTo(map);
+    }
+  }
   // Gap repair search hexagons
   layerGroups.gapRepairHexes.clearLayers();
   _cachedGapRepairGeojson = layers.gap_repair_hexes || null;
@@ -1440,6 +1465,12 @@ function toggleGridCells() {
   let chk = document.getElementById('chk-grid-cells');
   if (chk.checked) layerGroups.gridCells.addTo(map);
   else map.removeLayer(layerGroups.gridCells);
+}
+
+function toggleGridCellsFull() {
+  let chk = document.getElementById('chk-grid-cells-full');
+  if (chk.checked) layerGroups.gridCellsFull.addTo(map);
+  else map.removeLayer(layerGroups.gridCellsFull);
 }
 
 // --- Coverage hexagons (lazy loaded) ---
@@ -1849,13 +1880,17 @@ function renderTowerCoverage() {
   let metric = document.getElementById('tower-coverage-metric').value;
   let filterSel = document.getElementById('tower-coverage-filter');
   let filterTid = filterSel ? filterSel.value : 'all';
+  let stateSel = document.getElementById('tower-coverage-state-filter');
+  let stateFilter = stateSel ? stateSel.value : 'all';
 
   let allFeatures = towerCoverageData.features || [];
-  let features = (filterTid === 'all')
-    ? allFeatures
-    : allFeatures.filter(function(f) {
-        return String(_coverageTowerId(f.properties || {})) === String(filterTid);
-      });
+  let features = allFeatures.filter(function(f) {
+    let p = f.properties || {};
+    if (stateFilter === 'covered' && !p.is_covered) return false;
+    if (stateFilter === 'uncovered' && p.is_covered) return false;
+    if (filterTid !== 'all' && String(_coverageTowerId(p)) !== String(filterTid)) return false;
+    return true;
+  });
 
   if (metric === 'tower_id') {
     // Build ordered tower ID list for consistent color assignment
@@ -1867,7 +1902,11 @@ function renderTowerCoverage() {
     towerIds.sort(function(a, b) { return a - b; });
     L.geoJSON({type: 'FeatureCollection', features: features}, {
       style: function(feature) {
-        let tid = _coverageTowerId(feature.properties || {});
+        let p = feature.properties || {};
+        let tid = _coverageTowerId(p);
+        if (!p.is_covered || tid == null) {
+          return { fillColor: '#777', fillOpacity: 0.35, color: '#222', weight: 0.2 };
+        }
         let idx = towerIds.indexOf(tid);
         let color = TOWER_HEX_COLORS[idx % TOWER_HEX_COLORS.length];
         return { fillColor: color, fillOpacity: 0.55, color: '#222', weight: 0.2 };
@@ -1878,6 +1917,7 @@ function renderTowerCoverage() {
         if (tid == null) tid = 'N/A';
         let lines = [
           'Tower ID: ' + tid,
+          'Covered: ' + (p.is_covered ? 'yes' : 'no'),
           'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
           'Distance: ' + (p.distance_m != null ? (p.distance_m / 1000).toFixed(2) + ' km' : 'N/A'),
         ];

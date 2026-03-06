@@ -49,7 +49,7 @@ def test_optimization_stream_emits_progress_and_done(monkeypatch, tmp_path):
 
     def _fake_run_route_pipeline(
         routes, mesh_config, elevation_path, city_boundaries_geojson=None,
-        output_dir="output", strategy="dp", progress_callback=None
+        boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
     ):
         route = routes[0]
         if progress_callback:
@@ -133,7 +133,7 @@ def test_optimization_progress_handles_one_algorithm_failure(monkeypatch, tmp_pa
 
     def _fake_run_route_pipeline(
         routes, mesh_config, elevation_path, city_boundaries_geojson=None,
-        output_dir="output", strategy="dp", progress_callback=None
+        boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
     ):
         if strategy == "greedy":
             raise RuntimeError("greedy failed")

@@ -399,10 +399,18 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
 
     geojson = _coverage_results_to_geojson(results)
     _runtime_tower_coverage = geojson
+    covered_count = sum(
+        1 for f in geojson.get("features", [])
+        if (f.get("properties") or {}).get("is_covered")
+    )
+    total_count = len(geojson.get("features", []))
     return jsonify({
         "coverage": geojson,
         "source_count": len(sources),
-        "feature_count": len(geojson.get("features", [])),
+        "feature_count": total_count,
+        "radius_cell_count": total_count,
+        "covered_count": covered_count,
+        "uncovered_count": max(total_count - covered_count, 0),
         "h3_resolution": mesh_config.h3_resolution,
         "coverage_h3_resolution": mesh_config.h3_resolution,
         "max_radius_m": max_radius_m if max_radius_m is not None else mesh_config.max_coverage_radius_m,
@@ -1308,6 +1316,7 @@ def run_optimization():
                 "run_optimization: %d routes, max_towers=%d (DP + Greedy in parallel)",
                 len(route_specs), max_towers,
             )
+            boundary_geojson = (_loaded_layers or {}).get("boundary")
 
             def _make_progress_callback(strategy: str):
                 def _callback(event: dict):
@@ -1326,6 +1335,7 @@ def run_optimization():
                     mesh_config=config_copy,
                     elevation_path=_elevation_path,
                     city_boundaries_geojson=city_boundaries_geojson,
+                    boundary_geojson=boundary_geojson,
                     output_dir=out_dir,
                     strategy=strategy,
                     progress_callback=_make_progress_callback(strategy),
@@ -1364,6 +1374,7 @@ def run_optimization():
                 ("edges", "visibility_edges.geojson"),
                 ("coverage", "coverage.geojson"),
                 ("grid_cells", "grid_cells.geojson"),
+                ("grid_cells_full", "grid_cells_full.geojson"),
                 ("gap_repair_hexes", "gap_repair_hexes.geojson"),
             ]
 
@@ -1415,7 +1426,8 @@ def run_optimization():
                 os.makedirs(output_dir, exist_ok=True)
                 for fname in ["towers.geojson", "visibility_edges.geojson",
                               "coverage.geojson",
-                              "grid_cells.geojson", "gap_repair_hexes.geojson",
+                              "grid_cells.geojson", "grid_cells_full.geojson",
+                              "gap_repair_hexes.geojson",
                               "report.json"]:
                     src = os.path.join(tmp_dir_dp, fname)
                     if os.path.isfile(src):
@@ -1676,6 +1688,7 @@ def load_project():
         "edges": resolve(outputs.get("visibility_edges")),
         "city_boundaries": resolve(inputs.get("city_boundaries")),
         "grid_cells": os.path.join(config_dir, "grid_cells.geojson"),
+        "grid_cells_full": os.path.join(config_dir, "grid_cells_full.geojson"),
         "gap_repair_hexes": os.path.join(config_dir, "gap_repair_hexes.geojson"),
     }
     for key, fpath in layer_files.items():

@@ -36,3 +36,8 @@
 - 2026-03-06: Updated tower-coverage auto behavior: manual mode no longer auto-batches from towers on first toggle; it now prompts map placement, while tower mode keeps current auto-batch behavior.
 - 2026-03-06: Added reset semantics: `Clear Calc` forces manual-first mode and clears tower source cache; full `Clear` disables all coverage actions until elevation is loaded again.
 - 2026-03-06: Added per-site height editing/persistence (`site_height_m`) across site CRUD, project load/save/export, and route metadata propagation; link-analysis API/UI now support and render asymmetric endpoint antenna heights from edge properties.
+- 2026-03-06: Passed boundary geometry into mesh_calculator route pipeline and added handling of `grid_cells_full.geojson` in optimization outputs and project loading/copy paths.
+- 2026-03-06: Added a new full-boundary grid layer toggle (`Grid Cells (full boundary)`) with dedicated rendering/styling in the frontend map UI.
+- 2026-03-06: Extended runtime tower-coverage API responses with `radius_cell_count`, `covered_count`, and `uncovered_count` for diagnostics and UI control.
+- 2026-03-06: Added tower-coverage cell-state filter (`All/Covered/Uncovered`) and neutral uncovered-cell styling in tower-ID visualization mode.
+- 2026-03-06: Updated optimization-progress backend test stubs to match additive `run_route_pipeline(..., boundary_geojson=...)` signature.
