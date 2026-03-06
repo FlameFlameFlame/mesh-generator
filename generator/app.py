@@ -708,7 +708,7 @@ def link_analysis():
         return jsonify({"error": "source_lat/lon and target_lat/lon required"}), 400
 
     clearance_m = body.get("clearance_m")
-    mast_height_m = float(body.get("mast_height_m", 28) or 28)
+    mast_height_m = float(body.get("mast_height_m", 5) or 5)
     source_height_m = float(body.get("source_height_m", mast_height_m) or mast_height_m)
     target_height_m = float(body.get("target_height_m", mast_height_m) or mast_height_m)
     label1 = body.get("source_label", "Tower A")
@@ -1505,12 +1505,12 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
     default_params = {
         "h3_resolution": 8,
         "frequency_hz": 868_000_000,
-        "mast_height_m": 28,
+        "mast_height_m": 5,
         "tx_power_mw": 500,
         "antenna_gain_dbi": 2.0,
         "receiver_sensitivity_dbm": -137,
         "max_towers_per_route": 10,
-        "road_buffer_m": 0,
+        "road_buffer_m": 100,
         "max_coverage_radius_m": 15000,
     }
     export_params = dict(default_params)

@@ -118,11 +118,12 @@ def export_config_yaml(
     defaults = {
         "h3_resolution": 8,
         "frequency_hz": 868000000.0,
-        "mast_height_m": 28.0,
+        "mast_height_m": 5.0,
         "tx_power_mw": 500.0,
         "antenna_gain_dbi": 2.0,
         "receiver_sensitivity_dbm": -137.0,
         "max_towers_per_route": 10,
+        "road_buffer_m": 100.0,
     }
     if parameters:
         defaults.update(parameters)
