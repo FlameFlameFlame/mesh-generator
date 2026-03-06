@@ -2257,13 +2257,13 @@ function getSettings() {
   return {
     h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
     frequency_hz: freqMhz * 1e6,
-    mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 28,
+    mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 5,
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
     antenna_gain_dbi: parseFloat(document.getElementById('set-antenna-gain').value) || 2.0,
     receiver_sensitivity_dbm: parseFloat(document.getElementById('set-rx-sensitivity').value) || -137,
     min_fresnel_clearance_m: (losPolicy === 'budget') ? null : 0.0,
     max_towers_per_route: parseInt(document.getElementById('opt-max-towers').value) || 10,
-    road_buffer_m: parseFloat(document.getElementById('set-road-buffer-m').value) || 0,
+    road_buffer_m: parseFloat(document.getElementById('set-road-buffer-m').value) || 100,
     max_coverage_radius_m: parseFloat(document.getElementById('set-coverage-radius-m').value) || 15000,
   };
 }
@@ -3010,7 +3010,7 @@ function doLinkAnalysis(edgeProps) {
     return;
   }
   let mastEl = document.getElementById('set-mast-height');
-  let uiMastH = mastEl ? (parseFloat(mastEl.value) || 28) : 28;
+  let uiMastH = mastEl ? (parseFloat(mastEl.value) || 5) : 5;
   let edgeMastH = parseFloat(edgeProps.mast_height_m);
   let mastH = Number.isFinite(edgeMastH) ? edgeMastH : uiMastH;
   let srcHeight = parseFloat(edgeProps.source_antenna_height_m);
@@ -3117,8 +3117,8 @@ function _drawLinkAnalysis(data) {
   ctx.fillRect(0, 0, W, H);
 
   let pts = data.points;
-  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 28);
-  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 28);
+  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 5);
+  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 5);
   let elevs = pts.map(function(p) { return p.elevation_m; });
   let e1 = data.tower1.elevation_m, e2 = data.tower2.elevation_m;
   // Include mast tops in Y range
@@ -3261,8 +3261,8 @@ function _attachLinkAnalysisHover(data) {
   let tooltip = document.getElementById('link-analysis-tooltip');
   if (!canvas || !tooltip) return;
 
-  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 28);
-  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 28);
+  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 5);
+  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 5);
   let pts = data.points;
 
   canvas.onmousemove = function(e) {
