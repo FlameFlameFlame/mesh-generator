@@ -351,15 +351,21 @@ map.on('click', function(e) {
   let count = sites.length + 1;
   let name = prompt('Site name:', 'Site_' + count);
   if (!name) { toggleAddMode(); return; }
-  addSite(name, e.latlng.lat, e.latlng.lng, 1);
+  addSite(name, e.latlng.lat, e.latlng.lng, 1, 0.0);
   toggleAddMode();
 });
 
-function addSite(name, lat, lon, priority) {
+function addSite(name, lat, lon, priority, siteHeightM) {
   fetch('/api/sites', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, lat, lon, priority})
+    body: JSON.stringify({
+      name,
+      lat,
+      lon,
+      priority,
+      site_height_m: Number.isFinite(siteHeightM) ? siteHeightM : 0.0,
+    })
   }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
 }
 
@@ -378,11 +384,14 @@ function refresh() {
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
     let label = s.name + (s.boundary_name ? ' [' + s.boundary_name + ']' : '');
+    let siteHeight = Number(s.site_height_m);
+    if (!Number.isFinite(siteHeight)) siteHeight = 0.0;
     let chk = '<input type="checkbox" title="Download city boundary on \'Download Roads\'"'
             + (s.fetch_city !== false ? ' checked' : '')
             + ' onclick="event.stopPropagation()" onchange="toggleFetchCity(' + i + ', this.checked)">';
     tr.innerHTML = '<td>' + chk + '</td><td>' + label + '</td><td>' +
-      '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td>';
+      '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td><td>' +
+      siteHeight.toFixed(1) + '</td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
     tbody.appendChild(tr);
@@ -398,6 +407,7 @@ function selectSite(i) {
   let s = sites[i];
   document.getElementById('edit-name').value = s.name;
   document.getElementById('edit-priority').value = s.priority;
+  document.getElementById('edit-site-height').value = Number(s.site_height_m || 0);
   let info = document.getElementById('city-info');
   if (s.boundary_name) {
     info.textContent = 'City: ' + s.boundary_name;
@@ -413,11 +423,13 @@ function doUpdate() {
   if (selectedIdx < 0) return;
   let name = document.getElementById('edit-name').value.trim();
   let priority = parseInt(document.getElementById('edit-priority').value);
+  let siteHeight = parseFloat(document.getElementById('edit-site-height').value);
+  if (!Number.isFinite(siteHeight) || siteHeight < 0) siteHeight = 0.0;
   if (!name) return;
   fetch('/api/sites/' + selectedIdx, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({name, priority})
+    body: JSON.stringify({name, priority, site_height_m: siteHeight})
   }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
 }
 
@@ -2765,6 +2777,10 @@ function doLinkAnalysis(edgeProps) {
   let uiMastH = mastEl ? (parseFloat(mastEl.value) || 28) : 28;
   let edgeMastH = parseFloat(edgeProps.mast_height_m);
   let mastH = Number.isFinite(edgeMastH) ? edgeMastH : uiMastH;
+  let srcHeight = parseFloat(edgeProps.source_antenna_height_m);
+  if (!Number.isFinite(srcHeight)) srcHeight = mastH;
+  let dstHeight = parseFloat(edgeProps.target_antenna_height_m);
+  if (!Number.isFinite(dstHeight)) dstHeight = mastH;
 
   let label1 = _towerLabel(edgeProps.source_lat, edgeProps.source_lon, edgeProps.source_id);
   let label2 = _towerLabel(edgeProps.target_lat, edgeProps.target_lon, edgeProps.target_id);
@@ -2779,6 +2795,8 @@ function doLinkAnalysis(edgeProps) {
       target_lon: edgeProps.target_lon,
       clearance_m: edgeProps.clearance_m,
       mast_height_m: mastH,
+      source_height_m: srcHeight,
+      target_height_m: dstHeight,
       source_label: label1,
       target_label: label2,
     })
@@ -2829,12 +2847,13 @@ function _drawLinkAnalysis(data) {
   ctx.fillRect(0, 0, W, H);
 
   let pts = data.points;
-  let mastH = data.mast_height_m || 28;
+  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 28);
+  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 28);
   let elevs = pts.map(function(p) { return p.elevation_m; });
   let e1 = data.tower1.elevation_m, e2 = data.tower2.elevation_m;
   // Include mast tops in Y range
   let minE = Math.min.apply(null, elevs);
-  let maxE = Math.max(Math.max.apply(null, elevs), e1 + mastH, e2 + mastH);
+  let maxE = Math.max(Math.max.apply(null, elevs), e1 + srcHeight, e2 + dstHeight);
   let rangeE = maxE - minE || 1;
   let maxD = data.distance_m;
 
@@ -2904,8 +2923,8 @@ function _drawLinkAnalysis(data) {
   ctx.stroke();
 
   // Mast tops (antenna height line: straight LOS between antenna tops)
-  let yAnt1 = yOf(e1 + mastH);
-  let yAnt2 = yOf(e2 + mastH);
+  let yAnt1 = yOf(e1 + srcHeight);
+  let yAnt2 = yOf(e2 + dstHeight);
   ctx.beginPath();
   ctx.moveTo(xOf(0), yAnt1);
   ctx.lineTo(xOf(maxD), yAnt2);
@@ -2926,7 +2945,7 @@ function _drawLinkAnalysis(data) {
     for (let i = nBand; i >= 0; i--) {
       let frac = i / nBand;
       let d = frac * maxD;
-      let antElev = (e1 + mastH) + frac * ((e2 + mastH) - (e1 + mastH));
+      let antElev = (e1 + srcHeight) + frac * ((e2 + dstHeight) - (e1 + srcHeight));
       // Fresnel radius narrows at endpoints, max at midpoint
       let fz = data.clearance_m * Math.sin(Math.PI * frac);
       bandPts.push([xOf(d), yOf(antElev - fz)]);
@@ -2963,8 +2982,8 @@ function _drawLinkAnalysis(data) {
     ctx.fillText(label, x + (x < W / 2 ? 7 : -7), topY - 5);
   }
 
-  drawMast(xOf(0),   yOf(e1), yOf(e1 + mastH), data.tower1.label);
-  drawMast(xOf(maxD), yOf(e2), yOf(e2 + mastH), data.tower2.label);
+  drawMast(xOf(0),   yOf(e1), yOf(e1 + srcHeight), data.tower1.label);
+  drawMast(xOf(maxD), yOf(e2), yOf(e2 + dstHeight), data.tower2.label);
 }
 
 function _attachLinkAnalysisHover(data) {
@@ -2972,7 +2991,8 @@ function _attachLinkAnalysisHover(data) {
   let tooltip = document.getElementById('link-analysis-tooltip');
   if (!canvas || !tooltip) return;
 
-  let mastH = data.mast_height_m || 28;
+  let srcHeight = data.source_height_m != null ? data.source_height_m : (data.mast_height_m || 28);
+  let dstHeight = data.target_height_m != null ? data.target_height_m : (data.mast_height_m || 28);
   let pts = data.points;
 
   canvas.onmousemove = function(e) {
@@ -2993,8 +3013,8 @@ function _attachLinkAnalysisHover(data) {
     let lat = latlon[0], lon = latlon[1];
 
     // LOS elevation at this point (linear interpolation between antenna tops)
-    let losElev = (data.tower1.elevation_m + mastH) +
-      frac * ((data.tower2.elevation_m + mastH) - (data.tower1.elevation_m + mastH));
+    let losElev = (data.tower1.elevation_m + srcHeight) +
+      frac * ((data.tower2.elevation_m + dstHeight) - (data.tower1.elevation_m + srcHeight));
     let headroom = losElev - terrainElev;
 
     // Position tooltip in CSS pixels relative to the canvas wrapper div

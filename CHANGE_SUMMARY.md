@@ -35,3 +35,4 @@
 - 2026-03-06: Added coverage feature state orchestration in `app.js` (`_coverageSourceMode`, `_manualCoverageModeActive`, `_manualCoverageSource`) including elevation-gated enable/disable behavior and lifecycle synchronization.
 - 2026-03-06: Updated tower-coverage auto behavior: manual mode no longer auto-batches from towers on first toggle; it now prompts map placement, while tower mode keeps current auto-batch behavior.
 - 2026-03-06: Added reset semantics: `Clear Calc` forces manual-first mode and clears tower source cache; full `Clear` disables all coverage actions until elevation is loaded again.
+- 2026-03-06: Added per-site height editing/persistence (`site_height_m`) across site CRUD, project load/save/export, and route metadata propagation; link-analysis API/UI now support and render asymmetric endpoint antenna heights from edge properties.

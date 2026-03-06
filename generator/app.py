@@ -156,6 +156,7 @@ def add_site():
         lat=data["lat"],
         lon=data["lon"],
         priority=data.get("priority", 1),
+        site_height_m=float(data.get("site_height_m", 0.0) or 0.0),
         fetch_city=bool(data.get("fetch_city", True)),
     )
     store.add(site)
@@ -173,6 +174,8 @@ def update_site(idx):
         site.name = data["name"]
     if "priority" in data:
         store.update_priority(idx, data["priority"])
+    if "site_height_m" in data:
+        site.site_height_m = float(data.get("site_height_m", 0.0) or 0.0)
     if "fetch_city" in data:
         site.fetch_city = bool(data["fetch_city"])
         if not site.fetch_city:
@@ -676,7 +679,8 @@ def link_analysis():
     """Return terrain profile along a straight line between two tower endpoints.
 
     Accepts: source_lat, source_lon, target_lat, target_lon, clearance_m,
-             source_label, target_label, mast_height_m (all from the edge properties).
+             source_label, target_label, source_height_m/target_height_m
+             (or legacy mast_height_m fallback).
     Returns: points [{dist_m, elevation_m, lat, lon}], tower1/tower2 info,
              distance_m, clearance_m.
     """
@@ -694,7 +698,9 @@ def link_analysis():
         return jsonify({"error": "source_lat/lon and target_lat/lon required"}), 400
 
     clearance_m = body.get("clearance_m")
-    mast_height_m = body.get("mast_height_m", 28)
+    mast_height_m = float(body.get("mast_height_m", 28) or 28)
+    source_height_m = float(body.get("source_height_m", mast_height_m) or mast_height_m)
+    target_height_m = float(body.get("target_height_m", mast_height_m) or mast_height_m)
     label1 = body.get("source_label", "Tower A")
     label2 = body.get("target_label", "Tower B")
 
@@ -736,6 +742,8 @@ def link_analysis():
         "distance_m": round(total_dist_m, 1),
         "clearance_m": clearance_m,
         "mast_height_m": mast_height_m,
+        "source_height_m": source_height_m,
+        "target_height_m": target_height_m,
         "points": points,
         "tower1": {
             "label": label1,
@@ -972,7 +980,12 @@ def filter_p2p():
     # Include boundary_geojson so the router can use city border nodes
     # as Dijkstra endpoints instead of the site centre coordinate.
     def _site_dict(s):
-        d = {"name": s.name, "lat": s.lat, "lon": s.lon}
+        d = {
+            "name": s.name,
+            "lat": s.lat,
+            "lon": s.lon,
+            "site_height_m": float(getattr(s, "site_height_m", 0.0) or 0.0),
+        }
         if s.boundary_geojson:
             d["boundary_geojson"] = s.boundary_geojson
         return d
@@ -1646,6 +1659,7 @@ def load_project():
                 lat=coords[1],
                 lon=coords[0],
                 priority=props.get("priority", 1),
+                site_height_m=float(props.get("site_height_m", 0.0) or 0.0),
                 fetch_city=props.get("fetch_city", True),
                 boundary_name=props.get("boundary_name", ""),
             )

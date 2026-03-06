@@ -12,9 +12,9 @@ from generator.export import (
 
 def _make_sites():
     return [
-        SiteModel("Yerevan", 40.18, 44.51, 1),
-        SiteModel("Gyumri", 40.79, 43.84, 2),
-        SiteModel("Vanadzor", 40.81, 44.49, 1),
+        SiteModel("Yerevan", 40.18, 44.51, 1, site_height_m=2.5),
+        SiteModel("Gyumri", 40.79, 43.84, 2, site_height_m=7.0),
+        SiteModel("Vanadzor", 40.81, 44.49, 1, site_height_m=0.0),
     ]
 
 
@@ -58,6 +58,7 @@ class TestExportSitesGeojson:
         props = data["features"][1]["properties"]
         assert props["name"] == "Gyumri"
         assert props["priority"] == 2
+        assert props["site_height_m"] == 7.0
 
 
 class TestExportBoundaryGeojson:

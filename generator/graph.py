@@ -469,11 +469,15 @@ def _find_routes_for_pair(
                 "name": s1["name"],
                 "lat":  s1["lat"],
                 "lon":  s1["lon"],
+                **({"site_height_m": s1["site_height_m"]}
+                   if "site_height_m" in s1 else {}),
             },
             "site2":           {
                 "name": s2["name"],
                 "lat":  s2["lat"],
                 "lon":  s2["lon"],
+                **({"site_height_m": s2["site_height_m"]}
+                   if "site_height_m" in s2 else {}),
             },
             "feature_indices": feat_indices,
             "way_ids":         way_ids,
@@ -762,8 +766,20 @@ def find_route_via_waypoints(
         "ref":             refs_label,
         "road_name":       refs_label,
         "pair_idx":        pair_idx,
-        "site1":           {"name": s1["name"], "lat": s1["lat"], "lon": s1["lon"]},
-        "site2":           {"name": s2["name"], "lat": s2["lat"], "lon": s2["lon"]},
+        "site1":           {
+            "name": s1["name"],
+            "lat": s1["lat"],
+            "lon": s1["lon"],
+            **({"site_height_m": s1["site_height_m"]}
+               if "site_height_m" in s1 else {}),
+        },
+        "site2":           {
+            "name": s2["name"],
+            "lat": s2["lat"],
+            "lon": s2["lon"],
+            **({"site_height_m": s2["site_height_m"]}
+               if "site_height_m" in s2 else {}),
+        },
         "feature_indices": feat_indices,
         "way_ids":         way_ids,
     }
