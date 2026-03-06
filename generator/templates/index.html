@@ -108,6 +108,7 @@
       <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
+      <label><input type="checkbox" id="chk-grid-cells-full" onchange="toggleGridCellsFull()"> Grid Cells (full boundary)</label>
       <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Gap Repair Search Hexes</label>
       <div class="sub-control" id="gap-repair-filter-row" style="display:none;">
         <select id="gap-repair-algo-filter" onchange="rerenderGapRepairHexes()">
@@ -144,6 +145,11 @@
           <option value="path_loss_db">Path loss (dB)</option>
           <option value="distance_m">Distance to tower (m)</option>
           <option value="elevation">Elevation (m)</option>
+        </select>
+        <select id="tower-coverage-state-filter" onchange="renderTowerCoverage()">
+          <option value="all">All cells</option>
+          <option value="covered">Covered only</option>
+          <option value="uncovered">Uncovered only</option>
         </select>
         <label title="Choose source type for runtime coverage">
           Coverage Source
