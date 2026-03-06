@@ -66,6 +66,7 @@ let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by m
 // Dual-algorithm optimization results
 let _optDualResult = null;  // { dp: {...}, greedy: {...} } from last optimization
 let _activeAlgo = 'dp';     // 'dp' | 'greedy' | 'both'
+let _lastRunBaseH3Resolution = null;
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
 let _hasRoutes = false;
@@ -554,8 +555,12 @@ function doClear() {
       map.removeLayer(layerGroups.gapRepairHexes);
       document.getElementById('chk-gap-repair-hexes').checked = false;
       _cachedGapRepairGeojson = null;
+      _cachedGridCellsByAlgo = {dp: null, greedy: null};
+      _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
       let gapRow = document.getElementById('gap-repair-filter-row');
       if (gapRow) gapRow.style.display = 'none';
+      let gapLegend = document.getElementById('gap-repair-color-legend');
+      if (gapLegend) gapLegend.style.display = 'none';
       document.getElementById('chk-coverage').checked = false;
       document.getElementById('coverage-metric-row').style.display = 'none';
       document.getElementById('chk-tower-coverage').checked = false;
@@ -1116,11 +1121,10 @@ let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
 let _cachedEdgesGeojson = null;
 let _cachedGapRepairGeojson = null;
+let _cachedGridCellsByAlgo = {dp: null, greedy: null};
+let _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
 
-function _gapRepairStyle(feature) {
-  let p = feature.properties || {};
-  let algorithm = (p.algorithm || 'dp').toLowerCase();
-  let phase = (p.phase || 'gap_repair').toLowerCase();
+function _phaseColor(algorithm, phase, repairRound) {
   let color = '#ff6600';
   if (algorithm === 'greedy') {
     if (phase === 'initial') color = '#22aa66';
@@ -1130,24 +1134,168 @@ function _gapRepairStyle(feature) {
     if (phase === 'initial') color = '#3b82f6';
     else if (phase === 'fallback_initial') color = '#8b5cf6';
     else {
-      let round = p.repair_round || 1;
+      let round = repairRound || 1;
       color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
     }
   }
-  return { color: color, weight: 1, opacity: 0.75, fillColor: color, fillOpacity: 0.2 };
+  return color;
+}
+
+function _normalizeSearchScope(props) {
+  let p = props || {};
+  let scope = p.search_scope;
+  if (scope) return String(scope).toLowerCase();
+  let phase = (p.phase || 'initial').toLowerCase();
+  let algorithm = (p.algorithm || 'dp').toLowerCase();
+  if (phase === 'gap_repair') return 'gap_repair_subcorridor';
+  if (algorithm === 'greedy') return 'greedy_step_candidates';
+  if (phase === 'fallback_initial') return 'fallback_corridor';
+  return 'initial_corridor';
+}
+
+function _searchGrowthValue(props) {
+  let p = props || {};
+  let radius = Number(p.search_radius_m);
+  if (Number.isFinite(radius)) return radius;
+  let ring = Number(p.search_ring);
+  if (Number.isFinite(ring)) return ring;
+  let legacyRing = Number(p.buffer_ring);
+  if (Number.isFinite(legacyRing)) return legacyRing;
+  return 0;
+}
+
+function _growthColor(value, minValue, maxValue) {
+  let palette = ['#2d6cdf', '#2ea8d6', '#4ecb8d', '#d7d84a', '#f29c38', '#d94b3d'];
+  if (!Number.isFinite(value)) return palette[0];
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || maxValue <= minValue) {
+    return palette[Math.floor((palette.length - 1) / 2)];
+  }
+  let t = (value - minValue) / (maxValue - minValue);
+  t = Math.max(0, Math.min(1, t));
+  let idx = Math.round(t * (palette.length - 1));
+  return palette[idx];
+}
+
+function _cloneFeatureWithAlgorithm(feature, algorithm) {
+  let clonedProps = Object.assign({}, (feature || {}).properties || {});
+  if (!clonedProps.algorithm && algorithm) clonedProps.algorithm = algorithm;
+  return {
+    type: 'Feature',
+    geometry: (feature || {}).geometry,
+    properties: clonedProps,
+  };
+}
+
+function _mergeFeatureCollectionsWithAlgorithm(fcList) {
+  let features = [];
+  (fcList || []).forEach(function(entry) {
+    let fc = entry && entry.fc;
+    let algorithm = entry && entry.algorithm;
+    if (!fc || !Array.isArray(fc.features)) return;
+    fc.features.forEach(function(feature) {
+      features.push(_cloneFeatureWithAlgorithm(feature, algorithm));
+    });
+  });
+  if (!features.length) return null;
+  return {type: 'FeatureCollection', features: features};
+}
+
+function _activeAlgoFeatureCollection(cacheByAlgo) {
+  if (!_optDualResult) return cacheByAlgo.dp || null;
+  if (_activeAlgo === 'dp') return cacheByAlgo.dp || null;
+  if (_activeAlgo === 'greedy') return cacheByAlgo.greedy || cacheByAlgo.dp || null;
+  if (!cacheByAlgo.greedy) return cacheByAlgo.dp || null;
+  return _mergeFeatureCollectionsWithAlgorithm([
+    {fc: cacheByAlgo.dp, algorithm: 'dp'},
+    {fc: cacheByAlgo.greedy, algorithm: 'greedy'},
+  ]);
+}
+
+function _gridColorByResolution(resolution, isFullGrid) {
+  let r = Number(resolution);
+  if (!Number.isFinite(r)) {
+    return isFullGrid ? '#66c2a5' : '#4488ff';
+  }
+  let palette = isFullGrid
+    ? ['#66c2a5', '#5ab0bb', '#4f9ece', '#4a84de', '#596adf', '#7652cf']
+    : ['#4488ff', '#3f7ce6', '#3a70cc', '#3565b3', '#2f5999', '#2b4d80'];
+  let idx = Math.max(0, Math.min(palette.length - 1, Math.round(r - 6)));
+  return palette[idx];
+}
+
+function rerenderGridLayersForActiveAlgo() {
+  layerGroups.gridCells.clearLayers();
+  layerGroups.gridCellsFull.clearLayers();
+
+  let roadGrid = _activeAlgoFeatureCollection(_cachedGridCellsByAlgo);
+  if (roadGrid) {
+    L.geoJSON(roadGrid, {
+      style: function(feature) {
+        let p = feature.properties || {};
+        let fill = p.is_in_unfit_area
+          ? '#cc4444'
+          : _gridColorByResolution(p.h3_resolution, false);
+        return { color: fill, weight: 0.5, opacity: 0.6, fillColor: fill, fillOpacity: 0.25 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties || {};
+        let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
+        let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
+        let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
+        layer.bindTooltip(
+          'Elev: ' + elevText + ' m' +
+          '<br>H3: ' + h3Res + ' (effective ' + effRes + ')' +
+          (p.is_in_unfit_area ? '<br><i>unfit (city interior)</i>' : ''),
+          {sticky: true}
+        );
+      }
+    }).addTo(layerGroups.gridCells);
+    let chkRoad = document.getElementById('chk-grid-cells');
+    if (chkRoad && chkRoad.checked) layerGroups.gridCells.addTo(map);
+  }
+
+  let fullGrid = _activeAlgoFeatureCollection(_cachedGridCellsFullByAlgo);
+  if (fullGrid) {
+    L.geoJSON(fullGrid, {
+      style: function(feature) {
+        let p = feature.properties || {};
+        let fill = p.is_in_unfit_area
+          ? '#d46a6a'
+          : _gridColorByResolution(p.h3_resolution, true);
+        return { color: fill, weight: 0.4, opacity: 0.55, fillColor: fill, fillOpacity: 0.12 };
+      },
+      onEachFeature: function(feature, layer) {
+        let p = feature.properties || {};
+        let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
+        let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
+        let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
+        layer.bindTooltip(
+          'Elev(max): ' + elevText + ' m' +
+          '<br>H3: ' + h3Res + ' (effective ' + effRes + ')',
+          {sticky: true}
+        );
+      }
+    }).addTo(layerGroups.gridCellsFull);
+    let chkFull = document.getElementById('chk-grid-cells-full');
+    if (chkFull && chkFull.checked) layerGroups.gridCellsFull.addTo(map);
+  }
 }
 
 function _filteredGapRepairFeatures(features) {
   let algoEl = document.getElementById('gap-repair-algo-filter');
   let phaseEl = document.getElementById('gap-repair-phase-filter');
+  let scopeEl = document.getElementById('gap-repair-scope-filter');
   let algo = algoEl ? algoEl.value : 'all';
   let phase = phaseEl ? phaseEl.value : 'all';
+  let scope = scopeEl ? scopeEl.value : 'all';
   return (features || []).filter(function(f) {
     let p = f.properties || {};
     let fAlgo = (p.algorithm || 'dp').toLowerCase();
     let fPhase = (p.phase || 'gap_repair').toLowerCase();
+    let fScope = _normalizeSearchScope(p);
     if (algo !== 'all' && fAlgo !== algo) return false;
     if (phase !== 'all' && fPhase !== phase) return false;
+    if (scope !== 'all' && fScope !== scope) return false;
     return true;
   });
 }
@@ -1155,20 +1303,51 @@ function _filteredGapRepairFeatures(features) {
 function rerenderGapRepairHexes() {
   layerGroups.gapRepairHexes.clearLayers();
   let row = document.getElementById('gap-repair-filter-row');
+  let legend = document.getElementById('gap-repair-color-legend');
+  let colorModeEl = document.getElementById('gap-repair-color-mode');
+  let layerChk = document.getElementById('chk-gap-repair-hexes');
+  let colorMode = colorModeEl ? colorModeEl.value : 'buffer_growth';
   if (!_cachedGapRepairGeojson) {
     if (row) row.style.display = 'none';
+    if (legend) legend.style.display = 'none';
     return;
   }
   if (row) row.style.display = '';
   let feats = _filteredGapRepairFeatures(_cachedGapRepairGeojson.features || []);
+  let values = feats.map(function(f) {
+    return _searchGrowthValue((f || {}).properties || {});
+  });
+  let minValue = values.length ? Math.min.apply(null, values) : 0;
+  let maxValue = values.length ? Math.max.apply(null, values) : 0;
+  if (legend) {
+    if (colorMode === 'buffer_growth' && feats.length && layerChk && layerChk.checked) {
+      legend.textContent = 'Buffer growth: ' + minValue.toFixed(0) + ' to ' + maxValue.toFixed(0);
+      legend.style.display = 'block';
+    } else {
+      legend.style.display = 'none';
+    }
+  }
   L.geoJSON({type: 'FeatureCollection', features: feats}, {
-    style: _gapRepairStyle,
+    style: function(feature) {
+      let p = feature.properties || {};
+      let algorithm = (p.algorithm || 'dp').toLowerCase();
+      let phase = (p.phase || 'gap_repair').toLowerCase();
+      let color = null;
+      if (colorMode === 'phase') {
+        color = _phaseColor(algorithm, phase, p.repair_round);
+      } else {
+        color = _growthColor(_searchGrowthValue(p), minValue, maxValue);
+      }
+      return { color: color, weight: 1, opacity: 0.75, fillColor: color, fillOpacity: 0.2 };
+    },
     onEachFeature: function(feature, layer) {
       let p = feature.properties || {};
       layer.bindTooltip(
         'Algorithm: ' + (p.algorithm || 'dp') +
         '<br>Phase: ' + (p.phase || 'gap_repair') +
+        '<br>Scope: ' + _normalizeSearchScope(p) +
         '<br>Attempt: ' + (p.attempt_id != null ? p.attempt_id : '0') +
+        '<br>Step: ' + (p.step_idx != null ? p.step_idx : 'N/A') +
         '<br>Round: ' + (p.repair_round != null ? p.repair_round : 'N/A') +
         '<br>Radius: ' + (p.search_radius_m != null ? p.search_radius_m : 'N/A') + ' m' +
         '<br>Ring: ' + (p.search_ring != null ? p.search_ring : (p.buffer_ring != null ? p.buffer_ring : 'N/A')),
@@ -1244,49 +1423,11 @@ function renderLayers(layers) {
       if (siteIdx >= 0) siteCityLayers[siteIdx] = layer;
     });
   }
-  // Grid cells (road buffer)
-  layerGroups.gridCells.clearLayers();
-  if (layers.grid_cells) {
-    L.geoJSON(layers.grid_cells, {
-      style: function(feature) {
-        let p = feature.properties || {};
-        let fill = p.is_in_unfit_area ? '#cc4444' : '#4488ff';
-        return { color: fill, weight: 0.5, opacity: 0.6, fillColor: fill, fillOpacity: 0.25 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties || {};
-        layer.bindTooltip(
-          'Elev: ' + (p.elevation != null ? p.elevation.toFixed(0) : '?') + ' m' +
-          (p.is_in_unfit_area ? '<br><i>unfit (city interior)</i>' : ''),
-          {sticky: true}
-        );
-      }
-    }).addTo(layerGroups.gridCells);
-    if (document.getElementById('chk-grid-cells').checked) {
-      layerGroups.gridCells.addTo(map);
-    }
-  }
-  // Full boundary grid cells
-  layerGroups.gridCellsFull.clearLayers();
-  if (layers.grid_cells_full) {
-    L.geoJSON(layers.grid_cells_full, {
-      style: function(feature) {
-        let p = feature.properties || {};
-        let fill = p.is_in_unfit_area ? '#d46a6a' : '#66c2a5';
-        return { color: fill, weight: 0.4, opacity: 0.55, fillColor: fill, fillOpacity: 0.12 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties || {};
-        layer.bindTooltip(
-          'Elev(max): ' + (p.elevation != null ? p.elevation.toFixed(0) : '?') + ' m',
-          {sticky: true}
-        );
-      }
-    }).addTo(layerGroups.gridCellsFull);
-    if (document.getElementById('chk-grid-cells-full').checked) {
-      layerGroups.gridCellsFull.addTo(map);
-    }
-  }
+  _cachedGridCellsByAlgo.dp = layers.grid_cells || null;
+  _cachedGridCellsFullByAlgo.dp = layers.grid_cells_full || null;
+  _cachedGridCellsByAlgo.greedy = null;
+  _cachedGridCellsFullByAlgo.greedy = null;
+  rerenderGridLayersForActiveAlgo();
   // Gap repair search hexagons
   layerGroups.gapRepairHexes.clearLayers();
   _cachedGapRepairGeojson = layers.gap_repair_hexes || null;
@@ -1298,6 +1439,8 @@ function renderLayers(layers) {
   } else {
     let row = document.getElementById('gap-repair-filter-row');
     if (row) row.style.display = 'none';
+    let legend = document.getElementById('gap-repair-color-legend');
+    if (legend) legend.style.display = 'none';
   }
   // Visibility edges
   layerGroups.edges.clearLayers();
@@ -1475,13 +1618,19 @@ function showReport(report) {
 
 function toggleGridCells() {
   let chk = document.getElementById('chk-grid-cells');
-  if (chk.checked) layerGroups.gridCells.addTo(map);
+  if (chk.checked) {
+    rerenderGridLayersForActiveAlgo();
+    layerGroups.gridCells.addTo(map);
+  }
   else map.removeLayer(layerGroups.gridCells);
 }
 
 function toggleGridCellsFull() {
   let chk = document.getElementById('chk-grid-cells-full');
-  if (chk.checked) layerGroups.gridCellsFull.addTo(map);
+  if (chk.checked) {
+    rerenderGridLayersForActiveAlgo();
+    layerGroups.gridCellsFull.addTo(map);
+  }
   else map.removeLayer(layerGroups.gridCellsFull);
 }
 
@@ -2080,7 +2229,9 @@ function toggleLayer(name) {
   }
   if (name === 'gapRepairHexes') {
     let row = document.getElementById('gap-repair-filter-row');
+    let legend = document.getElementById('gap-repair-color-legend');
     if (row) row.style.display = (chk.checked && _cachedGapRepairGeojson) ? '' : 'none';
+    if (legend && !chk.checked) legend.style.display = 'none';
   }
 }
 
@@ -2160,8 +2311,14 @@ function doClearCalculations() {
     document.getElementById('tower-coverage-metric-row').style.display = 'none';
     layerGroups.gapRepairHexes.clearLayers();
     _cachedGapRepairGeojson = null;
+    _cachedGridCellsByAlgo = {dp: null, greedy: null};
+    _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
+    layerGroups.gridCells.clearLayers();
+    layerGroups.gridCellsFull.clearLayers();
     let gapRow = document.getElementById('gap-repair-filter-row');
     if (gapRow) gapRow.style.display = 'none';
+    let gapLegend = document.getElementById('gap-repair-color-legend');
+    if (gapLegend) gapLegend.style.display = 'none';
     dpLayerGroup.clearLayers();
     greedyLayerGroup.clearLayers();
     _optDualResult = null;
@@ -2262,6 +2419,18 @@ function _mergeGapRepairCollections(parts) {
   return {type: 'FeatureCollection', features: features};
 }
 
+function _formatAlgoH3Status(label, summary) {
+  summary = summary || {};
+  let effective = Number(summary.effective_h3_resolution);
+  if (!Number.isFinite(effective)) return null;
+  let base = Number(_lastRunBaseH3Resolution);
+  let reason = summary.h3_auto_refine_reason || '';
+  if (Number.isFinite(base) && base !== effective) {
+    return label + ' H3: ' + base + '→' + effective + (reason ? ' (' + reason + ')' : '');
+  }
+  return label + ' H3: ' + effective + (reason ? ' (' + reason + ')' : '');
+}
+
 /** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
 function _applyAlgoToggle(mode) {
   _activeAlgo = mode;
@@ -2300,6 +2469,7 @@ function _applyAlgoToggle(mode) {
     ]);
   }
   rerenderGapRepairHexes();
+  rerenderGridLayersForActiveAlgo();
 
   showTowerLegend(allSourceCounts);
   _syncCoverageFeatureUI();
@@ -2328,6 +2498,10 @@ function _renderOptimizationResult(res) {
   if (strictLos && ((dpSummary.num_clusters || 1) > 1 || (greedySummary.num_clusters || 1) > 1)) {
     status += '  |  Strict LOS produced disconnected clusters. Increase mast height or towers/route.';
   }
+  let dpH3Status = _formatAlgoH3Status('DP', dpSummary);
+  let greedyH3Status = _formatAlgoH3Status('Greedy', greedySummary);
+  if (dpH3Status) status += '  |  ' + dpH3Status;
+  if (greedyH3Status) status += '  |  ' + greedyH3Status;
   setStatus(status);
 
   // Clear legacy tower/edge layers (they are now managed by dp/greedyLayerGroup)
@@ -2339,6 +2513,10 @@ function _renderOptimizationResult(res) {
 
   // Coverage/grid from DP result
   if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
+  _cachedGridCellsByAlgo.dp = dpData.grid_cells || null;
+  _cachedGridCellsByAlgo.greedy = greedyData.grid_cells || null;
+  _cachedGridCellsFullByAlgo.dp = dpData.grid_cells_full || null;
+  _cachedGridCellsFullByAlgo.greedy = greedyData.grid_cells_full || null;
   towerCoverageData = null;
   towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
@@ -2383,6 +2561,7 @@ function doRunOptimization() {
   let btn = document.getElementById('btn-optimize');
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let parameters = getSettings();
+  _lastRunBaseH3Resolution = parameters.h3_resolution || null;
   _lowMastWarningActive = parameters.mast_height_m < _LOW_MAST_WARN_THRESHOLD_M;
   btn.disabled = true;
   if (_lowMastWarningActive) {
@@ -2404,6 +2583,8 @@ function doRunOptimization() {
   dpLayerGroup.clearLayers();
   greedyLayerGroup.clearLayers();
   _optDualResult = null;
+  _cachedGridCellsByAlgo = {dp: null, greedy: null};
+  _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
   document.getElementById('tower-legend').style.display = 'none';
   document.getElementById('report-panel').style.display = 'none';
   let toggleEl = document.getElementById('algo-toggle');
