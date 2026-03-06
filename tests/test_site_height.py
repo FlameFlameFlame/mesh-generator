@@ -146,3 +146,38 @@ def test_link_analysis_accepts_endpoint_heights(monkeypatch, tmp_path):
 
     assert data["source_height_m"] == 12.0
     assert data["target_height_m"] == 6.0
+
+
+def test_link_analysis_prefers_edge_endpoint_elevations(monkeypatch, tmp_path):
+    elev_path = tmp_path / "elevation.tif"
+    elev_path.write_bytes(b"fake")
+    monkeypatch.setattr(app_mod, "_elevation_path", str(elev_path))
+
+    class _FakeElevationProvider:
+        def __init__(self, _path):
+            pass
+
+        def get_elevation(self, _lat, _lon):
+            return 100.0
+
+        def get_h3_cell_max_elevation(self, _h3):
+            return 175.0
+
+    import mesh_calculator.core.elevation as elev_mod
+    monkeypatch.setattr(elev_mod, "ElevationProvider", _FakeElevationProvider)
+
+    with app.test_client() as client:
+        resp = client.post("/api/link-analysis", json={
+            "source_lat": 40.0,
+            "source_lon": 44.0,
+            "target_lat": 40.1,
+            "target_lon": 44.1,
+            "source_h3": "8828c00001fffff",
+            "target_h3": "8828c00003fffff",
+            "source_elevation_m": 210.0,
+            "target_elevation_m": 190.0,
+        })
+        data = resp.get_json()
+
+    assert data["tower1"]["elevation_m"] == 210.0
+    assert data["tower2"]["elevation_m"] == 190.0
