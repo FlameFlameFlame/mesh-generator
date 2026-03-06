@@ -109,7 +109,7 @@
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
       <label><input type="checkbox" id="chk-grid-cells-full" onchange="toggleGridCellsFull()"> Grid Cells (full boundary)</label>
-      <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Gap Repair Search Hexes</label>
+      <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Search Hexes (all attempts)</label>
       <div class="sub-control" id="gap-repair-filter-row" style="display:none;">
         <select id="gap-repair-algo-filter" onchange="rerenderGapRepairHexes()">
           <option value="all">All algorithms</option>
@@ -122,6 +122,22 @@
           <option value="gap_repair">Gap repair</option>
           <option value="fallback_initial">Fallback initial</option>
         </select>
+        <select id="gap-repair-scope-filter" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+          <option value="all">All scopes</option>
+          <option value="initial_corridor">Initial corridor</option>
+          <option value="initial_buffer_candidate">Initial buffer candidate</option>
+          <option value="initial_buffer_selected">Initial buffer selected</option>
+          <option value="fallback_corridor">Fallback corridor</option>
+          <option value="fallback_buffer_candidate">Fallback buffer candidate</option>
+          <option value="fallback_buffer_selected">Fallback buffer selected</option>
+          <option value="gap_repair_subcorridor">Gap-repair subcorridor</option>
+          <option value="greedy_step_candidates">Greedy step candidates</option>
+        </select>
+        <select id="gap-repair-color-mode" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+          <option value="buffer_growth">Color: buffer growth</option>
+          <option value="phase">Color: phase</option>
+        </select>
+        <div id="gap-repair-color-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;display:none;"></div>
       </div>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons (roads)</label>
       <div class="sub-control" id="coverage-metric-row" style="display:none;">
