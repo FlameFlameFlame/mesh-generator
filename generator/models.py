@@ -7,6 +7,7 @@ class SiteModel:
     lat: float
     lon: float
     priority: int = 1
+    site_height_m: float = 0.0
     boundary_geojson: dict | None = field(default=None, repr=False)
     boundary_name: str = ""
     fetch_city: bool = True
@@ -32,7 +33,8 @@ class SiteStore:
         result = []
         for s in self._sites:
             d = {"name": s.name, "lat": s.lat, "lon": s.lon,
-                 "priority": s.priority, "fetch_city": s.fetch_city}
+                 "priority": s.priority, "fetch_city": s.fetch_city,
+                 "site_height_m": s.site_height_m}
             if s.boundary_name:
                 d["boundary_name"] = s.boundary_name
             result.append(d)

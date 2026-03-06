@@ -25,6 +25,7 @@ def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
                 "name": site.name,
                 "priority": site.priority,
                 "fetch_city": site.fetch_city,
+                "site_height_m": site.site_height_m,
                 **({"boundary_name": site.boundary_name}
                    if site.boundary_name else {}),
             },
