@@ -702,6 +702,8 @@ def link_analysis():
     lon1 = body.get("source_lon")
     lat2 = body.get("target_lat")
     lon2 = body.get("target_lon")
+    source_h3 = body.get("source_h3")
+    target_h3 = body.get("target_h3")
     if lat1 is None or lon1 is None or lat2 is None or lon2 is None:
         return jsonify({"error": "source_lat/lon and target_lat/lon required"}), 400
 
@@ -726,6 +728,15 @@ def link_analysis():
         a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlam / 2) ** 2
         return 2 * R * math.asin(math.sqrt(a))
 
+    def _parse_float(value):
+        try:
+            if value is None:
+                return None
+            v = float(value)
+            return v if math.isfinite(v) else None
+        except Exception:
+            return None
+
     total_dist_m = _hav(lat1, lon1, lat2, lon2)
     sample_interval = 100.0
     n_samples = max(2, int(total_dist_m / sample_interval))
@@ -743,8 +754,26 @@ def link_analysis():
             "lon": round(lon, 6),
         })
 
-    elev1 = elev_provider.get_elevation(lat1, lon1)
-    elev2 = elev_provider.get_elevation(lat2, lon2)
+    source_cell_elev = _parse_float(body.get("source_elevation_m"))
+    target_cell_elev = _parse_float(body.get("target_elevation_m"))
+    if source_cell_elev is None and source_h3 and callable(
+        getattr(type(elev_provider), "get_h3_cell_max_elevation", None)
+    ):
+        try:
+            source_cell_elev = float(elev_provider.get_h3_cell_max_elevation(source_h3))
+        except Exception:
+            source_cell_elev = None
+    if target_cell_elev is None and target_h3 and callable(
+        getattr(type(elev_provider), "get_h3_cell_max_elevation", None)
+    ):
+        try:
+            target_cell_elev = float(elev_provider.get_h3_cell_max_elevation(target_h3))
+        except Exception:
+            target_cell_elev = None
+    if source_cell_elev is None:
+        source_cell_elev = float(elev_provider.get_elevation(lat1, lon1))
+    if target_cell_elev is None:
+        target_cell_elev = float(elev_provider.get_elevation(lat2, lon2))
 
     return jsonify({
         "distance_m": round(total_dist_m, 1),
@@ -758,14 +787,14 @@ def link_analysis():
             "lat": round(lat1, 6),
             "lon": round(lon1, 6),
             "dist_m": 0,
-            "elevation_m": round(elev1, 1),
+            "elevation_m": round(source_cell_elev, 1),
         },
         "tower2": {
             "label": label2,
             "lat": round(lat2, 6),
             "lon": round(lon2, 6),
             "dist_m": round(total_dist_m, 1),
-            "elevation_m": round(elev2, 1),
+            "elevation_m": round(target_cell_elev, 1),
         },
     })
 

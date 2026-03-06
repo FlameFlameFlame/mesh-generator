@@ -41,3 +41,5 @@
 - 2026-03-06: Extended runtime tower-coverage API responses with `radius_cell_count`, `covered_count`, and `uncovered_count` for diagnostics and UI control.
 - 2026-03-06: Added tower-coverage cell-state filter (`All/Covered/Uncovered`) and neutral uncovered-cell styling in tower-ID visualization mode.
 - 2026-03-06: Updated optimization-progress backend test stubs to match additive `run_route_pipeline(..., boundary_geojson=...)` signature.
+- 2026-03-07: Fixed link-profile LOS visualization mismatch by passing edge endpoint metadata (`source_h3/target_h3`, `source_elevation_m/target_elevation_m`) from frontend to `/api/link-analysis` and preferring those endpoint elevations (or H3 cell-max fallback) over centroid sampling for mast-line rendering.
+- 2026-03-07: Added regression test `test_link_analysis_prefers_edge_endpoint_elevations` in `tests/test_site_height.py`; full `mesh-generator` suite passes (80/80).
