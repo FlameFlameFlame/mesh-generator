@@ -1346,8 +1346,15 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
       let distKm = p.distance_m ? (p.distance_m / 1000).toFixed(2) : '?';
       let loss = p.path_loss_db != null ? p.path_loss_db.toFixed(1) : 'N/A';
       let clr  = p.clearance_m  != null ? p.clearance_m.toFixed(1)  : 'N/A';
+      let budget = p.link_budget_db != null ? p.link_budget_db.toFixed(1) : 'N/A';
+      let lossMargin = p.path_loss_margin_db != null ? p.path_loss_margin_db.toFixed(1) : 'N/A';
+      let clrMargin = p.clearance_margin_m != null ? p.clearance_margin_m.toFixed(1) : 'N/A';
       let losState = p.los_state || ((p.clearance_m != null && p.clearance_m < 0) ? 'nlos' : 'los');
       let losLabel = (losState === 'nlos') ? 'NLOS' : 'LOS';
+      let originLabel = p.edge_origin || 'unknown';
+      let policyLabel = p.visibility_policy || 'unknown';
+      let srcAlgo = p.source_algorithm || 'unknown';
+      let dstAlgo = p.target_algorithm || 'unknown';
 
       // Build human-readable label from nearest site names
       let lbl1 = p.source_lat != null
@@ -1365,7 +1372,12 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
         '<b>' + lbl1 + ' \u2194 ' + lbl2 + '</b><br>' +
         'Distance: ' + distKm + ' km<br>' +
         'Path loss: ' + loss + ' dB<br>' +
+        'Budget: ' + budget + ' dB (margin ' + lossMargin + ' dB)<br>' +
         'Clearance: ' + clr + ' m<br>' +
+        'Clearance margin: ' + clrMargin + ' m<br>' +
+        'Origin: ' + originLabel + '<br>' +
+        'Policy: ' + policyLabel + '<br>' +
+        'Algorithms: ' + srcAlgo + ' \u2194 ' + dstAlgo + '<br>' +
         'State: ' + losLabel +
         linkBadge + '<br>' +
         '<span style="color:#888;font-size:0.9em">Click to analyze</span>',
@@ -2847,6 +2859,19 @@ function doLinkAnalysis(edgeProps) {
   }).then(safeJson).then(function(data) {
     if (data.error) { alert('Link analysis error: ' + data.error); return; }
     data.los_state = edgeProps.los_state || ((edgeProps.clearance_m != null && edgeProps.clearance_m < 0) ? 'nlos' : 'los');
+    data.edge_debug = {
+      edge_origin: edgeProps.edge_origin,
+      visibility_policy: edgeProps.visibility_policy,
+      link_budget_db: edgeProps.link_budget_db,
+      path_loss_margin_db: edgeProps.path_loss_margin_db,
+      min_required_clearance_m: edgeProps.min_required_clearance_m,
+      clearance_margin_m: edgeProps.clearance_margin_m,
+      accepted_by_budget: edgeProps.accepted_by_budget,
+      accepted_by_clearance_policy: edgeProps.accepted_by_clearance_policy,
+      source_algorithm: edgeProps.source_algorithm,
+      target_algorithm: edgeProps.target_algorithm,
+      path_loss_db: edgeProps.path_loss_db,
+    };
     _showLinkAnalysis(data);
   }).catch(function(e) { alert('Error: ' + e); });
 }
@@ -2861,7 +2886,24 @@ function _showLinkAnalysis(data) {
   let distKm = (data.distance_m / 1000).toFixed(2);
   let clr = data.clearance_m != null ? data.clearance_m.toFixed(1) + ' m' : 'N/A';
   let losState = (data.los_state === 'nlos') ? 'NLOS' : 'LOS';
-  meta.textContent = 'Distance: ' + distKm + ' km  |  Fresnel clearance: ' + clr + '  |  State: ' + losState;
+  let dbg = data.edge_debug || {};
+  let loss = dbg.path_loss_db != null ? Number(dbg.path_loss_db).toFixed(1) + ' dB' : 'N/A';
+  let budget = dbg.link_budget_db != null ? Number(dbg.link_budget_db).toFixed(1) + ' dB' : 'N/A';
+  let margin = dbg.path_loss_margin_db != null ? Number(dbg.path_loss_margin_db).toFixed(1) + ' dB' : 'N/A';
+  let clrMargin = dbg.clearance_margin_m != null ? Number(dbg.clearance_margin_m).toFixed(1) + ' m' : 'N/A';
+  let origin = dbg.edge_origin || 'unknown';
+  let policy = dbg.visibility_policy || 'unknown';
+  let acceptedBudget = dbg.accepted_by_budget === true ? 'yes' : (dbg.accepted_by_budget === false ? 'no' : 'N/A');
+  let acceptedClearance = dbg.accepted_by_clearance_policy === true ? 'yes' : (dbg.accepted_by_clearance_policy === false ? 'no' : 'N/A');
+  let srcAlgo = dbg.source_algorithm || '?';
+  let dstAlgo = dbg.target_algorithm || '?';
+  meta.textContent =
+    'Distance: ' + distKm + ' km  |  Fresnel clearance: ' + clr + ' (margin ' + clrMargin + ')' +
+    '  |  Path loss: ' + loss + ' / budget ' + budget + ' (margin ' + margin + ')' +
+    '  |  Origin: ' + origin + '  |  Policy: ' + policy +
+    '  |  Accept(budget=' + acceptedBudget + ', clearance=' + acceptedClearance + ')' +
+    '  |  Algorithms: ' + srcAlgo + '\u2194' + dstAlgo +
+    '  |  State: ' + losState;
 
   // Close path profile if open to avoid overlap
   document.getElementById('path-profile-panel').style.display = 'none';

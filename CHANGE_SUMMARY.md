@@ -43,3 +43,4 @@
 - 2026-03-06: Updated optimization-progress backend test stubs to match additive `run_route_pipeline(..., boundary_geojson=...)` signature.
 - 2026-03-07: Fixed link-profile LOS visualization mismatch by passing edge endpoint metadata (`source_h3/target_h3`, `source_elevation_m/target_elevation_m`) from frontend to `/api/link-analysis` and preferring those endpoint elevations (or H3 cell-max fallback) over centroid sampling for mast-line rendering.
 - 2026-03-07: Added regression test `test_link_analysis_prefers_edge_endpoint_elevations` in `tests/test_site_height.py`; full `mesh-generator` suite passes (80/80).
+- 2026-03-07: Added rich link-debug UI data for visibility edges/tooltips/profile header: edge origin (`global_visibility` vs `corridor_chain`), LOS policy mode, path-loss budget margin, clearance margin, acceptance flags, and per-endpoint placement algorithms.
