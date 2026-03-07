@@ -92,8 +92,13 @@ def _write_status_json(output_dir: str, **kwargs) -> None:
 _opt_log_queue = queue.Queue()
 _opt_result = {}  # stores final optimization result for the stream endpoint
 _opt_running = False
+_opt_cancel_requested = False
 _thread_local = threading.local()  # per-thread strategy label for log prefixing
 _LOW_MAST_WARN_THRESHOLD_M = 5.0
+
+
+class _OptimizationCanceled(Exception):
+    """Raised when the user requests optimization cancellation."""
 
 
 class _QueueLogHandler(logging.Handler):
@@ -1731,7 +1736,7 @@ def run_optimization():
     Launches the pipeline in a background thread and returns immediately.
     Results are streamed via /api/optimization-stream (SSE).
     """
-    global _opt_running, _opt_result, _active_mesh_parameters
+    global _opt_running, _opt_result, _active_mesh_parameters, _opt_cancel_requested
     try:
         from mesh_calculator.core.config import MeshConfig, RouteSpec
         from mesh_calculator.optimization.route_pipeline import run_route_pipeline
@@ -1806,6 +1811,7 @@ def run_optimization():
         _opt_log_queue.put(f"WARNING: {low_mast_warning}")
 
     _opt_result = {}
+    _opt_cancel_requested = False
 
     def _run_pipeline():
         import copy
@@ -1824,6 +1830,8 @@ def run_optimization():
 
             def _make_progress_callback():
                 def _callback(event: dict):
+                    if _opt_cancel_requested:
+                        raise _OptimizationCanceled("Optimization canceled by user.")
                     if isinstance(event, dict):
                         _opt_log_queue.put({"progress": dict(event)})
                 return _callback
@@ -1842,6 +1850,8 @@ def run_optimization():
                 )
 
             summary = _run_one(tmp_dir_dp)
+            if _opt_cancel_requested:
+                raise _OptimizationCanceled("Optimization canceled by user.")
 
             output_keys = [
                 ("towers", "towers.geojson"),
@@ -1911,6 +1921,9 @@ def run_optimization():
             _opt_result = result
             _opt_log_queue.put({"done": True, "summary": summary})
 
+        except _OptimizationCanceled as exc:
+            logger.info("run_optimization canceled")
+            _opt_log_queue.put({"canceled": True, "message": str(exc)})
         except Exception as exc:
             logger.exception("run_optimization failed")
             _opt_log_queue.put({"error": str(exc)})
@@ -1919,6 +1932,17 @@ def run_optimization():
 
     threading.Thread(target=_run_pipeline, daemon=True).start()
     return jsonify({"started": True, "warning": low_mast_warning})
+
+
+@app.route("/api/cancel-optimization", methods=["POST"])
+def cancel_optimization():
+    """Request cooperative cancellation of the running optimization."""
+    global _opt_cancel_requested
+    if not _opt_running:
+        return jsonify({"error": "No optimization is running."}), 409
+    _opt_cancel_requested = True
+    logger.info("Optimization cancel requested by user")
+    return jsonify({"cancel_requested": True})
 
 
 @app.route("/api/optimization-result", methods=["GET"])
@@ -2607,7 +2631,7 @@ def optimization_stream():
                 continue
             if isinstance(item, dict):
                 yield f"data: {json.dumps(item)}\n\n"
-                if item.get("done") or item.get("error"):
+                if item.get("done") or item.get("error") or item.get("canceled"):
                     break
             else:
                 yield f"data: {json.dumps({'log': item})}\n\n"

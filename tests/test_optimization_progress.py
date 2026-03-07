@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 
 import mesh_calculator.optimization.route_pipeline as route_pipeline_mod
@@ -13,6 +14,7 @@ def _seed_minimum_optimization_state(tmp_path: Path) -> None:
     app_mod._elevation_path = str(elev)
     app_mod._grid_provider = object()
     app_mod._opt_running = False
+    app_mod._opt_cancel_requested = False
     app_mod._opt_result = {}
     app_mod._p2p_routes = [{
         "route_id": "route_0",
@@ -151,3 +153,58 @@ def test_optimization_progress_handles_pipeline_failure(monkeypatch, tmp_path):
     assert any("error" in e for e in events)
     err = next(e["error"] for e in events if "error" in e)
     assert "pipeline failed" in err
+
+
+def test_optimization_can_be_canceled(monkeypatch, tmp_path):
+    _seed_minimum_optimization_state(tmp_path)
+
+    def _fake_run_route_pipeline(
+        routes, mesh_config, grid_provider, city_boundaries_geojson=None,
+        boundary_geojson=None, output_dir="output", progress_callback=None
+    ):
+        route = routes[0]
+        # Keep emitting progress until app-level cancel flag is observed.
+        for _ in range(200):
+            if progress_callback:
+                progress_callback({
+                    "stage": "route",
+                    "step": "Preparing cells and buffer",
+                    "percent": 25.0,
+                    "route_index": 1,
+                    "route_total": len(routes),
+                    "route_id": route.route_id,
+                    "route_label": f"{route.site1.get('name')} ↔ {route.site2.get('name')} ({route.route_id})",
+                })
+            time.sleep(0.01)
+        return {
+            "routes_processed": len(routes),
+            "total_towers": 0,
+            "total_cells": 0,
+            "visibility_edges": 0,
+            "num_clusters": 0,
+            "route_summaries": [],
+            "los_cache": {},
+            "elevation_cache": {},
+        }
+
+    monkeypatch.setattr(route_pipeline_mod, "run_route_pipeline", _fake_run_route_pipeline)
+
+    with app.test_client() as client:
+        start = client.post("/api/run-optimization", json={
+            "max_towers_per_route": 5,
+            "parameters": {},
+            "output_dir": "",
+        })
+        assert start.status_code == 200
+        assert start.get_json()["started"] is True
+
+        # Give background thread a moment to enter callback loop.
+        time.sleep(0.05)
+        cancel = client.post("/api/cancel-optimization")
+        assert cancel.status_code == 200
+        assert cancel.get_json()["cancel_requested"] is True
+
+        events = _read_sse_events(client)
+
+    assert any(e.get("canceled") for e in events)
+    assert not any(e.get("done") for e in events)
