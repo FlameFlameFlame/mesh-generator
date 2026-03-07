@@ -403,6 +403,8 @@ def _normalize_mesh_parameters(param_overrides: dict | None) -> dict:
     mesh-generator default is strict LOS unless explicitly overridden.
     """
     params = dict(param_overrides or {})
+    # Base planning resolution is fixed to 8 in mesh-generator UI/workflow.
+    params["h3_resolution"] = 8
     if "min_fresnel_clearance_m" not in params:
         params["min_fresnel_clearance_m"] = 0.0
     return params

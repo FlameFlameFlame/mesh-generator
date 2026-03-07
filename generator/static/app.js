@@ -80,6 +80,7 @@ let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
 const _GRID_FULL_MIN_ZOOM = 10;
 const _GRID_VIEWPORT_MAX_CELLS = 12000;
+const _BASE_H3_RESOLUTION = 8;
 const _OPT_PROGRESS_ALGOS = ['dp'];
 let _optProgressState = {
   dp: {percent: 0, label: 'Queued…', error: false},
@@ -2885,7 +2886,7 @@ function getSettings() {
   let freqMhz = parseFloat(document.getElementById('set-frequency-mhz').value) || 868;
   let losPolicy = document.getElementById('set-los-policy').value || 'strict';
   return {
-    h3_resolution: parseInt(document.getElementById('set-h3-resolution').value) || 8,
+    h3_resolution: _BASE_H3_RESOLUTION,
     frequency_hz: freqMhz * 1e6,
     mast_height_m: parseFloat(document.getElementById('set-mast-height').value) || 5,
     tx_power_mw: parseFloat(document.getElementById('set-tx-power-mw').value) || 500,
@@ -2900,7 +2901,6 @@ function getSettings() {
 
 function applySettings(s) {
   if (!s) return;
-  if (s.h3_resolution != null) document.getElementById('set-h3-resolution').value = s.h3_resolution;
   if (s.frequency_hz != null) document.getElementById('set-frequency-mhz').value = Math.round(s.frequency_hz / 1e6);
   if (s.mast_height_m != null) document.getElementById('set-mast-height').value = s.mast_height_m;
   if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
