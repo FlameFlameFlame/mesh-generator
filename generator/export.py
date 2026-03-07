@@ -111,6 +111,7 @@ def export_config_yaml(
     boundary_path: str,
     roads_path: str = "",
     elevation_path: str = "",
+    grid_bundle_path: str = "",
     city_boundaries_path: str = "",
     parameters: dict | None = None,
 ) -> None:
@@ -141,6 +142,7 @@ def export_config_yaml(
         "inputs": {
             "boundary": _rel(boundary_path),
             "elevation": _rel(elevation_path),
+            "grid_bundle": _rel(grid_bundle_path),
             "roads": _rel(roads_path),
             "target_sites": _rel(sites_path),
             "city_boundaries": _rel(city_boundaries_path),
