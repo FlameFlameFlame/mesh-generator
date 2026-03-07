@@ -87,3 +87,4 @@
 - 2026-03-07: Removed tower-coverage `Color by tower` metric option; runtime coverage now supports only numeric metrics (`received_power_dbm`, `path_loss_db`, `distance_m`, `elevation`) with fallback for stale saved state, and cleaned remaining stale H3-resolution state references in UI persistence.
 - 2026-03-07: Updated clear actions to be non-destructive: `Clear Calc` now clears calculation layers from memory/map only (keeps files), and `Clear` now resets in-memory project state without deleting any project files.
 - 2026-03-07: Added optimization cancel support: new `Cancel Calculation` UI button, backend `/api/cancel-optimization` cooperative cancel flag, SSE `canceled` event handling, and a regression test covering cancel flow.
+- 2026-03-07: Fixed `Calc Selected` tower coverage UX: if no tower marker was clicked, it now falls back to the currently selected tower in the coverage dropdown filter instead of failing with “Select a tower marker first.”

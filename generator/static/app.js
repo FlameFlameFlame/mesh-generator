@@ -2335,12 +2335,24 @@ function calculateSelectedTowerCoverage() {
     setStatus('Switch Coverage Source to Existing towers.');
     return;
   }
-  if (!_selectedTowerCoverageSource) {
-    setStatus('Select a tower marker first.');
+  let source = _selectedTowerCoverageSource;
+  if (!source) {
+    let filterSel = document.getElementById('tower-coverage-filter');
+    let selectedId = filterSel ? filterSel.value : 'all';
+    if (selectedId && selectedId !== 'all') {
+      let candidates = _visibleTowerCoverageSources();
+      source = candidates.find(function(s) { return String(s.source_id) === String(selectedId); }) || null;
+      if (source) {
+        _setSelectedTowerCoverageSource(source);
+      }
+    }
+  }
+  if (!source) {
+    setStatus('Select a tower (map click or dropdown) first.');
     return;
   }
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
-    source: _selectedTowerCoverageSource,
+    source: source,
     parameters: getSettings(),
     max_radius_m: getTowerCoverageRadiusM(),
   }, 'Selected antenna coverage');
