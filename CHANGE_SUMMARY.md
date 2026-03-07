@@ -4,6 +4,7 @@
 - 2026-03-07: Optimization progress bars now show real link-calculation progress during the visibility stage via live completed/total link-check updates streamed from mesh_calculator.
 - 2026-03-07: Optimization progress label now shows live LOS chunk progress (`chunks X/Y`) when backend emits chunk counters during visibility computation.
 - 2026-03-07: Added macOS native Open fallback via Swift `NSOpenPanel` when AppleScript/JXA picker paths fail, reducing picker regressions on systems where `osascript` crashes.
+- 2026-03-07: Restored road coverage layer usability after pipeline-export removal by adding `/api/coverage` runtime fallback generation from loaded `grid_cells` + `towers` (lazy-built and cached when `coverage.geojson` is absent).
 - 2026-03-07: Removed greedy optimization mode end-to-end; `/api/run-optimization` now runs a single DP pipeline, `/api/optimization-result` returns one DP result object, frontend optimization rendering/progress is single-result DP-only, and greedy output artifact directories are no longer produced.
 - 2026-03-05: Fixed export parameter drift in `generator/app.py` by replacing hardcoded `routes.json` parameters with merged runtime/export parameters.
 - 2026-03-05: Unified parameter propagation so `config.yaml`, `routes.json`, and `status.json` share the same parameter set.
