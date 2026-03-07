@@ -73,6 +73,8 @@ let _gridProviderSummary = '';
 let _gridLayersLoadingPromise = null;
 let _gridViewportCacheKey = '';
 let _gridLayersFromProvider = false;
+let _gridLayersSummary = null; // global provider summary from /api/grid-layers
+let _gridLayersViewportFiltered = false;
 let _gridRefreshTimer = null;
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
@@ -823,6 +825,8 @@ function _applyClearedState() {
   _cachedGapRepairGeojson = null;
   _cachedGridCells = null;
   _cachedGridCellsFull = null;
+  _gridLayersSummary = null;
+  _gridLayersViewportFiltered = false;
   _gridLayersFromProvider = false;
   _gridViewportCacheKey = '';
   _setGridRenderStatus('');
@@ -1308,6 +1312,8 @@ function doFetchElevation() {
         : (bundle ? bundle.split('/').slice(-1)[0] : '');
       _cachedGridCells = null;
       _cachedGridCellsFull = null;
+      _gridLayersSummary = null;
+      _gridLayersViewportFiltered = false;
       _gridLayersFromProvider = false;
       _gridViewportCacheKey = '';
       _setGridRenderStatus('');
@@ -1580,16 +1586,24 @@ function _renderGridResolutionInfo(roadGrid, fullGrid) {
   if (!el) return;
   let roadStats = _resolutionStats(roadGrid);
   let fullStats = _resolutionStats(fullGrid);
-  if (!roadStats && !fullStats) {
+  let providerSummary = _gridLayersSummary || null;
+  if (!roadStats && !fullStats && !providerSummary) {
     el.style.display = 'none';
     el.textContent = '';
     return;
   }
   let parts = [];
+  if (providerSummary) {
+    let byResTxt = _countsByResolutionText(providerSummary.cells_by_resolution || {});
+    let minEff = providerSummary.effective_h3_resolution_min;
+    let maxEff = providerSummary.effective_h3_resolution_max;
+    let rangeTxt = (minEff != null && maxEff != null) ? (minEff + '–' + maxEff) : '?';
+    parts.push('Adaptive grid (global) H3 ' + rangeTxt + (byResTxt ? (' [' + byResTxt + ']') : ''));
+  }
   if (roadStats) {
     let countsTxt = _countsByResolutionText(roadStats.countsByRes);
     parts.push(
-      'Road grid H3 ' + roadStats.h3Min + '–' + roadStats.h3Max +
+      'Road grid (visible) H3 ' + roadStats.h3Min + '–' + roadStats.h3Max +
       (roadStats.effMin != null ? (' (effective ' + roadStats.effMin + '–' + roadStats.effMax + ')') : '') +
       (countsTxt ? (' [' + countsTxt + ']') : '')
     );
@@ -1597,11 +1611,12 @@ function _renderGridResolutionInfo(roadGrid, fullGrid) {
   if (fullStats) {
     let countsTxt = _countsByResolutionText(fullStats.countsByRes);
     parts.push(
-      'Full grid H3 ' + fullStats.h3Min + '–' + fullStats.h3Max +
+      'Full grid (visible) H3 ' + fullStats.h3Min + '–' + fullStats.h3Max +
       (fullStats.effMin != null ? (' (effective ' + fullStats.effMin + '–' + fullStats.effMax + ')') : '') +
       (countsTxt ? (' [' + countsTxt + ']') : '')
     );
   }
+  if (_gridLayersViewportFiltered) parts.push('Viewport-filtered');
   el.textContent = parts.join(' | ');
   el.style.display = '';
 }
@@ -1864,11 +1879,15 @@ function renderLayers(layers) {
   }
   if (Object.prototype.hasOwnProperty.call(layers, 'grid_cells')) {
     _cachedGridCells = layers.grid_cells || null;
+    _gridLayersSummary = null;
+    _gridLayersViewportFiltered = false;
     _gridLayersFromProvider = false;
     _gridViewportCacheKey = '';
   }
   if (Object.prototype.hasOwnProperty.call(layers, 'grid_cells_full')) {
     _cachedGridCellsFull = layers.grid_cells_full || null;
+    _gridLayersSummary = null;
+    _gridLayersViewportFiltered = false;
     _gridLayersFromProvider = false;
     _gridViewportCacheKey = '';
   }
@@ -2142,6 +2161,8 @@ function _ensureGridLayersLoaded(forceRefresh, opts) {
       let layers = res.layers || {};
       _cachedGridCells = layers.grid_cells || null;
       _cachedGridCellsFull = layers.grid_cells_full || null;
+      _gridLayersSummary = res.summary || null;
+      _gridLayersViewportFiltered = !!res.viewport_filtered;
       _gridLayersFromProvider = true;
       _gridViewportCacheKey = vKey;
       if (!_cachedGridCells && !_cachedGridCellsFull) {
@@ -2924,6 +2945,8 @@ function doClearCalculations() {
     _cachedGapRepairGeojson = null;
     _cachedGridCells = null;
     _cachedGridCellsFull = null;
+    _gridLayersSummary = null;
+    _gridLayersViewportFiltered = false;
     _gridLayersFromProvider = false;
     _gridViewportCacheKey = '';
     _setGridRenderStatus('');
@@ -3094,6 +3117,8 @@ function _renderOptimizationResult(res) {
   }
   _cachedGridCells = dpData.grid_cells || null;
   _cachedGridCellsFull = dpData.grid_cells_full || null;
+  _gridLayersSummary = null;
+  _gridLayersViewportFiltered = false;
   _gridLayersFromProvider = false;
   _gridViewportCacheKey = '';
   _setGridRenderStatus('');
@@ -3159,6 +3184,8 @@ function doRunOptimization() {
   _optResult = null;
   _cachedGridCells = null;
   _cachedGridCellsFull = null;
+  _gridLayersSummary = null;
+  _gridLayersViewportFiltered = false;
   _gridLayersFromProvider = false;
   _gridViewportCacheKey = '';
   _setGridRenderStatus('');
