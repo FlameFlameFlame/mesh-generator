@@ -171,7 +171,7 @@ def _build_grid_bundle_for_current_state(output_dir: str | None = None):
         elevation_path=_elevation_path,
         boundary_geojson=boundary_geojson,
         roads_geojson=roads_geojson,
-        resolutions=(8, 9, 10, 11),
+        resolutions=(8, 9, 10),
     )
     res = sorted(int(r) for r in (payload.get("resolutions") or {}).keys())
     return {
@@ -458,8 +458,8 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
             coverage_h3_resolution = int(coverage_h3_resolution)
         except (TypeError, ValueError):
             return jsonify({"error": "coverage_h3_resolution must be an integer"}), 400
-        if coverage_h3_resolution < 6 or coverage_h3_resolution > 11:
-            return jsonify({"error": "coverage_h3_resolution must be between 6 and 11"}), 400
+        if coverage_h3_resolution < 6 or coverage_h3_resolution > 10:
+            return jsonify({"error": "coverage_h3_resolution must be between 6 and 10"}), 400
         mesh_config.h3_resolution = coverage_h3_resolution
 
     try:

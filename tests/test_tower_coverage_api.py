@@ -112,4 +112,4 @@ def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
             "coverage_h3_resolution": 12,
         })
     assert resp.status_code == 400
-    assert "between 6 and 11" in resp.get_json()["error"]
+    assert "between 6 and 10" in resp.get_json()["error"]
