@@ -33,7 +33,6 @@ let _coverageSourceMode = 'manual';  // 'manual' | 'towers'
 let _manualCoverageModeActive = false;
 let _manualCoverageSource = null;    // {source_id, lat, lon, h3_index?}
 let _pointCoverageMarker = null;
-let _towerCoverageResolutionInitialized = false;
 let _towerCoverageProgressTimer = null;
 let _selectedEdgeKey = null;
 let hasCoverage = false;  // server says coverage file exists
@@ -2136,12 +2135,18 @@ function _autoCoverageModeFromCurrentState(preferTowers) {
 
 function _populateTowerFilter() {
   let sel = document.getElementById('tower-coverage-filter');
-  if (!sel || !towerCoverageData) return;
+  if (!sel) return;
   let ids = new Set();
-  (towerCoverageData.features || []).forEach(function(f) {
-    let tid = _coverageTowerId(f.properties || {});
-    if (tid != null) ids.add(tid);
-  });
+  if (towerCoverageData) {
+    (towerCoverageData.features || []).forEach(function(f) {
+      let tid = _coverageTowerId(f.properties || {});
+      if (tid != null) ids.add(tid);
+    });
+  } else {
+    _visibleTowerCoverageSources().forEach(function(src) {
+      if (src.source_id != null) ids.add(src.source_id);
+    });
+  }
   let sorted = Array.from(ids).sort(function(a, b) { return a - b; });
   sel.innerHTML = '<option value="all">All towers</option>';
   sorted.forEach(function(tid) {
@@ -2158,10 +2163,10 @@ function _coverageTowerId(props) {
   return props.closest_tower_id;
 }
 
-function getTowerCoverageResolution() {
-  let val = parseInt(document.getElementById('tower-coverage-h3-resolution').value);
+function getTowerCoverageRadiusM() {
+  let val = parseFloat(document.getElementById('tower-coverage-radius-m').value);
   if (!Number.isFinite(val)) return null;
-  return Math.max(6, Math.min(9, val));
+  return Math.max(100, Math.min(200000, val));
 }
 
 function _setSelectedTowerCoverageSource(source) {
@@ -2296,9 +2301,6 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
       return;
     }
     towerCoverageFetched = true;
-    if (data.coverage_h3_resolution != null) {
-      document.getElementById('tower-coverage-h3-resolution').value = data.coverage_h3_resolution;
-    }
     _populateTowerFilter();
     renderTowerCoverage();
     document.getElementById('chk-tower-coverage').checked = true;
@@ -2306,12 +2308,12 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     layerGroups.towerCoverage.addTo(map);
     _syncCoverageFeatureUI();
     let n = (towerCoverageData.features || []).length;
-    let resTxt = data.coverage_h3_resolution != null ? (' @ H3 ' + data.coverage_h3_resolution) : '';
+    let radiusTxt = data.max_radius_m != null ? (' @ ' + Math.round(Number(data.max_radius_m)) + ' m') : '';
     let mixTxt = _countsByResolutionText(data.cells_by_resolution || {});
     _finishTowerCoverageProgress('Coverage ready');
     setStatus(
       (successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' +
-      resTxt + (mixTxt ? (' [' + mixTxt + ']') : '')
+      radiusTxt + (mixTxt ? (' [' + mixTxt + ']') : '')
     );
   }).catch(function(err) {
     _failTowerCoverageProgress('Coverage failed');
@@ -2331,7 +2333,7 @@ function calculateSelectedTowerCoverage() {
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
     source: _selectedTowerCoverageSource,
     parameters: getSettings(),
-    coverage_h3_resolution: getTowerCoverageResolution(),
+    max_radius_m: getTowerCoverageRadiusM(),
   }, 'Selected antenna coverage');
 }
 
@@ -2348,7 +2350,7 @@ function calculateAllShownTowerCoverage() {
   _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
     sources: sources,
     parameters: getSettings(),
-    coverage_h3_resolution: getTowerCoverageResolution(),
+    max_radius_m: getTowerCoverageRadiusM(),
   }, 'Batch coverage');
 }
 
@@ -2401,7 +2403,7 @@ function calculatePointCoverage(lat, lon) {
   _runTowerCoverageRequest('/api/tower-coverage/calculate', {
     source: _manualCoverageSource,
     parameters: getSettings(),
-    coverage_h3_resolution: getTowerCoverageResolution(),
+    max_radius_m: getTowerCoverageRadiusM(),
   }, 'Manual tower coverage');
 }
 
@@ -2423,6 +2425,7 @@ function toggleTowerCoverage() {
   _syncCoverageFeatureUI();
   if (chk.checked) {
     metricRow.style.display = 'block';
+    _populateTowerFilter();
     if (!towerCoverageData && !towerCoverageFetched) {
       towerCoverageFetched = true;
       _startTowerCoverageProgress('Loading runtime coverage...');
@@ -2440,26 +2443,13 @@ function toggleTowerCoverage() {
           _finishTowerCoverageProgress('Coverage ready');
           setStatus('Runtime tower coverage loaded: ' + (data.features || []).length + ' cells');
         }).catch(err => {
+          towerCoverageFetched = false;
+          _hideTowerCoverageProgress();
           if (_coverageSourceMode === 'manual') {
-            towerCoverageFetched = false;
-            _hideTowerCoverageProgress();
             setStatus('No runtime tower coverage. Use Place Tower and click map to calculate.');
-            return;
+          } else {
+            setStatus('No runtime tower coverage. Use Calc Selected or Calc All Shown.');
           }
-          let sources = _visibleTowerCoverageSources();
-          if (!sources.length) {
-            setStatus('No runtime tower coverage and no visible towers to calculate.');
-            chk.checked = false;
-            metricRow.style.display = 'none';
-            towerCoverageFetched = false;
-            _failTowerCoverageProgress('No tower sources');
-            return;
-          }
-          _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
-            sources: sources,
-            parameters: getSettings(),
-            coverage_h3_resolution: getTowerCoverageResolution(),
-          }, 'Auto batch coverage');
         });
     } else if (towerCoverageData) {
       _populateTowerFilter();
@@ -2473,16 +2463,16 @@ function toggleTowerCoverage() {
   }
 }
 
-// Distinct colors for per-tower coverage coloring (cycles if >12 towers)
-const TOWER_HEX_COLORS = [
-  '#e6194b','#3cb44b','#4363d8','#f58231','#911eb4','#42d4f4',
-  '#f032e6','#bfef45','#fabed4','#469990','#dcbeff','#9a6324',
-];
-
 function renderTowerCoverage() {
   if (!towerCoverageData) return;
   layerGroups.towerCoverage.clearLayers();
-  let metric = document.getElementById('tower-coverage-metric').value;
+  let metricSel = document.getElementById('tower-coverage-metric');
+  let metric = metricSel ? metricSel.value : 'received_power_dbm';
+  let supportedMetrics = new Set(['received_power_dbm', 'path_loss_db', 'distance_m', 'elevation']);
+  if (!supportedMetrics.has(metric)) {
+    metric = 'received_power_dbm';
+    if (metricSel) metricSel.value = metric;
+  }
   let filterSel = document.getElementById('tower-coverage-filter');
   let filterTid = filterSel ? filterSel.value : 'all';
   let stateSel = document.getElementById('tower-coverage-state-filter');
@@ -2496,41 +2486,6 @@ function renderTowerCoverage() {
     if (filterTid !== 'all' && String(_coverageTowerId(p)) !== String(filterTid)) return false;
     return true;
   });
-
-  if (metric === 'tower_id') {
-    // Build ordered tower ID list for consistent color assignment
-    let towerIds = [];
-    allFeatures.forEach(function(f) {
-      let tid = _coverageTowerId(f.properties || {});
-      if (tid != null && towerIds.indexOf(tid) === -1) towerIds.push(tid);
-    });
-    towerIds.sort(function(a, b) { return a - b; });
-    L.geoJSON({type: 'FeatureCollection', features: features}, {
-      style: function(feature) {
-        let p = feature.properties || {};
-        let tid = _coverageTowerId(p);
-        if (!p.is_covered || tid == null) {
-          return { fillColor: '#777', fillOpacity: 0.35, color: '#222', weight: 0.2 };
-        }
-        let idx = towerIds.indexOf(tid);
-        let color = TOWER_HEX_COLORS[idx % TOWER_HEX_COLORS.length];
-        return { fillColor: color, fillOpacity: 0.55, color: '#222', weight: 0.2 };
-      },
-      onEachFeature: function(feature, layer) {
-        let p = feature.properties;
-        let tid = _coverageTowerId(p);
-        if (tid == null) tid = 'N/A';
-        let lines = [
-          'Tower ID: ' + tid,
-          'Covered: ' + (p.is_covered ? 'yes' : 'no'),
-          'Power: ' + (p.received_power_dbm != null ? p.received_power_dbm.toFixed(1) + ' dBm' : 'N/A'),
-          'Distance: ' + (p.distance_m != null ? (p.distance_m / 1000).toFixed(2) + ' km' : 'N/A'),
-        ];
-        layer.bindTooltip(lines.join('<br>'), {sticky: true});
-      }
-    }).addTo(layerGroups.towerCoverage);
-    return;
-  }
 
   let vals = features.map(f => f.properties[metric]).filter(v => v != null && isFinite(v));
   if (vals.length === 0) return;
@@ -2729,9 +2684,8 @@ function applySettings(s) {
   if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
   if (s.road_buffer_m != null) document.getElementById('set-road-buffer-m').value = s.road_buffer_m;
   if (s.max_coverage_radius_m != null) document.getElementById('set-coverage-radius-m').value = s.max_coverage_radius_m;
-  if (!_towerCoverageResolutionInitialized && s.h3_resolution != null) {
-    document.getElementById('tower-coverage-h3-resolution').value = s.h3_resolution;
-    _towerCoverageResolutionInitialized = true;
+  if (s.max_coverage_radius_m != null) {
+    document.getElementById('tower-coverage-radius-m').value = s.max_coverage_radius_m;
   }
 }
 
@@ -3744,7 +3698,7 @@ function saveProjectState(projectPath) {
       outputDir: document.getElementById('output-dir').value,
       bbox: _bboxBounds,
       settings: getSettings(),
-      towerCoverageResolution: getTowerCoverageResolution(),
+      towerCoverageRadiusM: getTowerCoverageRadiusM(),
       coverageSourceMode: _coverageSourceMode,
       activeRoutes: _activeRoutePerPair,
       forcedWaypoints: forcedWaypointsSerial,
@@ -3815,13 +3769,6 @@ document.addEventListener('click', function(e) {
   }
 });
 
-let _towerCoverageResInput = document.getElementById('tower-coverage-h3-resolution');
-if (_towerCoverageResInput) {
-  _towerCoverageResInput.addEventListener('change', function() {
-    _towerCoverageResolutionInitialized = true;
-  });
-}
-
 // --- Dark mode ---
 
 const _THEME_KEY = 'meshColorScheme';
@@ -3871,9 +3818,8 @@ function restoreProjectState() {
       document.getElementById('bbox-status').style.display = '';
     }
     if (state.settings) applySettings(state.settings);
-    if (state.towerCoverageResolution != null) {
-      document.getElementById('tower-coverage-h3-resolution').value = state.towerCoverageResolution;
-      _towerCoverageResolutionInitialized = true;
+    if (state.towerCoverageRadiusM != null) {
+      document.getElementById('tower-coverage-radius-m').value = state.towerCoverageRadiusM;
     }
     setStatus('Restoring project from ' + state.projectPath + '...');
     fetch('/api/load', {
