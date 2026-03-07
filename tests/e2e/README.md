@@ -3,7 +3,7 @@
 Run from `mesh-generator`:
 
 ```bash
-poetry run python tests/e2e/test_playwright_smoke.py
+RUN_E2E=1 poetry run pytest -q tests/e2e/test_playwright_smoke.py
 ```
 
 What it validates:

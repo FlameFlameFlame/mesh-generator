@@ -2,13 +2,17 @@ from flask import jsonify
 
 from generator import app as app_mod
 from generator.app import app
+from generator.handlers import pipeline_site_handlers
+
+
+def _state():
+    return app.extensions["app_state"]
 
 
 def test_get_tower_coverage_returns_runtime_cache(monkeypatch):
-    monkeypatch.setattr(app_mod, "_runtime_tower_coverage", {
-        "type": "FeatureCollection",
-        "features": [],
-    })
+    payload = {"type": "FeatureCollection", "features": []}
+    _state().runtime_tower_coverage = payload
+    monkeypatch.setattr(app_mod, "_runtime_tower_coverage", payload)
     with app.test_client() as client:
         resp = client.get("/api/tower-coverage")
     assert resp.status_code == 200
@@ -24,6 +28,7 @@ def test_calculate_requires_source_list():
 
 
 def test_calculate_returns_400_without_elevation(monkeypatch):
+    _state().elevation_path = ""
     monkeypatch.setattr(app_mod, "_elevation_path", "")
     with app.test_client() as client:
         resp = client.post("/api/tower-coverage/calculate", json={
@@ -45,7 +50,7 @@ def test_calculate_single_calls_runtime_helper(monkeypatch):
             "feature_count": 0,
         })
 
-    monkeypatch.setattr(app_mod, "_run_runtime_tower_coverage", _fake_run)
+    monkeypatch.setattr(pipeline_site_handlers, "_run_runtime_tower_coverage", _fake_run)
     with app.test_client() as client:
         resp = client.post("/api/tower-coverage/calculate", json={
             "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},
@@ -67,7 +72,7 @@ def test_calculate_batch_calls_runtime_helper(monkeypatch):
             "feature_count": 0,
         })
 
-    monkeypatch.setattr(app_mod, "_run_runtime_tower_coverage", _fake_run)
+    monkeypatch.setattr(pipeline_site_handlers, "_run_runtime_tower_coverage", _fake_run)
     with app.test_client() as client:
         resp = client.post("/api/tower-coverage/calculate-batch", json={
             "sources": [
@@ -91,7 +96,7 @@ def test_calculate_single_forwards_coverage_resolution(monkeypatch):
             "coverage_h3_resolution": body.get("coverage_h3_resolution"),
         })
 
-    monkeypatch.setattr(app_mod, "_run_runtime_tower_coverage", _fake_run)
+    monkeypatch.setattr(pipeline_site_handlers, "_run_runtime_tower_coverage", _fake_run)
     with app.test_client() as client:
         resp = client.post("/api/tower-coverage/calculate", json={
             "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},
@@ -103,6 +108,9 @@ def test_calculate_single_forwards_coverage_resolution(monkeypatch):
 
 
 def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
+    st = _state()
+    st.elevation_path = __file__
+    st.grid_provider = object()
     monkeypatch.setattr(app_mod, "_elevation_path", __file__)
     monkeypatch.setattr(app_mod, "_grid_provider", object())
     with app.test_client() as client:

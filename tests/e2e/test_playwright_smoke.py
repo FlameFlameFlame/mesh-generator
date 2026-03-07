@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import List
 
+import pytest
 import requests
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
@@ -295,6 +296,14 @@ def run() -> None:
             proc.wait(timeout=8)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+@pytest.mark.e2e
+def test_playwright_smoke() -> None:
+    """Optional browser smoke test; enabled via RUN_E2E=1."""
+    if os.environ.get("RUN_E2E") != "1":
+        pytest.skip("Set RUN_E2E=1 to run Playwright smoke test")
+    run()
 
 
 if __name__ == "__main__":

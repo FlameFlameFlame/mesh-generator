@@ -25,6 +25,11 @@ mesh-calculator = {path = "../mesh_calculator", develop = true}
 pytest = ">=8.0"
 playwright = "^1.58.0"
 
+[tool.pytest.ini_options]
+markers = [
+  "e2e: end-to-end browser tests",
+]
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
