@@ -49,6 +49,16 @@ from generator.elevation import fetch_and_write_elevation_cached, render_elevati
 
 logger = logging.getLogger(__name__)
 
+_WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+DEFAULT_OUTPUT_DIR = os.path.join(_WORKSPACE_ROOT, "projects")
+
+
+def _resolve_output_dir(value: str | None) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        raw = DEFAULT_OUTPUT_DIR
+    return os.path.abspath(raw)
+
 
 def _get_cache_dir(output_dir: str | None = None) -> str:
     """Return the cache directory (inside output_dir, or a global fallback)."""
@@ -274,7 +284,7 @@ def _normalize_mesh_parameters(param_overrides: dict | None) -> dict:
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", default_output_dir=DEFAULT_OUTPUT_DIR)
 
 
 @app.route("/api/sites", methods=["GET"])
@@ -393,7 +403,7 @@ def clear_calculations():
     """Delete mesh_calculator output files from disk and reset server-side layer state."""
     global _loaded_layers, _loaded_report, _loaded_coverage, _runtime_tower_coverage
     data = request.json or {}
-    output_dir = os.path.abspath(data.get("output_dir", "output"))
+    output_dir = _resolve_output_dir(data.get("output_dir"))
     files_to_delete = [
         "towers.geojson", "coverage.geojson", "visibility_edges.geojson",
         "report.json", "status.json", "tower_coverage.geojson",
@@ -638,7 +648,8 @@ def download_elevation():
     try:
         fd, path = tempfile.mkstemp(suffix=".tif", prefix="elevation_")
         os.close(fd)
-        output_dir_for_cache = payload.get("output_dir")
+        output_dir_for_cache = _resolve_output_dir(payload.get("output_dir"))
+        os.makedirs(output_dir_for_cache, exist_ok=True)
         fetch_and_write_elevation_cached(
             south, west, north, east, path,
             cache_dir=_get_cache_dir(output_dir_for_cache),
@@ -653,7 +664,7 @@ def download_elevation():
         _grid_bundle_path = grid_info["bundle_path"]
         _grid_provider_summary = grid_info["summary"]
         _write_status_json(
-            output_dir_for_cache or "",
+            output_dir_for_cache,
             has_elevation=True,
             has_grid_provider=True,
             grid_bundle_path=_grid_bundle_path,
@@ -1136,7 +1147,8 @@ def generate():
                 )
             })
 
-    output_dir_for_cache = payload.get("output_dir")
+    output_dir_for_cache = _resolve_output_dir(payload.get("output_dir"))
+    os.makedirs(output_dir_for_cache, exist_ok=True)
     try:
         roads = fetch_roads_cached(
             south, west, north, east,
@@ -1207,7 +1219,7 @@ def generate():
         if s.boundary_geojson is not None
     ]
 
-    _write_status_json(payload.get("output_dir", ""), has_roads=True)
+    _write_status_json(output_dir_for_cache, has_roads=True)
 
     return jsonify({
         "road_count": len(roads.get("features", [])),
@@ -1811,7 +1823,7 @@ def export():
         return jsonify({"error": str(e)})
 
     data = request.json
-    output_dir = os.path.abspath(data.get("output_dir", "output"))
+    output_dir = _resolve_output_dir(data.get("output_dir"))
     max_towers_per_route = int(data.get("max_towers_per_route", 8))
     os.makedirs(output_dir, exist_ok=True)
 
