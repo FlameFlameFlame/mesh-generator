@@ -2084,7 +2084,7 @@ function toggleGridCellsFull() {
     if (map.getZoom() < _GRID_FULL_MIN_ZOOM) {
       setStatus('Zoom in to ' + _GRID_FULL_MIN_ZOOM + '+ to render full boundary grid.');
     }
-    _ensureGridLayersLoaded(false).then(function() {
+    _ensureGridLayersLoaded(false, {requireFull: true}).then(function() {
       _rerenderGridLayersWithIndicator();
       layerGroups.gridCellsFull.addTo(map);
     }).catch(function(err) {
@@ -2106,10 +2106,18 @@ function _rerenderGridLayersWithIndicator() {
   }, 0);
 }
 
-function _ensureGridLayersLoaded(forceRefresh) {
+function _ensureGridLayersLoaded(forceRefresh, opts) {
+  opts = opts || {};
+  let requireFull = !!opts.requireFull;
   let payload = _gridViewportPayload();
+  if (requireFull) payload.include_full = true;
   let vKey = _buildGridViewportKey(payload);
-  if (!forceRefresh && (_cachedGridCells || _cachedGridCellsFull) && vKey === _gridViewportCacheKey) {
+  if (
+    !forceRefresh &&
+    (_cachedGridCells || _cachedGridCellsFull) &&
+    vKey === _gridViewportCacheKey &&
+    (!requireFull || !!_cachedGridCellsFull)
+  ) {
     return Promise.resolve();
   }
   if (!_isGridProviderReady()) {
@@ -2161,7 +2169,7 @@ function _refreshGridForViewportIfVisible() {
   if (!_gridLayersFromProvider && (_cachedGridCells || _cachedGridCellsFull)) return;
   if (_gridRefreshTimer) clearTimeout(_gridRefreshTimer);
   _gridRefreshTimer = setTimeout(function() {
-    _ensureGridLayersLoaded(true).then(function() {
+    _ensureGridLayersLoaded(true, {requireFull: fullOn}).then(function() {
       _rerenderGridLayersWithIndicator();
       if (roadOn) layerGroups.gridCells.addTo(map);
       if (fullOn) layerGroups.gridCellsFull.addTo(map);

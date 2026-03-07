@@ -1,5 +1,6 @@
 # Change Summary
 
+- 2026-03-08: Fixed `Grid Cells (full boundary)` toggle when road-grid cache already exists: `_ensureGridLayersLoaded(...)` now supports `requireFull`, forces `include_full=true` when full layer is requested, and avoids cache short-circuit unless full-grid payload is actually present.
 - 2026-03-08: Fixed optimization spam warnings from closed elevation datasets (`Dataset is closed: .../elevation.tif`) by adding a pre-run grid-provider health probe; when provider exists but is unusable, optimization now auto-rehydrates from `grid_bundle_path` before running.
 - 2026-03-08: Added regression test `test_run_optimization_rehydrates_closed_grid_provider` in `tests/test_optimization_progress.py`.
 - 2026-03-08: Fixed project reopen readiness regression where `Run Optimization` stayed disabled despite loaded elevation/grid data: backend load now normalizes `project_status` flags (`has_elevation`, `has_grid_provider`, `has_routes`, `grid_provider_summary`) from current in-memory state, and frontend `applyProjectStatus(...)` now prefers live `loadData.has_grid_provider` over stale status-file values.
