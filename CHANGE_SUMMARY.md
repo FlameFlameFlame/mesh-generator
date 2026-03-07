@@ -62,3 +62,4 @@
 - 2026-03-07: Fixed grid layer pre-optimization rendering by adding `/api/grid-layers` (provider-backed adaptive `grid_cells`/`grid_cells_full`) and frontend lazy-load fallback when grid caches are empty.
 - 2026-03-07: Added grid-layer color mode selector (`resolution` or `elevation`) in Layers panel; elevation mode colors road/full grid cells by normalized per-layer cell elevation.
 - 2026-03-07: Fixed provider-backed `/api/grid-layers` elevation export by populating per-cell max elevation from `GridProvider`; grid tooltips now treat missing elevation as `?` instead of coercing null to `0`.
+- 2026-03-07: Optimized grid-layer rendering with viewport-aware `/api/grid-layers` requests (bbox + cell cap), zoom-gated full-grid fetch (`zoom>=10`), map move/zoom debounced refresh for provider-sourced grids, and a new in-panel `grid-render-status` indicator while grid data is loading/drawing.
