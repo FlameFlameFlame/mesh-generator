@@ -70,6 +70,7 @@ let _hasElevation = false;
 let _hasGridProvider = false;
 let _gridProviderReadyExplicit = null; // null means unknown (legacy/backward-compatible mode)
 let _gridProviderSummary = '';
+let _gridLayersLoadingPromise = null;
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
 const _OPT_PROGRESS_ALGOS = ['dp'];
@@ -1767,8 +1768,13 @@ function showReport(report) {
 function toggleGridCells() {
   let chk = document.getElementById('chk-grid-cells');
   if (chk.checked) {
-    rerenderGridLayersForActiveAlgo();
-    layerGroups.gridCells.addTo(map);
+    _ensureGridLayersLoaded().then(function() {
+      rerenderGridLayersForActiveAlgo();
+      layerGroups.gridCells.addTo(map);
+    }).catch(function(err) {
+      setStatus('Grid layer load failed: ' + err);
+      chk.checked = false;
+    });
   }
   else map.removeLayer(layerGroups.gridCells);
 }
@@ -1776,10 +1782,46 @@ function toggleGridCells() {
 function toggleGridCellsFull() {
   let chk = document.getElementById('chk-grid-cells-full');
   if (chk.checked) {
-    rerenderGridLayersForActiveAlgo();
-    layerGroups.gridCellsFull.addTo(map);
+    _ensureGridLayersLoaded().then(function() {
+      rerenderGridLayersForActiveAlgo();
+      layerGroups.gridCellsFull.addTo(map);
+    }).catch(function(err) {
+      setStatus('Full grid layer load failed: ' + err);
+      chk.checked = false;
+    });
   }
   else map.removeLayer(layerGroups.gridCellsFull);
+}
+
+function _ensureGridLayersLoaded() {
+  if (_cachedGridCells || _cachedGridCellsFull) {
+    return Promise.resolve();
+  }
+  if (!_isGridProviderReady()) {
+    return Promise.reject('grid provider is not ready');
+  }
+  if (_gridLayersLoadingPromise) return _gridLayersLoadingPromise;
+  setStatus('Loading adaptive grid layers...');
+  _gridLayersLoadingPromise = fetch('/api/grid-layers', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({parameters: getSettings()}),
+  })
+    .then(safeJson)
+    .then(function(res) {
+      if (res.error) throw new Error(res.error);
+      let layers = res.layers || {};
+      _cachedGridCells = layers.grid_cells || null;
+      _cachedGridCellsFull = layers.grid_cells_full || null;
+      if (!_cachedGridCells && !_cachedGridCellsFull) {
+        throw new Error('grid layer payload is empty');
+      }
+      setStatus('Adaptive grid layers loaded.');
+    })
+    .finally(function() {
+      _gridLayersLoadingPromise = null;
+    });
+  return _gridLayersLoadingPromise;
 }
 
 // --- Coverage hexagons (lazy loaded) ---

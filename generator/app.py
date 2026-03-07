@@ -138,6 +138,46 @@ def _close_grid_provider():
             logger.debug("Failed to close grid provider", exc_info=True)
 
 
+def _grid_cells_to_geojson(
+    cells: set[str],
+    *,
+    road_cells: set[str],
+    metadata_by_cell: dict,
+    base_resolution: int,
+    effective_min: int | None,
+    effective_max: int | None,
+) -> dict:
+    """Serialize adaptive H3 cells to GeoJSON for frontend grid rendering."""
+    features = []
+    effective = (
+        int(effective_max)
+        if effective_max is not None
+        else (int(effective_min) if effective_min is not None else int(base_resolution))
+    )
+    for h3_idx in sorted(cells):
+        boundary = h3.cell_to_boundary(h3_idx)
+        coords = [[lon, lat] for lat, lon in boundary]
+        coords.append(coords[0])
+        meta = metadata_by_cell.get(h3_idx, {})
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+            "properties": {
+                "h3_index": h3_idx,
+                "elevation": meta.get("elevation"),
+                "has_road": h3_idx in road_cells,
+                "is_in_unfit_area": bool(meta.get("is_in_unfit_area", False)),
+                "h3_resolution": int(meta.get("h3_resolution", h3.get_resolution(h3_idx))),
+                "base_h3_resolution": int(meta.get("base_h3_resolution", base_resolution)),
+                "target_h3_resolution": int(meta.get("target_h3_resolution", meta.get("h3_resolution", h3.get_resolution(h3_idx)))),
+                "gradient_m_per_km": float(meta.get("gradient_m_per_km", 0.0) or 0.0),
+                "adaptive_refined": bool(meta.get("adaptive_refined", False)),
+                "effective_h3_resolution": int(meta.get("effective_h3_resolution", effective)),
+            },
+        })
+    return {"type": "FeatureCollection", "features": features}
+
+
 def _load_grid_provider_from_bundle(bundle_path: str, elevation_path: str | None = None):
     """Load grid provider from persisted bundle."""
     from mesh_calculator.core.grid_provider import GridProvider
@@ -621,6 +661,59 @@ def get_elevation_image():
     except Exception as e:
         logger.error("Failed to render elevation image: %s", e)
         return jsonify({"error": f"Failed to render elevation: {e}"}), 500
+
+
+@app.route("/api/grid-layers", methods=["POST"])
+def get_grid_layers():
+    """Return adaptive grid layers built from the active GridProvider."""
+    if _grid_provider is None:
+        return jsonify({"error": "Grid provider is not ready. Download elevation first."}), 400
+
+    body = request.json or {}
+    params = body.get("parameters") or {}
+    try:
+        from mesh_calculator.core.config import MeshConfig
+    except Exception:
+        logger.exception("mesh_calculator import failed in /api/grid-layers")
+        return jsonify({"error": "mesh_calculator import failed"}), 500
+
+    valid = MeshConfig.__dataclass_fields__
+    cfg = MeshConfig(**{k: v for k, v in params.items() if k in valid})
+    base_res = int(params.get("h3_resolution", cfg.h3_resolution))
+    cfg.h3_resolution = base_res
+
+    summary = _grid_provider.adaptive_resolution_summary(base_res, cfg)
+    road_cells = _grid_provider.get_adaptive_road_cells(base_res, cfg)
+    full_cells = _grid_provider.get_adaptive_full_cells(base_res, cfg)
+    all_cells = set(full_cells) | set(road_cells)
+    metadata_by_cell = {
+        h3_idx: _grid_provider.get_adaptive_cell_metadata(h3_idx, base_res, cfg)
+        for h3_idx in all_cells
+    }
+
+    grid_cells = _grid_cells_to_geojson(
+        road_cells,
+        road_cells=road_cells,
+        metadata_by_cell=metadata_by_cell,
+        base_resolution=base_res,
+        effective_min=summary.get("effective_h3_resolution_min"),
+        effective_max=summary.get("effective_h3_resolution_max"),
+    )
+    grid_cells_full = _grid_cells_to_geojson(
+        full_cells,
+        road_cells=road_cells,
+        metadata_by_cell=metadata_by_cell,
+        base_resolution=base_res,
+        effective_min=summary.get("effective_h3_resolution_min"),
+        effective_max=summary.get("effective_h3_resolution_max"),
+    )
+    return jsonify({
+        "layers": {
+            "grid_cells": grid_cells,
+            "grid_cells_full": grid_cells_full,
+        },
+        "summary": summary,
+    })
 
 
 @app.route("/api/path-profile", methods=["POST"])
