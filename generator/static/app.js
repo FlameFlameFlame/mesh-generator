@@ -107,8 +107,8 @@ function _updateOptimizeBtn() {
 
 function _isGridProviderReady() {
   if (_gridProviderReadyExplicit !== null) return !!_gridProviderReadyExplicit;
-  // Backward compatibility with projects/backends that do not expose provider readiness yet.
-  return _hasElevation || _hasGridProvider;
+  // Provider-first mode: elevation alone is not sufficient.
+  return !!_hasGridProvider;
 }
 
 function _refreshGridProviderStatusUI() {

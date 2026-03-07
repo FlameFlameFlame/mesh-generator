@@ -616,7 +616,7 @@ def calculate_tower_coverage_batch():
 def download_elevation():
     """Download SRTM elevation tiles for the site bounding box."""
     import tempfile
-    global _elevation_path, _grid_bundle_path, _grid_provider_summary
+    global _elevation_path, _grid_bundle_path, _grid_provider, _grid_provider_summary
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."})
 
@@ -664,6 +664,10 @@ def download_elevation():
             roads_geojson=_full_roads_geojson or _roads_geojson or (_loaded_layers or {}).get("roads"),
         )
         _hydrate_grid_provider(grid_info["bundle_path"], elevation_path=_elevation_path)
+        # _hydrate_grid_provider is owned by generator.app and mutates app-module globals.
+        # Sync local handler globals before call() flushes them back to app.
+        app_globals = getattr(_hydrate_grid_provider, "__globals__", {})
+        _grid_provider = app_globals.get("_grid_provider", _grid_provider)
         _grid_bundle_path = grid_info["bundle_path"]
         _grid_provider_summary = grid_info["summary"]
         _write_status_json(
