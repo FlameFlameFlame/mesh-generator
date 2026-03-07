@@ -1168,7 +1168,7 @@ function doLoadProject() {
         _loadProjectFromPath(res.path);
       } else if (res.error) {
         // Picker unavailable — fall back to manual path input
-        setStatus('');
+        setStatus('Native picker unavailable: ' + res.error);
         let configPath = prompt('Path to project directory or config.yaml:\n(e.g. /path/to/my-project or /path/to/my-project/config.yaml)');
         if (configPath) _loadProjectFromPath(configPath);
       } else {

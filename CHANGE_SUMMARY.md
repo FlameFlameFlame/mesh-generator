@@ -70,3 +70,5 @@
 - 2026-03-07: Fixed backend default output-root calculation to `/Users/timur/Documents/src/LoraMeshPlanner/projects` (previously resolved one level too high to `/Users/timur/Documents/src/projects`).
 - 2026-03-07: Added Playwright smoke validation runner at `tests/e2e/test_playwright_smoke.py` with artifacts (`tests/e2e/artifacts/` ignored), validating default save path, save/load flow, cache creation/reuse (`Roads cache hit`, `Elevation tile cache hit`), and tower-coverage progress behavior.
 - 2026-03-07: Added e2e usage docs at `tests/e2e/README.md` (`poetry run python tests/e2e/test_playwright_smoke.py`).
+- 2026-03-07: Fixed native Open picker behavior on macOS: `/api/pick-file` now distinguishes user-cancel from real osascript failures and returns explicit errors for non-cancel failures; frontend now surfaces picker-error status before manual-path fallback.
+- 2026-03-07: Added macOS picker regression tests in `tests/test_visualizer.py` for non-cancel error vs cancel handling.
