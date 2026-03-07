@@ -118,10 +118,77 @@ _loaded_report = None  # report.json dict from mesh-engine output
 _loaded_coverage = None  # coverage.geojson dict (lazy-served)
 _runtime_tower_coverage = None  # runtime-only tower coverage FeatureCollection
 _elevation_path = None  # path to downloaded elevation GeoTIFF
+_grid_bundle_path = None  # path to persisted grid bundle JSON
+_grid_provider = None  # in-memory mesh_calculator GridProvider
+_grid_provider_summary = ""  # short status text for UI
 _p2p_routes = []             # list of route dicts from find_p2p_roads
 _p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
 _p2p_display_features = {}   # route_id → clipped feature dicts (frontend rendering)
 _forced_waypoints = {}       # pair_key → list of osm_way_ids
+
+
+def _close_grid_provider():
+    global _grid_provider
+    gp = _grid_provider
+    _grid_provider = None
+    if gp is not None:
+        try:
+            gp.close()
+        except Exception:
+            logger.debug("Failed to close grid provider", exc_info=True)
+
+
+def _load_grid_provider_from_bundle(bundle_path: str, elevation_path: str | None = None):
+    """Load grid provider from persisted bundle."""
+    from mesh_calculator.core.grid_provider import GridProvider
+
+    provider = GridProvider.from_bundle(bundle_path, elevation_path=elevation_path)
+    return provider
+
+
+def _build_grid_bundle_for_current_state(output_dir: str | None = None):
+    """
+    Build a multi-resolution (8..11) grid bundle for current boundary/roads/elevation.
+
+    Returns:
+        dict: {bundle_path, resolutions, summary}
+    """
+    if not _elevation_path or not os.path.isfile(_elevation_path):
+        raise ValueError("Elevation is not available")
+    boundary_geojson = (_loaded_layers or {}).get("boundary")
+    if not boundary_geojson:
+        raise ValueError("Boundary is not available")
+
+    roads_geojson = _full_roads_geojson or _roads_geojson or (_loaded_layers or {}).get("roads")
+    bundle_dir = os.path.abspath(output_dir) if output_dir else os.path.dirname(os.path.abspath(_elevation_path))
+    os.makedirs(bundle_dir, exist_ok=True)
+    bundle_path = os.path.join(bundle_dir, "grid_bundle.json")
+
+    from mesh_calculator.core.grid_provider import GridProvider
+
+    payload = GridProvider.build_bundle(
+        bundle_path=bundle_path,
+        elevation_path=_elevation_path,
+        boundary_geojson=boundary_geojson,
+        roads_geojson=roads_geojson,
+        resolutions=(8, 9, 10, 11),
+    )
+    res = sorted(int(r) for r in (payload.get("resolutions") or {}).keys())
+    return {
+        "bundle_path": bundle_path,
+        "resolutions": res,
+        "summary": f"res={','.join(str(r) for r in res)}",
+    }
+
+
+def _hydrate_grid_provider(bundle_path: str, elevation_path: str | None = None):
+    """(Re)load in-memory provider from bundle path and update globals."""
+    global _grid_provider, _grid_bundle_path, _grid_provider_summary
+    _close_grid_provider()
+    _grid_provider = _load_grid_provider_from_bundle(bundle_path, elevation_path=elevation_path)
+    _grid_bundle_path = os.path.abspath(bundle_path)
+    res = _grid_provider.available_resolutions()
+    _grid_provider_summary = f"res={','.join(str(r) for r in res)}" if res else ""
 
 
 def _normalize_mesh_parameters(param_overrides: dict | None) -> dict:
@@ -226,7 +293,7 @@ def clear_project():
     """Clear all sites and loaded layers."""
     global _counter, _roads_geojson, _full_roads_geojson, _loaded_layers, _loaded_report
     global _loaded_coverage, _runtime_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
-    global _p2p_display_features, _forced_waypoints
+    global _p2p_display_features, _forced_waypoints, _grid_bundle_path, _grid_provider_summary
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
@@ -245,6 +312,9 @@ def clear_project():
         except OSError:
             pass
     _elevation_path = None
+    _close_grid_provider()
+    _grid_bundle_path = None
+    _grid_provider_summary = ""
     logger.info("Project cleared")
     return jsonify({"ok": True})
 
@@ -349,10 +419,11 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
 
     if not _elevation_path or not os.path.isfile(_elevation_path):
         return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+    if _grid_provider is None:
+        return jsonify({"error": "Grid provider is not ready. Download data/elevation first."}), 400
 
     try:
         from mesh_calculator.core.config import MeshConfig
-        from mesh_calculator.core.elevation import ElevationProvider
         from mesh_calculator.network.tower_coverage import compute_h3_tower_coverage
     except ImportError as exc:
         return jsonify({"error": f"mesh_calculator import failed: {exc}"}), 500
@@ -384,18 +455,14 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         except (TypeError, ValueError):
             return jsonify({"error": "max_radius_m must be numeric"}), 400
 
-    elev_provider = ElevationProvider(_elevation_path)
-    try:
-        results = compute_h3_tower_coverage(
-            sources=sources,
-            base_cells={},
-            config=mesh_config,
-            elevation_provider=elev_provider,
-            los_cache=None,
-            max_radius_m=max_radius_m,
-        )
-    finally:
-        elev_provider.close()
+    results = compute_h3_tower_coverage(
+        sources=sources,
+        base_cells={},
+        config=mesh_config,
+        grid_provider=_grid_provider,
+        los_cache=None,
+        max_radius_m=max_radius_m,
+    )
 
     geojson = _coverage_results_to_geojson(results)
     _runtime_tower_coverage = geojson
@@ -442,7 +509,7 @@ def calculate_tower_coverage_batch():
 def download_elevation():
     """Download SRTM elevation tiles for the site bounding box."""
     import tempfile
-    global _elevation_path
+    global _elevation_path, _grid_bundle_path, _grid_provider_summary
     if len(store) < 2:
         return jsonify({"error": "Need at least 2 sites."})
 
@@ -482,11 +549,27 @@ def download_elevation():
         from generator.elevation import _tiles_for_bbox
         tile_count = len(_tiles_for_bbox(south, west, north, east))
         logger.info("Downloaded elevation: %d tiles, %.1f MB -> %s", tile_count, size_mb, path)
-        _write_status_json(output_dir_for_cache or "", has_elevation=True)
+        grid_info = _build_grid_bundle_for_current_state(output_dir_for_cache)
+        _hydrate_grid_provider(grid_info["bundle_path"], elevation_path=_elevation_path)
+        _grid_bundle_path = grid_info["bundle_path"]
+        _grid_provider_summary = grid_info["summary"]
+        _write_status_json(
+            output_dir_for_cache or "",
+            has_elevation=True,
+            has_grid_provider=True,
+            grid_bundle_path=_grid_bundle_path,
+            grid_provider_summary=_grid_provider_summary,
+        )
         return jsonify({
             "tiles": tile_count,
             "size_mb": round(size_mb, 1),
             "path": path,
+            "grid_provider_ready": True,
+            "grid_provider": {
+                "bundle_path": _grid_bundle_path,
+                "resolutions": grid_info["resolutions"],
+                "summary": _grid_provider_summary,
+            },
         })
     except Exception as e:
         logger.error("Failed to download elevation: %s", e)
@@ -521,8 +604,8 @@ def path_profile():
     """
     import math
 
-    if not _elevation_path or not os.path.isfile(_elevation_path):
-        return jsonify({"error": "No elevation data. Download Elevation first."}), 400
+    if _grid_provider is None:
+        return jsonify({"error": "Grid provider is not ready. Download data/elevation first."}), 400
 
     body = request.json or {}
     route_id = body.get("route_id")
@@ -1362,7 +1445,7 @@ def run_optimization():
                 return run_route_pipeline(
                     routes=route_specs,
                     mesh_config=config_copy,
-                    elevation_path=_elevation_path,
+                    grid_provider=_grid_provider,
                     city_boundaries_geojson=city_boundaries_geojson,
                     boundary_geojson=boundary_geojson,
                     output_dir=out_dir,
@@ -1502,6 +1585,8 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
     present — so calling this from the optimizer (which runs after export) does
     not overwrite freshly-exported data.
     """
+    import shutil
+
     default_params = {
         "h3_resolution": 8,
         "frequency_hz": 868_000_000,
@@ -1533,12 +1618,23 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
         roads_export_path = roads_path if os.path.isfile(roads_path) else ""
         elev_dest = os.path.join(output_dir, "elevation.tif")
         elevation_export_path = elev_dest if os.path.isfile(elev_dest) else (_elevation_path or "")
+        grid_bundle_export_path = ""
+        if _grid_bundle_path and os.path.isfile(_grid_bundle_path):
+            grid_dest = os.path.join(output_dir, "grid_bundle.json")
+            try:
+                if os.path.abspath(_grid_bundle_path) != os.path.abspath(grid_dest):
+                    shutil.copy2(_grid_bundle_path, grid_dest)
+                grid_bundle_export_path = grid_dest
+            except Exception:
+                logger.warning("Failed to copy grid bundle to project output", exc_info=True)
+                grid_bundle_export_path = _grid_bundle_path
         city_boundaries_path = os.path.join(output_dir, "city_boundaries.geojson")
         city_boundaries_export = city_boundaries_path if os.path.isfile(city_boundaries_path) else ""
         export_config_yaml(
             output_dir, sites_path, boundary_path,
             roads_path=roads_export_path,
             elevation_path=elevation_export_path,
+            grid_bundle_path=grid_bundle_export_path,
             city_boundaries_path=city_boundaries_export,
             parameters=export_params,
         )
@@ -1563,9 +1659,16 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
     status = {
         "has_roads": bool(_roads_geojson),
         "has_elevation": bool(_elevation_path and os.path.isfile(_elevation_path)),
+        "has_grid_provider": bool(_grid_provider),
         "has_routes": bool(_p2p_routes),
         "has_optimization": bool(_loaded_layers.get("towers")),
         "elevation_path": _elevation_path or "",
+        "grid_bundle_path": (
+            os.path.join(output_dir, "grid_bundle.json")
+            if os.path.isfile(os.path.join(output_dir, "grid_bundle.json"))
+            else (_grid_bundle_path or "")
+        ),
+        "grid_provider_summary": _grid_provider_summary or "",
         "parameters": export_params,
     }
     if active_routes:
@@ -1647,6 +1750,7 @@ def load_project():
     global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson
     global _loaded_report, _loaded_coverage, _runtime_tower_coverage
     global _elevation_path, _p2p_routes, _p2p_all_route_features
+    global _grid_bundle_path, _grid_provider_summary
     data = request.json
     path = data.get("path", "").strip()
 
@@ -1732,6 +1836,9 @@ def load_project():
     _loaded_layers = layers
     _roads_geojson = layers.get("roads")
     _full_roads_geojson = layers.get("roads")
+    _close_grid_provider()
+    _grid_bundle_path = None
+    _grid_provider_summary = ""
 
     # Load report
     _loaded_report = None
@@ -1758,6 +1865,17 @@ def load_project():
     if elevation_file and os.path.isfile(elevation_file):
         _elevation_path = elevation_file
         logger.info("Loaded elevation from %s", elevation_file)
+    else:
+        _elevation_path = None
+
+    # Resolve grid bundle path from config inputs first
+    configured_grid_bundle = resolve(inputs.get("grid_bundle"))
+    if configured_grid_bundle and os.path.isfile(configured_grid_bundle):
+        try:
+            _hydrate_grid_provider(configured_grid_bundle, elevation_path=_elevation_path)
+            logger.info("Loaded grid bundle from config: %s", configured_grid_bundle)
+        except Exception:
+            logger.warning("Failed to load configured grid bundle: %s", configured_grid_bundle, exc_info=True)
 
     # Derive output directory from config outputs section
     output_dir = None
@@ -1782,6 +1900,16 @@ def load_project():
             if os.path.isfile(ep):
                 _elevation_path = ep
                 logger.info("Restored elevation path from status: %s", ep)
+        if _grid_provider is None and project_status.get("grid_bundle_path"):
+            gb = project_status["grid_bundle_path"]
+            if gb and not os.path.isabs(gb):
+                gb = os.path.join(config_dir, gb)
+            if os.path.isfile(gb):
+                try:
+                    _hydrate_grid_provider(gb, elevation_path=_elevation_path)
+                    logger.info("Restored grid bundle from status: %s", gb)
+                except Exception:
+                    logger.warning("Failed to restore grid bundle from status: %s", gb, exc_info=True)
 
     # Keep config.yaml parameters as canonical on load. status.json can be stale
     # when users edit config manually or reuse older optimization outputs.
@@ -1791,6 +1919,20 @@ def load_project():
             merged_params.update(project_status["parameters"])
         merged_params.update(config_parameters)
         project_status["parameters"] = merged_params
+
+    # Backward compatibility: build provider on demand when bundle is missing.
+    if _grid_provider is None and _elevation_path and layers.get("boundary"):
+        try:
+            rebuilt = _build_grid_bundle_for_current_state(config_dir)
+            _hydrate_grid_provider(rebuilt["bundle_path"], elevation_path=_elevation_path)
+            _grid_bundle_path = rebuilt["bundle_path"]
+            _grid_provider_summary = rebuilt["summary"]
+            project_status["has_grid_provider"] = True
+            project_status["grid_bundle_path"] = _grid_bundle_path
+            project_status["grid_provider_summary"] = _grid_provider_summary
+            logger.info("Rebuilt grid bundle for loaded project: %s", _grid_bundle_path)
+        except Exception:
+            logger.warning("Could not build grid bundle for loaded project", exc_info=True)
 
     # Restore routes from routes.json if present
     _p2p_routes = []
@@ -1818,6 +1960,8 @@ def load_project():
         "report": _loaded_report,
         "has_coverage": _loaded_coverage is not None,
         "has_elevation": _elevation_path is not None and os.path.isfile(_elevation_path),
+        "has_grid_provider": _grid_provider is not None,
+        "grid_provider_summary": _grid_provider_summary or "",
         "project_status": project_status,
         "routes": [
             dict(r, features=_p2p_all_route_features.get(r["route_id"], []))

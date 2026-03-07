@@ -104,6 +104,7 @@ def test_calculate_single_forwards_coverage_resolution(monkeypatch):
 
 def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
     monkeypatch.setattr(app_mod, "_elevation_path", __file__)
+    monkeypatch.setattr(app_mod, "_grid_provider", object())
     with app.test_client() as client:
         resp = client.post("/api/tower-coverage/calculate", json={
             "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},

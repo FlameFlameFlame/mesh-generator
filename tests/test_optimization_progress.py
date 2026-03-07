@@ -11,6 +11,7 @@ def _seed_minimum_optimization_state(tmp_path: Path) -> None:
     elev = tmp_path / "elevation.tif"
     elev.write_bytes(b"fake")
     app_mod._elevation_path = str(elev)
+    app_mod._grid_provider = object()
     app_mod._opt_running = False
     app_mod._opt_result = {}
     app_mod._p2p_routes = [{
@@ -48,7 +49,7 @@ def test_optimization_stream_emits_progress_and_done(monkeypatch, tmp_path):
     _seed_minimum_optimization_state(tmp_path)
 
     def _fake_run_route_pipeline(
-        routes, mesh_config, elevation_path, city_boundaries_geojson=None,
+        routes, mesh_config, grid_provider, city_boundaries_geojson=None,
         boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
     ):
         route = routes[0]
@@ -132,7 +133,7 @@ def test_optimization_progress_handles_one_algorithm_failure(monkeypatch, tmp_pa
     _seed_minimum_optimization_state(tmp_path)
 
     def _fake_run_route_pipeline(
-        routes, mesh_config, elevation_path, city_boundaries_geojson=None,
+        routes, mesh_config, grid_provider, city_boundaries_geojson=None,
         boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
     ):
         if strategy == "greedy":
