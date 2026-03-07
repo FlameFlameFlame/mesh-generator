@@ -5,7 +5,7 @@ import os
 import yaml
 
 from generator import app as app_mod
-from generator.app import app
+from generator.app import DEFAULT_OUTPUT_DIR, app
 from generator.models import SiteModel, SiteStore
 
 
@@ -116,6 +116,13 @@ def _write_fixture(tmp_path):
 
 
 class TestLoadProject:
+    def test_index_sets_projects_default_output_dir(self):
+        with app.test_client() as client:
+            resp = client.get("/")
+
+        assert resp.status_code == 200
+        assert f'value="{DEFAULT_OUTPUT_DIR}"'.encode() in resp.data
+
     def test_load_returns_edges_layer(self, tmp_path):
         config_path = _write_fixture(tmp_path)
         with app.test_client() as client:

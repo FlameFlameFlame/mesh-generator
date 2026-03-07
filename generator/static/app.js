@@ -34,6 +34,7 @@ let _manualCoverageModeActive = false;
 let _manualCoverageSource = null;    // {source_id, lat, lon, h3_index?}
 let _pointCoverageMarker = null;
 let _towerCoverageResolutionInitialized = false;
+let _towerCoverageProgressTimer = null;
 let _selectedEdgeKey = null;
 let hasCoverage = false;  // server says coverage file exists
 let coverageFetched = false;
@@ -642,6 +643,7 @@ function doClear() {
       document.getElementById('coverage-metric-row').style.display = 'none';
       document.getElementById('chk-tower-coverage').checked = false;
       document.getElementById('tower-coverage-metric-row').style.display = 'none';
+      _hideTowerCoverageProgress();
       _cachedTowersGeojson = null;
       wayIdToColor = {};
       _allRoutes = [];
@@ -2197,24 +2199,94 @@ function _visibleTowerCoverageSources() {
   return _collectCoverageSourcesFromTowerGeojson(_cachedTowersGeojson);
 }
 
+function _towerCoverageProgressElements() {
+  return {
+    row: document.getElementById('tower-coverage-progress-row'),
+    bar: document.getElementById('tower-coverage-progress-bar'),
+    label: document.getElementById('tower-coverage-progress-label'),
+  };
+}
+
+function _stopTowerCoverageProgressTimer() {
+  if (_towerCoverageProgressTimer) {
+    clearInterval(_towerCoverageProgressTimer);
+    _towerCoverageProgressTimer = null;
+  }
+}
+
+function _hideTowerCoverageProgress() {
+  _stopTowerCoverageProgressTimer();
+  let els = _towerCoverageProgressElements();
+  if (!els.row || !els.bar || !els.label) return;
+  els.row.style.display = 'none';
+  els.bar.value = 0;
+}
+
+function _startTowerCoverageProgress(labelText) {
+  _stopTowerCoverageProgressTimer();
+  let els = _towerCoverageProgressElements();
+  if (!els.row || !els.bar || !els.label) return;
+  els.row.style.display = 'inline-flex';
+  els.bar.max = 100;
+  let progress = 5;
+  els.bar.value = progress;
+  els.label.textContent = labelText || 'Calculating coverage...';
+  _towerCoverageProgressTimer = setInterval(function() {
+    if (progress >= 90) return;
+    progress += (progress < 50 ? 6 : 2);
+    if (progress > 90) progress = 90;
+    els.bar.value = progress;
+  }, 250);
+}
+
+function _finishTowerCoverageProgress(labelText) {
+  _stopTowerCoverageProgressTimer();
+  let els = _towerCoverageProgressElements();
+  if (!els.row || !els.bar || !els.label) return;
+  els.row.style.display = 'inline-flex';
+  els.bar.value = 100;
+  els.label.textContent = labelText || 'Coverage ready';
+  setTimeout(_hideTowerCoverageProgress, 900);
+}
+
+function _failTowerCoverageProgress(labelText) {
+  _stopTowerCoverageProgressTimer();
+  let els = _towerCoverageProgressElements();
+  if (!els.row || !els.bar || !els.label) return;
+  els.row.style.display = 'inline-flex';
+  els.label.textContent = labelText || 'Coverage failed';
+  setTimeout(_hideTowerCoverageProgress, 1500);
+}
+
 function _runTowerCoverageRequest(url, payload, successPrefix) {
   if (!_hasElevation) {
     setStatus('Download Elevation first.');
+    _hideTowerCoverageProgress();
     return;
   }
   if (!_isGridProviderReady()) {
     setStatus('Grid provider is not ready yet.');
+    _hideTowerCoverageProgress();
     return;
   }
+  _startTowerCoverageProgress('Calculating coverage...');
   setStatus('Calculating tower coverage...');
   fetch(url, {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(payload),
   }).then(safeJson).then(function(data) {
-    if (data.error) { setStatus('Tower coverage failed: ' + data.error); return; }
+    if (data.error) {
+      _failTowerCoverageProgress('Coverage failed');
+      setStatus('Tower coverage failed: ' + data.error);
+      return;
+    }
     towerCoverageData = data.coverage || null;
-    if (!towerCoverageData) { setStatus('Tower coverage failed: empty response'); return; }
+    if (!towerCoverageData) {
+      _failTowerCoverageProgress('Coverage failed');
+      setStatus('Tower coverage failed: empty response');
+      return;
+    }
     towerCoverageFetched = true;
     if (data.coverage_h3_resolution != null) {
       document.getElementById('tower-coverage-h3-resolution').value = data.coverage_h3_resolution;
@@ -2228,11 +2300,13 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     let n = (towerCoverageData.features || []).length;
     let resTxt = data.coverage_h3_resolution != null ? (' @ H3 ' + data.coverage_h3_resolution) : '';
     let mixTxt = _countsByResolutionText(data.cells_by_resolution || {});
+    _finishTowerCoverageProgress('Coverage ready');
     setStatus(
       (successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' +
       resTxt + (mixTxt ? (' [' + mixTxt + ']') : '')
     );
   }).catch(function(err) {
+    _failTowerCoverageProgress('Coverage failed');
     setStatus('Tower coverage failed');
   });
 }
@@ -2343,6 +2417,7 @@ function toggleTowerCoverage() {
     metricRow.style.display = 'block';
     if (!towerCoverageData && !towerCoverageFetched) {
       towerCoverageFetched = true;
+      _startTowerCoverageProgress('Loading runtime coverage...');
       setStatus('Loading runtime tower coverage...');
       fetch('/api/tower-coverage')
         .then(function(r) {
@@ -2354,10 +2429,12 @@ function toggleTowerCoverage() {
           _populateTowerFilter();
           renderTowerCoverage();
           layerGroups.towerCoverage.addTo(map);
+          _finishTowerCoverageProgress('Coverage ready');
           setStatus('Runtime tower coverage loaded: ' + (data.features || []).length + ' cells');
         }).catch(err => {
           if (_coverageSourceMode === 'manual') {
             towerCoverageFetched = false;
+            _hideTowerCoverageProgress();
             setStatus('No runtime tower coverage. Use Place Tower and click map to calculate.');
             return;
           }
@@ -2367,6 +2444,7 @@ function toggleTowerCoverage() {
             chk.checked = false;
             metricRow.style.display = 'none';
             towerCoverageFetched = false;
+            _failTowerCoverageProgress('No tower sources');
             return;
           }
           _runTowerCoverageRequest('/api/tower-coverage/calculate-batch', {
@@ -2383,6 +2461,7 @@ function toggleTowerCoverage() {
   } else {
     map.removeLayer(layerGroups.towerCoverage);
     metricRow.style.display = 'none';
+    _hideTowerCoverageProgress();
   }
 }
 
@@ -2669,6 +2748,7 @@ function doClearCalculations() {
     layerGroups.towerCoverage.clearLayers();
     document.getElementById('chk-tower-coverage').checked = false;
     document.getElementById('tower-coverage-metric-row').style.display = 'none';
+    _hideTowerCoverageProgress();
     layerGroups.gapRepairHexes.clearLayers();
     _cachedGapRepairGeojson = null;
     _cachedGridCells = null;

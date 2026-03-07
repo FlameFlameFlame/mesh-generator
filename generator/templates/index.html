@@ -39,7 +39,7 @@
     <div id="history-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:999;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);min-width:260px;max-height:300px;overflow-y:auto;"></div>
   </span>
   <button class="primary" onclick="doExport()">Save</button>
-  <label>Output dir: <input id="output-dir" type="text" value="output" style="width:180px;padding:4px;"></label>
+  <label>Output dir: <input id="output-dir" type="text" value="{{ default_output_dir }}" style="width:280px;padding:4px;"></label>
 
   <span class="toolbar-sep"></span>
 
@@ -198,6 +198,10 @@
             <button id="btn-calc-selected-coverage" onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
             <button id="btn-calc-all-coverage" onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
           </div>
+        </div>
+        <div id="tower-coverage-progress-row" class="progress-wrap" style="margin-top:6px;">
+          <progress id="tower-coverage-progress-bar" max="100" value="0"></progress>
+          <span id="tower-coverage-progress-label">Calculating coverage...</span>
         </div>
       </div>
       <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>
