@@ -2895,7 +2895,6 @@ function getSettings() {
     min_fresnel_clearance_m: (losPolicy === 'budget') ? null : 0.0,
     max_towers_per_route: parseInt(document.getElementById('opt-max-towers').value) || 10,
     road_buffer_m: parseFloat(document.getElementById('set-road-buffer-m').value) || 100,
-    max_coverage_radius_m: parseFloat(document.getElementById('set-coverage-radius-m').value) || 15000,
   };
 }
 
@@ -2914,7 +2913,6 @@ function applySettings(s) {
   }
   if (s.max_towers_per_route != null) document.getElementById('opt-max-towers').value = s.max_towers_per_route;
   if (s.road_buffer_m != null) document.getElementById('set-road-buffer-m').value = s.road_buffer_m;
-  if (s.max_coverage_radius_m != null) document.getElementById('set-coverage-radius-m').value = s.max_coverage_radius_m;
   if (s.max_coverage_radius_m != null) {
     document.getElementById('tower-coverage-radius-m').value = s.max_coverage_radius_m;
   }

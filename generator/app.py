@@ -547,7 +547,6 @@ def _save_project_to_dir(
         "receiver_sensitivity_dbm": -137,
         "max_towers_per_route": 10,
         "road_buffer_m": 100,
-        "max_coverage_radius_m": 15000,
     }
     export_params = dict(default_params)
     if parameters:
