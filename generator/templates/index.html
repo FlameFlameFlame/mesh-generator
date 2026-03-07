@@ -163,7 +163,7 @@
       <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
         <label title="H3 resolution used only for runtime tower coverage">
           Tower coverage H3
-          <input id="tower-coverage-h3-resolution" type="number" value="8" min="6" max="10" step="1" style="width:70px;">
+          <input id="tower-coverage-h3-resolution" type="number" value="8" min="6" max="9" step="1" style="width:70px;">
         </label>
         <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
           <option value="tower_id">Color by tower</option>
@@ -226,8 +226,8 @@
     </div>
     <div id="settings-panel" style="display:none;">
       <strong>Mesh Calculator Settings</strong>
-      <label title="H3 resolution (6=coarse, 10=fine)">H3 resolution
-        <input id="set-h3-resolution" type="number" value="8" min="6" max="10" step="1">
+      <label title="H3 resolution (6=coarse, 9=fine)">H3 resolution
+        <input id="set-h3-resolution" type="number" value="8" min="6" max="9" step="1">
       </label>
       <label title="Radio frequency in MHz">Frequency (MHz)
         <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1">
@@ -251,7 +251,7 @@
           <option value="budget">Budget + Diffraction (allow NLOS)</option>
         </select>
       </label>
-      <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses H3 res 10 for fine terrain sampling.">Road buffer (m)
+      <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
         <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50">
       </label>
       <label title="Maximum radius around each tower to compute coverage (meters)">Coverage radius (m)

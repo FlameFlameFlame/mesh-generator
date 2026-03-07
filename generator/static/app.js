@@ -2151,7 +2151,7 @@ function _coverageTowerId(props) {
 function getTowerCoverageResolution() {
   let val = parseInt(document.getElementById('tower-coverage-h3-resolution').value);
   if (!Number.isFinite(val)) return null;
-  return Math.max(6, Math.min(11, val));
+  return Math.max(6, Math.min(9, val));
 }
 
 function _setSelectedTowerCoverageSource(source) {

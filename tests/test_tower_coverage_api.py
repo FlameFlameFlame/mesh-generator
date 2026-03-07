@@ -96,10 +96,10 @@ def test_calculate_single_forwards_coverage_resolution(monkeypatch):
         resp = client.post("/api/tower-coverage/calculate", json={
             "source": {"source_id": "point", "lat": 40.2, "lon": 44.5},
             "parameters": {"h3_resolution": 8},
-            "coverage_h3_resolution": 10,
+            "coverage_h3_resolution": 9,
         })
     assert resp.status_code == 200
-    assert captured["body"]["coverage_h3_resolution"] == 10
+    assert captured["body"]["coverage_h3_resolution"] == 9
 
 
 def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
@@ -112,4 +112,4 @@ def test_calculate_rejects_out_of_range_coverage_resolution(monkeypatch):
             "coverage_h3_resolution": 12,
         })
     assert resp.status_code == 400
-    assert "between 6 and 10" in resp.get_json()["error"]
+    assert "between 6 and 9" in resp.get_json()["error"]
