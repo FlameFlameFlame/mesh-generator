@@ -655,7 +655,12 @@ def download_elevation():
         from generator.elevation import _tiles_for_bbox
         tile_count = len(_tiles_for_bbox(south, west, north, east))
         logger.info("Downloaded elevation: %d tiles, %.1f MB -> %s", tile_count, size_mb, path)
-        grid_info = _build_grid_bundle_for_current_state(output_dir_for_cache)
+        grid_info = _build_grid_bundle_for_current_state(
+            output_dir_for_cache,
+            elevation_path=_elevation_path,
+            boundary_geojson=(_loaded_layers or {}).get("boundary"),
+            roads_geojson=_full_roads_geojson or _roads_geojson or (_loaded_layers or {}).get("roads"),
+        )
         _hydrate_grid_provider(grid_info["bundle_path"], elevation_path=_elevation_path)
         _grid_bundle_path = grid_info["bundle_path"]
         _grid_provider_summary = grid_info["summary"]

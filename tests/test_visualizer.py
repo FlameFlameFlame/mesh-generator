@@ -235,6 +235,53 @@ class TestLoadProject:
         assert captured["elevation_path"] == str(fallback_elevation)
 
 
+class TestElevationDownload:
+    def test_elevation_build_uses_fresh_downloaded_path(self, tmp_path, monkeypatch):
+        store = SiteStore()
+        store.add(SiteModel(name="A", lat=40.70, lon=43.80, priority=1))
+        store.add(SiteModel(name="B", lat=40.50, lon=43.90, priority=1))
+        monkeypatch.setattr(app_mod, "store", store)
+        monkeypatch.setattr(app_mod, "_loaded_layers", {
+            "boundary": {"type": "FeatureCollection", "features": []},
+        })
+        monkeypatch.setattr(app_mod, "_roads_geojson", None)
+        monkeypatch.setattr(app_mod, "_full_roads_geojson", None)
+        monkeypatch.setattr(app_mod, "_elevation_path", None)
+
+        monkeypatch.setattr(app_mod, "_resolve_project_output_dir", lambda payload: str(tmp_path))
+        monkeypatch.setattr(app_mod, "_get_cache_dir", lambda output_dir: str(tmp_path / "cache"))
+
+        def _fake_fetch(_south, _west, _north, _east, output_path, cache_dir=None):
+            with open(output_path, "wb") as f:
+                f.write(b"fake-geotiff")
+            return output_path
+
+        captured = {}
+
+        def _fake_build(output_dir=None, elevation_path=None, boundary_geojson=None, roads_geojson=None):
+            assert elevation_path is not None and os.path.isfile(elevation_path)
+            captured["elevation_path"] = elevation_path
+            return {
+                "bundle_path": str(tmp_path / "grid_bundle.json"),
+                "resolutions": [8, 9],
+                "summary": "res=8,9",
+            }
+
+        monkeypatch.setattr(app_mod.pipeline_site_handlers, "fetch_and_write_elevation_cached", _fake_fetch)
+        monkeypatch.setattr(app_mod, "_build_grid_bundle_for_current_state", _fake_build)
+        monkeypatch.setattr(app_mod, "_hydrate_grid_provider", lambda bundle_path, elevation_path=None: None)
+        monkeypatch.setattr(app_mod, "_write_status_json", lambda *args, **kwargs: None)
+
+        with app.test_client() as client:
+            resp = client.post("/api/elevation", json={"project_name": "demo"})
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert "error" not in data
+        assert data["grid_provider_ready"] is True
+        assert captured["elevation_path"] == app_mod._elevation_path
+
+
 class TestCoverageEndpoint:
     def test_coverage_after_load(self, tmp_path):
         config_path = _write_fixture(tmp_path)

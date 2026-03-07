@@ -346,21 +346,28 @@ def _load_grid_provider_from_bundle(bundle_path: str, elevation_path: str | None
     provider = GridProvider.from_bundle(bundle_path, elevation_path=elevation_path)
     return provider
 
-def _build_grid_bundle_for_current_state(output_dir: str | None = None):
+def _build_grid_bundle_for_current_state(
+    output_dir: str | None = None,
+    elevation_path: str | None = None,
+    boundary_geojson: dict | None = None,
+    roads_geojson: dict | None = None,
+):
     """
     Build a multi-resolution (8..9) grid bundle for current boundary/roads/elevation.
 
     Returns:
         dict: {bundle_path, resolutions, summary}
     """
-    if not _elevation_path or not os.path.isfile(_elevation_path):
+    effective_elevation_path = elevation_path or _elevation_path
+    effective_boundary_geojson = boundary_geojson or ((_loaded_layers or {}).get("boundary"))
+    effective_roads_geojson = roads_geojson or _full_roads_geojson or _roads_geojson or ((_loaded_layers or {}).get("roads"))
+
+    if not effective_elevation_path or not os.path.isfile(effective_elevation_path):
         raise ValueError("Elevation is not available")
-    boundary_geojson = (_loaded_layers or {}).get("boundary")
-    if not boundary_geojson:
+    if not effective_boundary_geojson:
         raise ValueError("Boundary is not available")
 
-    roads_geojson = _full_roads_geojson or _roads_geojson or (_loaded_layers or {}).get("roads")
-    bundle_dir = os.path.abspath(output_dir) if output_dir else os.path.dirname(os.path.abspath(_elevation_path))
+    bundle_dir = os.path.abspath(output_dir) if output_dir else os.path.dirname(os.path.abspath(effective_elevation_path))
     os.makedirs(bundle_dir, exist_ok=True)
     bundle_path = os.path.join(bundle_dir, "grid_bundle.json")
 
@@ -368,9 +375,9 @@ def _build_grid_bundle_for_current_state(output_dir: str | None = None):
 
     payload = GridProvider.build_bundle(
         bundle_path=bundle_path,
-        elevation_path=_elevation_path,
-        boundary_geojson=boundary_geojson,
-        roads_geojson=roads_geojson,
+        elevation_path=effective_elevation_path,
+        boundary_geojson=effective_boundary_geojson,
+        roads_geojson=effective_roads_geojson,
         resolutions=(8, 9),
     )
     res = sorted(int(r) for r in (payload.get("resolutions") or {}).keys())

@@ -1,5 +1,8 @@
 # Change Summary
 
+- 2026-03-07: Fixed `/api/elevation` first-run failure (`Failed to download elevation: Elevation is not available`) by forwarding the freshly downloaded elevation path and current boundary/roads into `_build_grid_bundle_for_current_state(...)` instead of relying on stale module-global state during handler execution.
+- 2026-03-07: Extended `_build_grid_bundle_for_current_state(...)` to accept explicit `elevation_path`, `boundary_geojson`, and `roads_geojson` overrides while keeping backward-compatible defaults.
+- 2026-03-07: Added regression test `TestElevationDownload.test_elevation_build_uses_fresh_downloaded_path` in `tests/test_visualizer.py`.
 - 2026-03-07: Updated Playwright smoke test for the project-based workflow: switched server boot to app-factory Flask launch, added dynamic free-port binding/process-liveness readiness, created/opened projects explicitly, replaced brittle tower-coverage UI interaction with API validation, and removed fragile cache-log string assertions.
 - 2026-03-07: Fixed `/api/projects` listing robustness when `status.json` contains JSON `null` by normalizing non-dict status/`last_optimization_run` to empty dicts.
 - 2026-03-07: Added regression test `test_projects_list_handles_null_status_json` in `tests/test_visualizer.py`.
