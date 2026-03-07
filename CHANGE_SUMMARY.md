@@ -1,5 +1,7 @@
 # Change Summary
 
+- 2026-03-07: Removed optimization-pipeline dependency on `coverage.geojson`: optimization result ingestion/persistence now treats runtime tower coverage as the coverage source, clears stale road-coverage layers on rerun, and no longer copies pipeline `coverage.geojson` artifacts.
+- 2026-03-07: Optimization progress bars now show real link-calculation progress during the visibility stage via live completed/total link-check updates streamed from mesh_calculator.
 - 2026-03-07: Removed greedy optimization mode end-to-end; `/api/run-optimization` now runs a single DP pipeline, `/api/optimization-result` returns one DP result object, frontend optimization rendering/progress is single-result DP-only, and greedy output artifact directories are no longer produced.
 - 2026-03-05: Fixed export parameter drift in `generator/app.py` by replacing hardcoded `routes.json` parameters with merged runtime/export parameters.
 - 2026-03-05: Unified parameter propagation so `config.yaml`, `routes.json`, and `status.json` share the same parameter set.
