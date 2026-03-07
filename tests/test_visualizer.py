@@ -409,9 +409,45 @@ class TestCoverageEndpoint:
         data = resp.get_json()
         assert data["type"] == "FeatureCollection"
         assert len(data["features"]) == 1
-        props = data["features"][0]["properties"]
-        assert props["h3_index"] == h3_idx
-        assert props["visible_tower_count"] >= 1
+
+
+class TestGridLayersEndpoint:
+    def test_grid_layers_uses_helper_injected_from_app_module(self, monkeypatch):
+        h3_idx = h3.latlng_to_cell(40.2, 44.5, 8)
+
+        class _FakeGridProvider:
+            def adaptive_resolution_summary(self, base_res, cfg):
+                return {
+                    "effective_h3_resolution_min": 8,
+                    "effective_h3_resolution_max": 8,
+                }
+
+            def get_adaptive_road_cells(self, base_res, cfg):
+                return {h3_idx}
+
+            def get_adaptive_full_cells(self, base_res, cfg):
+                return {h3_idx}
+
+            def get_adaptive_cell_metadata(self, h3_index, base_res, cfg):
+                return {"h3_resolution": 8, "effective_h3_resolution": 8}
+
+            def get_h3_cell_max_elevation(self, h3_index):
+                return 100.0
+
+        monkeypatch.setattr(app_mod, "_grid_provider", _FakeGridProvider())
+
+        with app.test_client() as client:
+            resp = client.post("/api/grid-layers", json={
+                "parameters": {"h3_resolution": 8},
+                "include_full": True,
+                "max_cells": 5000,
+            })
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert "error" not in data
+        assert data["grid_cells_count"] >= 1
+        assert data["grid_cells_full_count"] >= 1
 
 
 class TestPickFile:

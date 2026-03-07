@@ -38,6 +38,8 @@ def _inject_globals(app_mod):
         "_write_status_json",
         "_compute_bounds",
         "_collect_coords",
+        "_cells_in_bbox",
+        "_grid_cells_to_geojson",
         "_CALC_LAYER_TO_FILENAME",
     ]
     for name in names:
