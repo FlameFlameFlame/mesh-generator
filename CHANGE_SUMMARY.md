@@ -63,3 +63,4 @@
 - 2026-03-07: Added grid-layer color mode selector (`resolution` or `elevation`) in Layers panel; elevation mode colors road/full grid cells by normalized per-layer cell elevation.
 - 2026-03-07: Fixed provider-backed `/api/grid-layers` elevation export by populating per-cell max elevation from `GridProvider`; grid tooltips now treat missing elevation as `?` instead of coercing null to `0`.
 - 2026-03-07: Optimized grid-layer rendering with viewport-aware `/api/grid-layers` requests (bbox + cell cap), zoom-gated full-grid fetch (`zoom>=10`), map move/zoom debounced refresh for provider-sourced grids, and a new in-panel `grid-render-status` indicator while grid data is loading/drawing.
+- 2026-03-07: Reduced operational H3 upper bound to 9 for performance: grid-bundle build now precomputes `(8,9)`, runtime coverage resolution validation is `6..9`, and UI H3 inputs/coverage clamping now cap at 9.
