@@ -82,10 +82,19 @@ const _OPT_PROGRESS_ALGOS = ['dp'];
 let _optProgressState = {
   dp: {percent: 0, label: 'Queued…', error: false},
 };
+let _optEventSource = null;
+let _optCancelInFlight = false;
+
+function _setOptimizationRunUiState(isRunning) {
+  let runBtn = document.getElementById('btn-optimize');
+  let cancelBtn = document.getElementById('btn-cancel-opt');
+  if (runBtn) runBtn.disabled = !!isRunning || !_hasRoutes || !_isGridProviderReady();
+  if (cancelBtn) cancelBtn.disabled = !isRunning;
+}
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
   let ready = _hasRoutes && _isGridProviderReady();
-  btn.disabled = !ready;
+  btn.disabled = !ready || !!_optEventSource;
   btn.title = ready
     ? 'Run mesh_calculator optimization'
     : 'Requires: Filter P2P + Grid provider ready';
@@ -2920,12 +2929,12 @@ function _renderOptimizationResult(res) {
 }
 
 function doRunOptimization() {
-  let btn = document.getElementById('btn-optimize');
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let parameters = getSettings();
   _lastRunBaseH3Resolution = parameters.h3_resolution || null;
   _lowMastWarningActive = parameters.mast_height_m < _LOW_MAST_WARN_THRESHOLD_M;
-  btn.disabled = true;
+  _setOptimizationRunUiState(true);
+  _optCancelInFlight = false;
   if (_lowMastWarningActive) {
     setStatus(
       'Warning: mast height < ' + _LOW_MAST_WARN_THRESHOLD_M +
@@ -2974,7 +2983,7 @@ function doRunOptimization() {
     body: JSON.stringify({max_towers_per_route: maxTowers, parameters: parameters, output_dir: outputDir})
   }).then(safeJson).then(function(res) {
     if (res.error) {
-      btn.disabled = false;
+      _setOptimizationRunUiState(false);
       setStatus('Optimization failed: ' + res.error);
       let panel = document.getElementById('opt-progress-panel');
       if (panel) panel.style.display = 'none';
@@ -2986,6 +2995,7 @@ function doRunOptimization() {
     }
     // Pipeline started in background — connect SSE stream
     let es = new EventSource('/api/optimization-stream');
+    _optEventSource = es;
     es.onmessage = function(e) {
       let d;
       try { d = JSON.parse(e.data); } catch(ex) { return; }
@@ -2998,16 +3008,35 @@ function doRunOptimization() {
       }
       if (d.done) {
         es.close();
-        btn.disabled = false;
+        _optEventSource = null;
+        _setOptimizationRunUiState(false);
+        _optCancelInFlight = false;
         // Fetch the full result
         fetch('/api/optimization-result').then(safeJson).then(function(result) {
           if (result.error) { setStatus('Could not load results: ' + result.error); return; }
           _renderOptimizationResult(result);
         });
       }
+      if (d.canceled) {
+        es.close();
+        _optEventSource = null;
+        _setOptimizationRunUiState(false);
+        _optCancelInFlight = false;
+        setStatus(d.message || 'Optimization canceled.');
+        _OPT_PROGRESS_ALGOS.forEach(function(algo) {
+          _setOptimizationProgressRow(
+            algo,
+            _optProgressState[algo].percent,
+            'Canceled by user',
+            true
+          );
+        });
+      }
       if (d.error) {
         es.close();
-        btn.disabled = false;
+        _optEventSource = null;
+        _setOptimizationRunUiState(false);
+        _optCancelInFlight = false;
         _OPT_PROGRESS_ALGOS.forEach(function(algo) {
           _setOptimizationProgressRow(algo, _optProgressState[algo].percent, 'Error: ' + d.error, true);
         });
@@ -3016,13 +3045,36 @@ function doRunOptimization() {
     };
     es.onerror = function() {
       es.close();
-      btn.disabled = false;
+      _optEventSource = null;
+      _setOptimizationRunUiState(false);
+      _optCancelInFlight = false;
     };
   }).catch(function(err) {
-    btn.disabled = false;
+    _setOptimizationRunUiState(false);
+    _optCancelInFlight = false;
     setStatus('');
     alert('Optimization error: ' + err);
   });
+}
+
+function doCancelOptimization() {
+  if (!_optEventSource || _optCancelInFlight) return;
+  _optCancelInFlight = true;
+  setStatus('Cancel requested…');
+  fetch('/api/cancel-optimization', {method: 'POST'})
+    .then(safeJson)
+    .then(function(data) {
+      if (data.error) {
+        _optCancelInFlight = false;
+        setStatus('Cancel failed: ' + data.error);
+        return;
+      }
+      setStatus('Cancel requested… waiting for current step to finish');
+    })
+    .catch(function(err) {
+      _optCancelInFlight = false;
+      setStatus('Cancel failed: ' + err);
+    });
 }
 
 // --- Path Profile helpers ---
