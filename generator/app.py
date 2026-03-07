@@ -2165,8 +2165,12 @@ def pick_file():
             )
             if result.returncode == 0:
                 return jsonify({"path": result.stdout.strip()})
-            # User cancelled (osascript exits 1 with "User canceled" in stderr)
-            return jsonify({"path": ""})
+            stderr = (result.stderr or "").strip()
+            # User cancelled (osascript exits 1 with "User canceled" / -128)
+            if "User canceled" in stderr or "(-128)" in stderr:
+                return jsonify({"path": ""})
+            logger.warning("macOS file picker failed: rc=%s stderr=%s", result.returncode, stderr)
+            return jsonify({"error": f"Native picker failed: {stderr}", "path": ""})
         else:
             # Linux/Windows: try tkinter
             import tkinter as tk

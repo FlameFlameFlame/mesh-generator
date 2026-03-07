@@ -226,6 +226,46 @@ class TestCoverageEndpoint:
         assert resp.status_code == 404
 
 
+class TestPickFile:
+    def test_pick_file_returns_error_for_non_cancel_macos_failure(self, monkeypatch):
+        import subprocess
+
+        class _Res:
+            returncode = 1
+            stdout = ""
+            stderr = "execution error: Not authorized to send Apple events."
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Res())
+
+        with app.test_client() as client:
+            resp = client.post("/api/pick-file")
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data.get("path") == ""
+        assert "Native picker failed:" in data.get("error", "")
+
+    def test_pick_file_cancel_on_macos_returns_empty_path(self, monkeypatch):
+        import subprocess
+
+        class _Res:
+            returncode = 1
+            stdout = ""
+            stderr = "User canceled."
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: _Res())
+
+        with app.test_client() as client:
+            resp = client.post("/api/pick-file")
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data.get("path") == ""
+        assert "error" not in data
+
+
 class TestClearResetsState:
     def test_clear_resets_coverage(self, tmp_path):
         config_path = _write_fixture(tmp_path)
