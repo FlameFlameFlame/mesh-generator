@@ -417,6 +417,85 @@ class TestClearResetsState:
         assert data["report"]["total_towers"] == 5
 
 
+class TestProjectApis:
+    def test_projects_create_list_rename(self, tmp_path, monkeypatch):
+        projects_root = tmp_path / "projects"
+        projects_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(app_mod, "DEFAULT_OUTPUT_DIR", str(projects_root))
+
+        with app.test_client() as client:
+            resp = client.get("/api/projects")
+            data = resp.get_json()
+            assert resp.status_code == 200
+            assert data["projects"] == []
+
+            create = client.post("/api/projects/create", json={})
+            c = create.get_json()
+            assert create.status_code == 200
+            assert c["name"] == "New project"
+
+            listed = client.get("/api/projects").get_json()["projects"]
+            assert any(p["name"] == "New project" for p in listed)
+
+            rename = client.post("/api/projects/rename", json={
+                "old_name": "New project",
+                "new_name": "Renamed project",
+            })
+            assert rename.status_code == 200
+            listed2 = client.get("/api/projects").get_json()["projects"]
+            assert any(p["name"] == "Renamed project" for p in listed2)
+
+    def test_projects_open_and_load_run(self, tmp_path, monkeypatch):
+        projects_root = tmp_path / "projects"
+        projects_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(app_mod, "DEFAULT_OUTPUT_DIR", str(projects_root))
+        project_dir = projects_root / "demo"
+        project_dir.mkdir(parents=True, exist_ok=True)
+
+        config_path = _write_fixture(project_dir)
+        run_dir = project_dir / "runs" / "20260307T000000.000000Z"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        towers = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [44.5, 40.2]},
+                "properties": {"tower_id": 7, "source": "route", "h3_index": "8828c0001"},
+            }],
+        }
+        with open(run_dir / "towers.geojson", "w") as f:
+            json.dump(towers, f)
+        with open(run_dir / "report.json", "w") as f:
+            json.dump({"total_towers": 7, "visibility_edges": 2}, f)
+        with open(run_dir / "run_settings.json", "w") as f:
+            json.dump({
+                "run_id": "20260307T000000.000000Z",
+                "saved_at_utc": "2026-03-07T00:00:00Z",
+                "parameters": {"mast_height_m": 5},
+                "summary": {"total_towers": 7, "visibility_edges": 2},
+                "files": ["towers.geojson", "report.json"],
+            }, f)
+        with open(project_dir / "status.json", "w") as f:
+            json.dump({"optimization_runs": [{"run_id": "20260307T000000.000000Z"}]}, f)
+
+        with app.test_client() as client:
+            open_resp = client.post("/api/projects/open", json={"project_name": "demo"})
+            open_data = open_resp.get_json()
+            assert open_resp.status_code == 200
+            assert open_data["latest_run_id"] == "20260307T000000.000000Z"
+            assert open_data["config_path"] == config_path
+
+            client.post("/api/load", json={"path": config_path})
+            run_resp = client.post("/api/projects/load-run", json={
+                "project_name": "demo",
+                "run_id": "20260307T000000.000000Z",
+            })
+            run_data = run_resp.get_json()
+            assert run_resp.status_code == 200
+            assert run_data["report"]["total_towers"] == 7
+            assert run_data["layers"]["towers"]["features"][0]["properties"]["tower_id"] == 7
+
+
 def test_save_project_routes_export_uses_runtime_parameters(tmp_path, monkeypatch):
     store = SiteStore()
     store.add(SiteModel(name="A", lat=40.0, lon=44.0, priority=1))
