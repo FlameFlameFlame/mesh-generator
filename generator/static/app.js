@@ -2311,17 +2311,18 @@ function _autoCoverageModeFromCurrentState(preferTowers) {
 function _populateTowerFilter() {
   let sel = document.getElementById('tower-coverage-filter');
   if (!sel) return;
+  let prev = sel.value;
   let ids = new Set();
-  if (towerCoverageData) {
-    (towerCoverageData.features || []).forEach(function(f) {
-      let tid = _coverageTowerId(f.properties || {});
-      if (tid != null) ids.add(tid);
-    });
-  } else {
-    _visibleTowerCoverageSources().forEach(function(src) {
-      if (src.source_id != null) ids.add(src.source_id);
-    });
-  }
+  // Always build tower filter from currently visible towers so a single-source
+  // coverage calculation does not collapse the list to only one tower.
+  _visibleTowerCoverageSources().forEach(function(src) {
+    if (src.source_id != null) ids.add(src.source_id);
+  });
+  // Keep backward compatibility when only coverage payload has tower IDs.
+  (towerCoverageData && towerCoverageData.features ? towerCoverageData.features : []).forEach(function(f) {
+    let tid = _coverageTowerId(f.properties || {});
+    if (tid != null) ids.add(tid);
+  });
   let sorted = Array.from(ids).sort(function(a, b) { return a - b; });
   sel.innerHTML = '<option value="all">All towers</option>';
   sorted.forEach(function(tid) {
@@ -2330,6 +2331,9 @@ function _populateTowerFilter() {
     opt.textContent = 'Tower ' + tid;
     sel.appendChild(opt);
   });
+  if (prev && Array.from(sel.options).some(function(o) { return o.value === prev; })) {
+    sel.value = prev;
+  }
 }
 
 function _coverageTowerId(props) {
@@ -2381,10 +2385,21 @@ function _collectCoverageSourcesFromTowerGeojson(geojson) {
 }
 
 function _visibleTowerCoverageSources() {
-  if (_optResult) {
-    return _collectCoverageSourcesFromTowerGeojson((_optResult || {}).towers);
-  }
-  return _collectCoverageSourcesFromTowerGeojson(_cachedTowersGeojson);
+  // Merge all currently known tower sources so runtime coverage responses
+  // (which may contain only one selected source) do not collapse the selector.
+  let merged = [];
+  let seen = new Set();
+  [_collectCoverageSourcesFromTowerGeojson((_optResult || {}).towers),
+   _collectCoverageSourcesFromTowerGeojson(_cachedTowersGeojson)]
+    .forEach(function(list) {
+      (list || []).forEach(function(src) {
+        let key = src.h3_index || (Number(src.lat).toFixed(6) + ',' + Number(src.lon).toFixed(6));
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(src);
+      });
+    });
+  return merged;
 }
 
 function _towerCoverageProgressElements() {
