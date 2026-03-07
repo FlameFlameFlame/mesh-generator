@@ -1,5 +1,7 @@
 # Change Summary
 
+- 2026-03-08: Fixed optimization spam warnings from closed elevation datasets (`Dataset is closed: .../elevation.tif`) by adding a pre-run grid-provider health probe; when provider exists but is unusable, optimization now auto-rehydrates from `grid_bundle_path` before running.
+- 2026-03-08: Added regression test `test_run_optimization_rehydrates_closed_grid_provider` in `tests/test_optimization_progress.py`.
 - 2026-03-08: Fixed project reopen readiness regression where `Run Optimization` stayed disabled despite loaded elevation/grid data: backend load now normalizes `project_status` flags (`has_elevation`, `has_grid_provider`, `has_routes`, `grid_provider_summary`) from current in-memory state, and frontend `applyProjectStatus(...)` now prefers live `loadData.has_grid_provider` over stale status-file values.
 - 2026-03-08: Added regression test `test_load_overrides_stale_status_provider_flags` in `tests/test_visualizer.py`.
 - 2026-03-07: Hardened optimization start preconditions: `POST /api/run-optimization` now ensures `grid_provider` is ready before launching background work, attempts re-hydration from `grid_bundle_path` when available, and returns a clear `400` (`Grid provider is not ready. Download elevation first.`) instead of async pipeline crash.

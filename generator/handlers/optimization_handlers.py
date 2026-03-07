@@ -7,6 +7,61 @@ import threading
 from flask import Response, jsonify, request
 
 
+def _probe_lat_lon_for_grid_provider(app_mod):
+    for route in (app_mod._p2p_routes or []):
+        for key in ("site1", "site2"):
+            site = route.get(key) or {}
+            lat = site.get("lat")
+            lon = site.get("lon")
+            try:
+                return float(lat), float(lon)
+            except (TypeError, ValueError):
+                continue
+    for site in app_mod.store:
+        try:
+            return float(site.lat), float(site.lon)
+        except Exception:
+            continue
+    return None
+
+
+def _grid_provider_is_usable(app_mod) -> bool:
+    gp = app_mod._grid_provider
+    if gp is None:
+        return False
+    probe = _probe_lat_lon_for_grid_provider(app_mod)
+    if probe is None:
+        return True
+    lat, lon = probe
+    probe_fn = None
+    if callable(getattr(gp, "get_elevation_bilinear", None)):
+        probe_fn = gp.get_elevation_bilinear
+    elif callable(getattr(gp, "get_elevation", None)):
+        probe_fn = gp.get_elevation
+    if probe_fn is None:
+        return True
+    try:
+        probe_fn(lat, lon)
+        return True
+    except Exception as exc:
+        app_mod.logger.warning("Grid provider probe failed before optimization: %s", exc)
+        return False
+
+
+def _ensure_grid_provider_ready(app_mod) -> bool:
+    if _grid_provider_is_usable(app_mod):
+        return True
+    bundle_path = app_mod._grid_bundle_path
+    if not bundle_path or not os.path.isfile(bundle_path):
+        return False
+    try:
+        app_mod._hydrate_grid_provider(bundle_path, elevation_path=app_mod._elevation_path)
+    except Exception:
+        app_mod.logger.warning("Failed to hydrate grid provider from bundle before optimization", exc_info=True)
+        return False
+    return _grid_provider_is_usable(app_mod)
+
+
 def run_optimization(app_mod):
     """
     Run the mesh_calculator route pipeline on the currently selected routes.
@@ -33,12 +88,7 @@ def run_optimization(app_mod):
     if not app_mod._elevation_path or not os.path.isfile(app_mod._elevation_path):
         return jsonify({"error": "No elevation data. Download Elevation first."}), 400
 
-    if app_mod._grid_provider is None and app_mod._grid_bundle_path and os.path.isfile(app_mod._grid_bundle_path):
-        try:
-            app_mod._hydrate_grid_provider(app_mod._grid_bundle_path, elevation_path=app_mod._elevation_path)
-        except Exception:
-            app_mod.logger.warning("Failed to hydrate grid provider from bundle before optimization", exc_info=True)
-    if app_mod._grid_provider is None:
+    if not _ensure_grid_provider_ready(app_mod):
         return jsonify({"error": "Grid provider is not ready. Download elevation first."}), 400
 
     body = request.json or {}

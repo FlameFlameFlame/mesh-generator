@@ -225,3 +225,54 @@ def test_run_optimization_requires_grid_provider(monkeypatch, tmp_path):
     assert start.status_code == 400
     err = start.get_json().get("error", "")
     assert "Grid provider is not ready" in err
+
+
+def test_run_optimization_rehydrates_closed_grid_provider(monkeypatch, tmp_path):
+    _seed_minimum_optimization_state(tmp_path)
+
+    class _ClosedProvider:
+        def get_elevation_bilinear(self, lat, lon):
+            raise RuntimeError("Dataset is closed")
+
+    class _LiveProvider:
+        def get_elevation_bilinear(self, lat, lon):
+            return 100.0
+
+    app_mod._grid_provider = _ClosedProvider()
+    bundle_path = tmp_path / "grid_bundle.json"
+    bundle_path.write_text("{}", encoding="utf-8")
+    app_mod._grid_bundle_path = str(bundle_path)
+
+    def _fake_hydrate(bundle_path, elevation_path=None):
+        app_mod._grid_provider = _LiveProvider()
+
+    def _fake_run_route_pipeline(
+        routes, mesh_config, grid_provider, city_boundaries_geojson=None,
+        boundary_geojson=None, output_dir="output", progress_callback=None
+    ):
+        assert isinstance(grid_provider, _LiveProvider)
+        return {
+            "routes_processed": len(routes),
+            "total_towers": 3,
+            "total_cells": 20,
+            "visibility_edges": 4,
+            "num_clusters": 1,
+            "route_summaries": [],
+            "los_cache": {},
+            "elevation_cache": {},
+        }
+
+    monkeypatch.setattr(app_mod, "_hydrate_grid_provider", _fake_hydrate)
+    monkeypatch.setattr(route_pipeline_mod, "run_route_pipeline", _fake_run_route_pipeline)
+
+    with app.test_client() as client:
+        start = client.post("/api/run-optimization", json={
+            "max_towers_per_route": 5,
+            "parameters": {},
+            "output_dir": "",
+        })
+        assert start.status_code == 200
+        assert start.get_json()["started"] is True
+        events = _read_sse_events(client)
+
+    assert any(e.get("done") for e in events)
