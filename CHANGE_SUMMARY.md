@@ -75,3 +75,6 @@
 - 2026-03-07: Hardened native Open picker on macOS with a Tk directory-picker fallback when `osascript` fails (non-cancel), and aligned Linux/Windows picker behavior to directory selection for project-open flow.
 - 2026-03-07: Fixed project-load grid-provider hydration fallback: when `inputs.elevation` is missing but `elevation.tif` exists in project dir, loader now uses that file before hydrating `grid_bundle`, and retries configured bundle hydration after status-based elevation restoration.
 - 2026-03-07: Added regression test for fallback-elevation bundle hydration in `tests/test_visualizer.py`.
+- 2026-03-07: Added second macOS native Open fallback using `osascript -l JavaScript` (`NSOpenPanel`) when AppleScript picker fails; only user-cancel returns empty path, non-cancel failures now propagate explicit detail.
+- 2026-03-07: Improved Open-button UX for picker failure by showing an explicit alert before manual path prompt fallback.
+- 2026-03-07: Suppressed noisy initial grid-bundle hydrate attempt when elevation is not yet known during project load (hydrate now deferred until elevation path exists).
