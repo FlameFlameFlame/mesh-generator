@@ -50,7 +50,7 @@ def test_optimization_stream_emits_progress_and_done(monkeypatch, tmp_path):
 
     def _fake_run_route_pipeline(
         routes, mesh_config, grid_provider, city_boundaries_geojson=None,
-        boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
+        boundary_geojson=None, output_dir="output", progress_callback=None
     ):
         route = routes[0]
         if progress_callback:
@@ -92,9 +92,9 @@ def test_optimization_stream_emits_progress_and_done(monkeypatch, tmp_path):
             })
         return {
             "routes_processed": len(routes),
-            "total_towers": 7 if strategy == "dp" else 6,
+            "total_towers": 7,
             "total_cells": 100,
-            "visibility_edges": 11 if strategy == "dp" else 8,
+            "visibility_edges": 11,
             "num_clusters": 1,
             "route_summaries": [],
             "los_cache": {},
@@ -117,56 +117,23 @@ def test_optimization_stream_emits_progress_and_done(monkeypatch, tmp_path):
     assert any(e.get("done") for e in events)
     progress_events = [e["progress"] for e in events if "progress" in e]
     assert progress_events
-    assert {"dp", "greedy"}.issubset({p.get("algorithm") for p in progress_events})
-
-    for algo in ("dp", "greedy"):
-        vals = [
-            float(p.get("percent", 0.0))
-            for p in progress_events
-            if p.get("algorithm") == algo and p.get("stage") != "error"
-        ]
-        assert vals == sorted(vals)
-        assert all("stage" in p and "step" in p for p in progress_events if p.get("algorithm") == algo)
+    vals = [
+        float(p.get("percent", 0.0))
+        for p in progress_events
+        if p.get("stage") != "error"
+    ]
+    assert vals == sorted(vals)
+    assert all("stage" in p and "step" in p for p in progress_events)
 
 
-def test_optimization_progress_handles_one_algorithm_failure(monkeypatch, tmp_path):
+def test_optimization_progress_handles_pipeline_failure(monkeypatch, tmp_path):
     _seed_minimum_optimization_state(tmp_path)
 
     def _fake_run_route_pipeline(
         routes, mesh_config, grid_provider, city_boundaries_geojson=None,
-        boundary_geojson=None, output_dir="output", strategy="dp", progress_callback=None
+        boundary_geojson=None, output_dir="output", progress_callback=None
     ):
-        if strategy == "greedy":
-            raise RuntimeError("greedy failed")
-        if progress_callback:
-            progress_callback({
-                "stage": "route",
-                "step": "Preparing corridor",
-                "percent": 0.0,
-                "route_index": 1,
-                "route_total": len(routes),
-                "route_id": "route_0",
-                "route_label": "Yerevan ↔ Gyumri (route_0)",
-            })
-            progress_callback({
-                "stage": "done",
-                "step": "Pipeline complete",
-                "percent": 100.0,
-                "route_index": 1,
-                "route_total": len(routes),
-                "route_id": None,
-                "route_label": None,
-            })
-        return {
-            "routes_processed": len(routes),
-            "total_towers": 5,
-            "total_cells": 80,
-            "visibility_edges": 6,
-            "num_clusters": 1,
-            "route_summaries": [],
-            "los_cache": {},
-            "elevation_cache": {},
-        }
+        raise RuntimeError("pipeline failed")
 
     monkeypatch.setattr(route_pipeline_mod, "run_route_pipeline", _fake_run_route_pipeline)
 
@@ -180,11 +147,7 @@ def test_optimization_progress_handles_one_algorithm_failure(monkeypatch, tmp_pa
 
         events = _read_sse_events(client)
 
-    assert any(e.get("done") for e in events)
-    progress_events = [e["progress"] for e in events if "progress" in e]
-    greedy_error = [
-        p for p in progress_events
-        if p.get("algorithm") == "greedy" and p.get("stage") == "error"
-    ]
-    assert greedy_error
-    assert "greedy failed" in greedy_error[0].get("step", "")
+    assert not any(e.get("done") for e in events)
+    assert any("error" in e for e in events)
+    err = next(e["error"] for e in events if "error" in e)
+    assert "pipeline failed" in err
