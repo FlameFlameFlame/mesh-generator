@@ -85,3 +85,4 @@
 - 2026-03-07: Suppressed noisy initial grid-bundle hydrate attempt when elevation is not yet known during project load (hydrate now deferred until elevation path exists).
 - 2026-03-07: Hardened macOS native Open flow further by trying `choose file` (config.yaml), then `choose folder`, then JXA `NSOpenPanel`, then Tk fallback; this addresses regressions where one chooser mode fails/crashes while another still works.
 - 2026-03-07: Removed tower-coverage `Color by tower` metric option; runtime coverage now supports only numeric metrics (`received_power_dbm`, `path_loss_db`, `distance_m`, `elevation`) with fallback for stale saved state, and cleaned remaining stale H3-resolution state references in UI persistence.
+- 2026-03-07: Updated clear actions to be non-destructive: `Clear Calc` now clears calculation layers from memory/map only (keeps files), and `Clear` now resets in-memory project state without deleting any project files.
