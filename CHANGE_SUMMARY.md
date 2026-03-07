@@ -49,3 +49,6 @@
 - 2026-03-07: Added buffer-growth legend and resolution-aware grid tooltips (`h3_resolution`, `effective_h3_resolution`) plus optimization status summary text showing DP/Greedy effective H3 resolution and auto-refine reason when present.
 - 2026-03-07: Fixed non-rendering Search Hexes toggle by mapping `gapRepairHexes` layer to the actual checkbox id `chk-gap-repair-hexes` in `toggleLayer(...)`; layer now toggles/renderers correctly.
 - 2026-03-07: Updated mesh-generator defaults to `mast_height_m=5` and `road_buffer_m=100` across settings UI, runtime fallbacks, link-analysis fallback handling, and exported project/config parameter defaults.
+- 2026-03-07: Added UI readiness/status for grid-provider flow: new layer-panel status line (`Grid provider: ...`), temporary grid-build progress indicator near elevation progress, and provider-aware gating with backward-compatible fallback when backend readiness is not yet explicit.
+- 2026-03-07: Improved grid/search debugging UX: added `grid-resolution-info` summary (road/full grid H3/effective ranges), Search Hexes quick presets (`DP fallback`, `DP gap`, `Greedy candidates`), and scope legend text; kept existing algorithm/phase/scope/color filters.
+- 2026-03-07: Raised planning H3 settings control max from `10` to `11` to match current adaptive-resolution outputs and avoid UI clamping mismatches.

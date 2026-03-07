@@ -17,6 +17,7 @@
   <button id="btn-download" onclick="doDownloadData()">Download Data</button>
   <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
   <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
+  <span id="grid-progress" class="progress-wrap"><progress id="grid-bar"></progress><span id="grid-label">Building grid...</span></span>
 
   <span class="toolbar-sep"></span>
 
@@ -94,6 +95,7 @@
     </div>
     <div id="layer-panel">
       <strong>Layers</strong>
+      <div id="grid-provider-status" class="sub-note">Grid provider: not ready</div>
       <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
       <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
       <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
@@ -109,20 +111,27 @@
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
       <label><input type="checkbox" id="chk-grid-cells-full" onchange="toggleGridCellsFull()"> Grid Cells (full boundary)</label>
+      <div class="sub-control sub-note" id="grid-resolution-info" style="display:none;"></div>
       <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Search Hexes (all attempts)</label>
       <div class="sub-control" id="gap-repair-filter-row" style="display:none;">
-        <select id="gap-repair-algo-filter" onchange="rerenderGapRepairHexes()">
+        <select id="gap-repair-preset" onchange="applyGapRepairPreset()">
+          <option value="custom">Preset: Custom</option>
+          <option value="dp_fallback">DP fallback search</option>
+          <option value="dp_gap">DP gap repair</option>
+          <option value="greedy_initial">Greedy candidates</option>
+        </select>
+        <select id="gap-repair-algo-filter" onchange="onGapRepairFilterChanged()">
           <option value="all">All algorithms</option>
           <option value="dp">DP only</option>
           <option value="greedy">Greedy only</option>
         </select>
-        <select id="gap-repair-phase-filter" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+        <select id="gap-repair-phase-filter" onchange="onGapRepairFilterChanged()" style="margin-top:4px;">
           <option value="all">All phases</option>
           <option value="initial">Initial</option>
           <option value="gap_repair">Gap repair</option>
           <option value="fallback_initial">Fallback initial</option>
         </select>
-        <select id="gap-repair-scope-filter" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+        <select id="gap-repair-scope-filter" onchange="onGapRepairFilterChanged()" style="margin-top:4px;">
           <option value="all">All scopes</option>
           <option value="initial_corridor">Initial corridor</option>
           <option value="initial_buffer_candidate">Initial buffer candidate</option>
@@ -137,6 +146,9 @@
           <option value="buffer_growth">Color: buffer growth</option>
           <option value="phase">Color: phase</option>
         </select>
+        <div id="gap-repair-scope-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;">
+          Scopes: corridor, buffer candidates, selected injections, gap subcorridor, greedy step candidates.
+        </div>
         <div id="gap-repair-color-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;display:none;"></div>
       </div>
       <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons (roads)</label>
@@ -222,7 +234,7 @@
     <div id="settings-panel" style="display:none;">
       <strong>Mesh Calculator Settings</strong>
       <label title="H3 resolution (6=coarse, 10=fine)">H3 resolution
-        <input id="set-h3-resolution" type="number" value="8" min="6" max="10" step="1">
+        <input id="set-h3-resolution" type="number" value="8" min="6" max="11" step="1">
       </label>
       <label title="Radio frequency in MHz">Frequency (MHz)
         <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1">
