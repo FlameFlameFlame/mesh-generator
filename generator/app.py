@@ -2186,30 +2186,56 @@ def pick_file():
         root.destroy()
         return path or ""
 
+    def _run_osascript(script: str, *, jxa: bool = False) -> subprocess.CompletedProcess:
+        cmd = ["/usr/bin/osascript"]
+        if jxa:
+            cmd.extend(["-l", "JavaScript"])
+        cmd.extend(["-e", script])
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
     try:
         if platform.system() == "Darwin":
-            # macOS primary path: AppleScript choose folder.
-            script_applescript = (
+            errors = []
+
+            # macOS native 1: choose config file.
+            script_choose_file = (
+                'set f to POSIX path of '
+                '(choose file with prompt "Select project config.yaml")'
+            )
+            result_choose_file = _run_osascript(script_choose_file)
+            if result_choose_file.returncode == 0:
+                return jsonify({"path": (result_choose_file.stdout or "").strip()})
+            stderr_choose_file = (result_choose_file.stderr or "").strip()
+            if _is_user_cancel_message(stderr_choose_file):
+                return jsonify({"path": ""})
+            logger.warning(
+                "macOS AppleScript choose-file failed: rc=%s stderr=%s",
+                result_choose_file.returncode,
+                stderr_choose_file,
+            )
+            if stderr_choose_file:
+                errors.append(f"choose-file: {stderr_choose_file}")
+
+            # macOS native 2: choose project folder.
+            script_choose_folder = (
                 'set f to POSIX path of '
                 '(choose folder with prompt "Select project directory (must contain config.yaml)")'
             )
-            result_applescript = subprocess.run(
-                ["/usr/bin/osascript", "-e", script_applescript],
-                capture_output=True, text=True, timeout=60,
-            )
-            if result_applescript.returncode == 0:
-                return jsonify({"path": result_applescript.stdout.strip()})
-            stderr_applescript = (result_applescript.stderr or "").strip()
-            if _is_user_cancel_message(stderr_applescript):
+            result_choose_folder = _run_osascript(script_choose_folder)
+            if result_choose_folder.returncode == 0:
+                return jsonify({"path": (result_choose_folder.stdout or "").strip()})
+            stderr_choose_folder = (result_choose_folder.stderr or "").strip()
+            if _is_user_cancel_message(stderr_choose_folder):
                 return jsonify({"path": ""})
-
-            # macOS secondary native path: JXA + NSOpenPanel.
-            # This works in some environments where AppleScript choose folder fails.
             logger.warning(
-                "macOS AppleScript picker failed: rc=%s stderr=%s",
-                result_applescript.returncode,
-                stderr_applescript,
+                "macOS AppleScript choose-folder failed: rc=%s stderr=%s",
+                result_choose_folder.returncode,
+                stderr_choose_folder,
             )
+            if stderr_choose_folder:
+                errors.append(f"choose-folder: {stderr_choose_folder}")
+
+            # macOS native 3: JXA + NSOpenPanel.
             script_jxa = r'''
 ObjC.import('AppKit');
 const panel = $.NSOpenPanel.openPanel;
@@ -2227,16 +2253,15 @@ if (result == $.NSModalResponseOK) {
 $.stderr.write('User canceled.');
 $.exit(1);
 '''
-            result_jxa = subprocess.run(
-                ["/usr/bin/osascript", "-l", "JavaScript", "-e", script_jxa],
-                capture_output=True, text=True, timeout=60,
-            )
+            result_jxa = _run_osascript(script_jxa, jxa=True)
             if result_jxa.returncode == 0:
                 return jsonify({"path": (result_jxa.stdout or "").strip()})
             stderr_jxa = (result_jxa.stderr or "").strip()
             if _is_user_cancel_message(stderr_jxa):
                 return jsonify({"path": ""})
             logger.warning("macOS JXA picker failed: rc=%s stderr=%s", result_jxa.returncode, stderr_jxa)
+            if stderr_jxa:
+                errors.append(f"jxa: {stderr_jxa}")
 
             # Last resort fallback (requires Tk support in Python build).
             try:
@@ -2245,12 +2270,7 @@ $.exit(1);
                     return jsonify({"path": fallback_path})
             except Exception:
                 logger.warning("Tk fallback picker failed on macOS", exc_info=True)
-            detail_parts = []
-            if stderr_applescript:
-                detail_parts.append(f"AppleScript: {stderr_applescript}")
-            if stderr_jxa:
-                detail_parts.append(f"JXA: {stderr_jxa}")
-            detail = "; ".join(detail_parts) or "unknown macOS picker failure"
+            detail = "; ".join(errors) or "unknown macOS picker failure"
             return jsonify({"error": f"Native picker failed: {detail}", "path": ""})
         else:
             # Linux/Windows: use tkinter directory picker.
