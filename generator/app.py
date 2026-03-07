@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import queue
+import re
 import sys
 import threading
 import webbrowser
@@ -52,13 +53,133 @@ logger = logging.getLogger(__name__)
 
 _WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_OUTPUT_DIR = os.path.join(_WORKSPACE_ROOT, "projects")
+_PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9 _().-]{1,120}$")
 
 
 def _resolve_output_dir(value: str | None) -> str:
     raw = (value or "").strip()
     if not raw:
         raw = DEFAULT_OUTPUT_DIR
-    return os.path.abspath(raw)
+    resolved = os.path.abspath(raw)
+    projects_root = os.path.abspath(DEFAULT_OUTPUT_DIR)
+    if not resolved.startswith(projects_root + os.sep) and resolved != projects_root:
+        raise ValueError(f"Path must be inside projects root: {projects_root}")
+    return resolved
+
+
+def _project_dir(project_name: str) -> str:
+    name = (project_name or "").strip()
+    if not _PROJECT_NAME_RE.match(name):
+        raise ValueError("Invalid project name")
+    return os.path.join(os.path.abspath(DEFAULT_OUTPUT_DIR), name)
+
+
+def _project_name_from_dir(path: str) -> str:
+    root = os.path.abspath(DEFAULT_OUTPUT_DIR)
+    p = os.path.abspath(path)
+    if not p.startswith(root + os.sep):
+        raise ValueError("Project path outside projects root")
+    return os.path.basename(p)
+
+
+def _resolve_project_output_dir(payload: dict | None) -> str:
+    payload = payload or {}
+    project_name = (payload.get("project_name") or "").strip()
+    if project_name:
+        return _project_dir(project_name)
+    return _resolve_output_dir(payload.get("output_dir"))
+
+
+def _list_project_names() -> list[str]:
+    root = os.path.abspath(DEFAULT_OUTPUT_DIR)
+    os.makedirs(root, exist_ok=True)
+    out = []
+    for entry in os.listdir(root):
+        full = os.path.join(root, entry)
+        if os.path.isdir(full):
+            out.append(entry)
+    out.sort(key=lambda x: x.lower())
+    return out
+
+
+def _read_json_if_exists(path: str):
+    if not os.path.isfile(path):
+        return None
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def _collect_project_runs(project_dir: str) -> list[dict]:
+    status = _read_json_if_exists(os.path.join(project_dir, "status.json")) or {}
+    runs_meta = status.get("optimization_runs") or []
+    by_id = {}
+    for item in runs_meta:
+        run_id = (item or {}).get("run_id")
+        if run_id:
+            by_id[str(run_id)] = dict(item)
+
+    runs_dir = os.path.join(project_dir, "runs")
+    if os.path.isdir(runs_dir):
+        for run_id in os.listdir(runs_dir):
+            run_path = os.path.join(runs_dir, run_id)
+            if not os.path.isdir(run_path):
+                continue
+            settings = _read_json_if_exists(os.path.join(run_path, "run_settings.json")) or {}
+            if run_id not in by_id:
+                by_id[run_id] = {
+                    "run_id": run_id,
+                    "saved_at_utc": settings.get("saved_at_utc"),
+                    "parameters": settings.get("parameters", {}),
+                    "summary": settings.get("summary", {}),
+                    "files": settings.get("files", []),
+                    "source": settings.get("source", "optimization"),
+                }
+            else:
+                if not by_id[run_id].get("saved_at_utc"):
+                    by_id[run_id]["saved_at_utc"] = settings.get("saved_at_utc")
+                if not by_id[run_id].get("parameters"):
+                    by_id[run_id]["parameters"] = settings.get("parameters", {})
+                if not by_id[run_id].get("summary"):
+                    by_id[run_id]["summary"] = settings.get("summary", {})
+                if not by_id[run_id].get("files"):
+                    by_id[run_id]["files"] = settings.get("files", [])
+                if not by_id[run_id].get("source"):
+                    by_id[run_id]["source"] = settings.get("source", "optimization")
+    runs = list(by_id.values())
+    runs.sort(key=lambda r: str(r.get("run_id", "")), reverse=True)
+    return runs
+
+
+def _load_run_outputs(project_dir: str, run_id: str) -> dict:
+    global _loaded_layers, _loaded_report, _loaded_coverage, _runtime_tower_coverage
+    run_dir = os.path.join(project_dir, "runs", str(run_id))
+    if not os.path.isdir(run_dir):
+        raise FileNotFoundError(f"Run not found: {run_id}")
+
+    loaded_layers = {}
+    for layer_key, fname in _CALC_LAYER_TO_FILENAME.items():
+        fpath = os.path.join(run_dir, fname)
+        data = _read_json_if_exists(fpath)
+        if data is not None:
+            _loaded_layers[layer_key] = data
+            loaded_layers[layer_key] = data
+        elif layer_key in ("towers", "edges", "grid_cells", "grid_cells_full", "gap_repair_hexes", "coverage"):
+            _loaded_layers.pop(layer_key, None)
+
+    report = _read_json_if_exists(os.path.join(run_dir, "report.json"))
+    _loaded_report = report
+    _loaded_coverage = loaded_layers.get("coverage")
+    _runtime_tower_coverage = None
+
+    return {
+        "run_id": str(run_id),
+        "layers": loaded_layers,
+        "report": report,
+        "has_coverage": _loaded_coverage is not None,
+    }
 
 
 def _get_cache_dir(output_dir: str | None = None) -> str:
@@ -303,6 +424,134 @@ def index():
     return render_template("index.html", default_output_dir=DEFAULT_OUTPUT_DIR)
 
 
+@app.route("/api/projects", methods=["GET"])
+def list_projects():
+    root = os.path.abspath(DEFAULT_OUTPUT_DIR)
+    os.makedirs(root, exist_ok=True)
+    projects = []
+    for name in _list_project_names():
+        pdir = os.path.join(root, name)
+        status = _read_json_if_exists(os.path.join(pdir, "status.json")) or {}
+        runs = _collect_project_runs(pdir)
+        projects.append({
+            "name": name,
+            "path": pdir,
+            "updated_at_utc": status.get("last_optimization_run", {}).get("saved_at_utc"),
+            "run_count": len(runs),
+            "last_run": runs[0] if runs else None,
+            "has_config": os.path.isfile(os.path.join(pdir, "config.yaml")),
+        })
+    return jsonify({"projects": projects, "root": root})
+
+
+@app.route("/api/projects/create", methods=["POST"])
+def create_project():
+    data = request.get_json(silent=True) or {}
+    requested = (data.get("name") or "").strip()
+    names = set(_list_project_names())
+    if requested:
+        if not _PROJECT_NAME_RE.match(requested):
+            return jsonify({"error": "Invalid project name"}), 400
+        if requested in names:
+            return jsonify({"error": "Project with this name already exists"}), 409
+        name = requested
+    else:
+        base = "New project"
+        if base not in names:
+            name = base
+        else:
+            i = 1
+            while True:
+                cand = f"{base} ({i})"
+                if cand not in names:
+                    name = cand
+                    break
+                i += 1
+    pdir = _project_dir(name)
+    os.makedirs(pdir, exist_ok=False)
+    return jsonify({"name": name, "path": pdir})
+
+
+@app.route("/api/projects/rename", methods=["POST"])
+def rename_project():
+    data = request.get_json(silent=True) or {}
+    old_name = (data.get("old_name") or "").strip()
+    new_name = (data.get("new_name") or "").strip()
+    if not old_name or not new_name:
+        return jsonify({"error": "old_name and new_name are required"}), 400
+    if not _PROJECT_NAME_RE.match(new_name):
+        return jsonify({"error": "Invalid new project name"}), 400
+    try:
+        old_dir = _project_dir(old_name)
+        new_dir = _project_dir(new_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not os.path.isdir(old_dir):
+        return jsonify({"error": "Project not found"}), 404
+    if os.path.exists(new_dir):
+        return jsonify({"error": "Project with this name already exists"}), 409
+    os.rename(old_dir, new_dir)
+    return jsonify({"old_name": old_name, "new_name": new_name, "path": new_dir})
+
+
+@app.route("/api/projects/runs", methods=["GET"])
+def list_project_runs():
+    project_name = (request.args.get("project_name") or "").strip()
+    if not project_name:
+        return jsonify({"error": "project_name is required"}), 400
+    try:
+        pdir = _project_dir(project_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not os.path.isdir(pdir):
+        return jsonify({"error": "Project not found"}), 404
+    runs = _collect_project_runs(pdir)
+    return jsonify({"project_name": project_name, "runs": runs})
+
+
+@app.route("/api/projects/load-run", methods=["POST"])
+def load_project_run():
+    data = request.get_json(silent=True) or {}
+    project_name = (data.get("project_name") or "").strip()
+    run_id = (data.get("run_id") or "").strip()
+    if not project_name or not run_id:
+        return jsonify({"error": "project_name and run_id are required"}), 400
+    try:
+        pdir = _project_dir(project_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not os.path.isdir(pdir):
+        return jsonify({"error": "Project not found"}), 404
+    try:
+        payload = _load_run_outputs(pdir, run_id)
+    except FileNotFoundError as exc:
+        return jsonify({"error": str(exc)}), 404
+    return jsonify(payload)
+
+
+@app.route("/api/projects/open", methods=["POST"])
+def open_project():
+    data = request.get_json(silent=True) or {}
+    project_name = (data.get("project_name") or "").strip()
+    if not project_name:
+        return jsonify({"error": "project_name is required"}), 400
+    try:
+        pdir = _project_dir(project_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not os.path.isdir(pdir):
+        return jsonify({"error": "Project not found"}), 404
+    cfg = os.path.join(pdir, "config.yaml")
+    runs = _collect_project_runs(pdir)
+    return jsonify({
+        "project_name": project_name,
+        "project_path": pdir,
+        "config_path": cfg if os.path.isfile(cfg) else "",
+        "runs": runs,
+        "latest_run_id": runs[0]["run_id"] if runs else None,
+    })
+
+
 @app.route("/api/sites", methods=["GET"])
 def get_sites():
     return jsonify(store.to_list())
@@ -416,7 +665,10 @@ def clear_calculations():
     """Clear loaded calculation layers from memory without deleting files from disk."""
     global _loaded_layers, _loaded_report, _loaded_coverage, _runtime_tower_coverage
     data = request.json or {}
-    output_dir = _resolve_output_dir(data.get("output_dir"))
+    try:
+        output_dir = _resolve_project_output_dir(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     _loaded_layers.pop("towers", None)
     _loaded_layers.pop("edges", None)
     _loaded_layers.pop("coverage", None)
@@ -865,7 +1117,7 @@ def download_elevation():
     try:
         fd, path = tempfile.mkstemp(suffix=".tif", prefix="elevation_")
         os.close(fd)
-        output_dir_for_cache = _resolve_output_dir(payload.get("output_dir"))
+        output_dir_for_cache = _resolve_project_output_dir(payload)
         os.makedirs(output_dir_for_cache, exist_ok=True)
         fetch_and_write_elevation_cached(
             south, west, north, east, path,
@@ -1364,7 +1616,7 @@ def generate():
                 )
             })
 
-    output_dir_for_cache = _resolve_output_dir(payload.get("output_dir"))
+    output_dir_for_cache = _resolve_project_output_dir(payload)
     os.makedirs(output_dir_for_cache, exist_ok=True)
     try:
         roads = fetch_roads_cached(
@@ -1761,7 +2013,10 @@ def run_optimization():
     max_towers = int(body.get("max_towers_per_route", 8))
     param_overrides = _normalize_mesh_parameters(body.get("parameters", {}))
     _active_mesh_parameters = dict(param_overrides)
-    output_dir = body.get("output_dir", "")
+    try:
+        output_dir = _resolve_project_output_dir(body)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     # Build MeshConfig (with optional overrides from request body)
     valid_fields = MeshConfig.__dataclass_fields__
@@ -2091,7 +2346,10 @@ def export():
         return jsonify({"error": str(e)})
 
     data = request.json
-    output_dir = _resolve_output_dir(data.get("output_dir"))
+    try:
+        output_dir = _resolve_project_output_dir(data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
     max_towers_per_route = int(data.get("max_towers_per_route", 8))
     os.makedirs(output_dir, exist_ok=True)
 
@@ -2381,10 +2639,17 @@ def load_project():
 
     # Compute bounds for map fit
     bounds = _compute_bounds(layers, store)
+    project_name = None
+    try:
+        project_name = _project_name_from_dir(config_dir)
+    except Exception:
+        project_name = None
+    runs = _collect_project_runs(config_dir) if project_name else []
 
     return jsonify({
         "config_path": os.path.abspath(path),
         "output_dir": output_dir,
+        "project_name": project_name,
         "sites": store.to_list(),
         "layers": layers,
         "bounds": bounds,
@@ -2400,6 +2665,8 @@ def load_project():
         ],
         "active_routes": project_status.get("active_routes", {}),
         "forced_waypoints": project_status.get("forced_waypoints", {}),
+        "runs": runs,
+        "latest_run_id": runs[0]["run_id"] if runs else None,
     })
 
 

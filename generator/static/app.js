@@ -84,6 +84,8 @@ let _optProgressState = {
 };
 let _optEventSource = null;
 let _optCancelInFlight = false;
+let _currentProjectName = null;
+let _projectRuns = [];
 
 function _setOptimizationRunUiState(isRunning) {
   let runBtn = document.getElementById('btn-optimize');
@@ -557,6 +559,186 @@ function safeJson(r) {
   return r.json();
 }
 
+function _projectPayload(extra) {
+  let payload = Object.assign({}, extra || {});
+  if (_currentProjectName) payload.project_name = _currentProjectName;
+  return payload;
+}
+
+function _setCurrentProject(name) {
+  _currentProjectName = name || null;
+  let sel = document.getElementById('project-select');
+  if (sel && _currentProjectName) sel.value = _currentProjectName;
+  if (sel && sel.selectedOptions && sel.selectedOptions.length) {
+    let p = sel.selectedOptions[0].getAttribute('data-path');
+    if (p) document.getElementById('output-dir').value = p;
+  }
+}
+
+function _renderProjectList(projects) {
+  let sel = document.getElementById('project-select');
+  if (!sel) return;
+  let prev = _currentProjectName || sel.value;
+  sel.innerHTML = '';
+  (projects || []).forEach(function(p) {
+    let opt = document.createElement('option');
+    opt.value = p.name;
+    opt.textContent = p.name + (p.run_count ? (' (' + p.run_count + ' runs)') : '');
+    opt.setAttribute('data-path', p.path || '');
+    sel.appendChild(opt);
+  });
+  if (!sel.options.length) return;
+  let hasPrev = Array.from(sel.options).some(function(o) { return o.value === prev; });
+  sel.value = hasPrev ? prev : sel.options[0].value;
+  _setCurrentProject(sel.value);
+}
+
+function _renderRunsPanel(runs, selectedRunId) {
+  _projectRuns = Array.isArray(runs) ? runs : [];
+  let panel = document.getElementById('runs-panel');
+  let sel = document.getElementById('run-select');
+  let meta = document.getElementById('run-meta');
+  if (!panel || !sel || !meta) return;
+  sel.innerHTML = '';
+  if (!_projectRuns.length) {
+    panel.style.display = 'none';
+    meta.textContent = '';
+    return;
+  }
+  _projectRuns.forEach(function(r) {
+    let opt = document.createElement('option');
+    opt.value = String(r.run_id || '');
+    let ts = r.saved_at_utc ? String(r.saved_at_utc).replace('T', ' ').replace('Z', ' UTC') : String(r.run_id || '');
+    let s = r.summary || {};
+    opt.textContent = ts + ' • ' + (s.total_towers != null ? (s.total_towers + ' towers') : 'run');
+    sel.appendChild(opt);
+  });
+  if (selectedRunId) sel.value = String(selectedRunId);
+  if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
+  panel.style.display = '';
+  onRunSelectionChanged();
+}
+
+function onRunSelectionChanged() {
+  let sel = document.getElementById('run-select');
+  let meta = document.getElementById('run-meta');
+  if (!sel || !meta) return;
+  let run = _projectRuns.find(function(r) { return String(r.run_id) === String(sel.value); });
+  if (!run) { meta.textContent = ''; return; }
+  let s = run.summary || {};
+  let parts = [];
+  if (s.total_towers != null) parts.push(s.total_towers + ' towers');
+  if (s.visibility_edges != null) parts.push(s.visibility_edges + ' links');
+  let mast = ((run.parameters || {}).mast_height_m != null) ? ('mast ' + run.parameters.mast_height_m + 'm') : null;
+  if (mast) parts.push(mast);
+  meta.textContent = parts.join(' • ');
+}
+
+function doRefreshProjects() {
+  return fetch('/api/projects')
+    .then(safeJson)
+    .then(function(data) {
+      if (data.error) { setStatus('Projects load failed: ' + data.error); return; }
+      _renderProjectList(data.projects || []);
+      if (!(data.projects || []).length) {
+        return doNewProject(true);
+      }
+      if (_currentProjectName) {
+        fetch('/api/projects/runs?project_name=' + encodeURIComponent(_currentProjectName))
+          .then(safeJson)
+          .then(function(r) { _renderRunsPanel(r.runs || [], null); });
+      }
+      setStatus('Projects loaded');
+    }).catch(function(err) {
+      setStatus('Projects load failed');
+    });
+}
+
+function doNewProject(silent) {
+  fetch('/api/projects/create', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({}),
+  }).then(safeJson).then(function(data) {
+    if (data.error) { if (!silent) alert(data.error); return; }
+    doRefreshProjects();
+    _setCurrentProject(data.name);
+    fetch('/api/clear', {method: 'POST'}).then(safeJson).then(function() {
+      _applyClearedState();
+      _renderRunsPanel([], null);
+      if (!silent) setStatus('Created project: ' + data.name);
+    });
+  });
+}
+
+function doRenameProject() {
+  if (!_currentProjectName) return;
+  let newName = prompt('New project name:', _currentProjectName);
+  if (!newName) return;
+  fetch('/api/projects/rename', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({old_name: _currentProjectName, new_name: newName}),
+  }).then(safeJson).then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    _setCurrentProject(data.new_name);
+    doRefreshProjects();
+    setStatus('Project renamed to: ' + data.new_name);
+  });
+}
+
+function doLoadSelectedRun() {
+  if (!_currentProjectName) { setStatus('Select a project first.'); return; }
+  let sel = document.getElementById('run-select');
+  if (!sel || !sel.value) { setStatus('No runs to load.'); return; }
+  fetch('/api/projects/load-run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({project_name: _currentProjectName, run_id: sel.value}),
+  }).then(safeJson).then(function(data) {
+    if (data.error) { alert(data.error); return; }
+    renderLayers(data.layers || {});
+    if (data.report) showReport(data.report);
+    hasCoverage = data.has_coverage || false;
+    coverageFetched = false;
+    coverageData = null;
+    towerCoverageData = null;
+    towerCoverageFetched = false;
+    _selectedTowerCoverageSource = null;
+    _manualCoverageSource = null;
+    _resetPointCoverageMode();
+    _syncCoverageFeatureUI();
+    setStatus('Loaded run: ' + sel.value);
+  });
+}
+
+function doOpenProject() {
+  if (!_currentProjectName) { setStatus('Select a project first.'); return; }
+  fetch('/api/projects/open', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({project_name: _currentProjectName}),
+  }).then(safeJson).then(function(info) {
+    if (info.error) { alert(info.error); return; }
+    _setCurrentProject(info.project_name);
+    if (!info.config_path) {
+      fetch('/api/clear', {method: 'POST'}).then(safeJson).then(function() {
+        _applyClearedState();
+      });
+      _renderRunsPanel(info.runs || [], null);
+      setStatus('Opened empty project: ' + info.project_name);
+      return;
+    }
+    _loadProjectFromPath(info.config_path, function(data) {
+      _renderRunsPanel(info.runs || data.runs || [], info.latest_run_id || data.latest_run_id || null);
+      if (info.latest_run_id) {
+        doLoadSelectedRun();
+      }
+      setStatus('Opened project: ' + info.project_name);
+    });
+  });
+}
+
 function doDetectCity() {
   if (selectedIdx < 0) { alert('Select a site first.'); return; }
   setStatus('Querying Overpass for city boundary...');
@@ -590,8 +772,7 @@ function doDetectCity() {
 }
 
 function doExport() {
-  let dir = document.getElementById('output-dir').value.trim();
-  if (!dir) { alert('Enter an output directory'); return; }
+  if (!_currentProjectName) { alert('Select a project first.'); return; }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let forcedWaypointsSerial = {};
   Object.keys(_forcedWaypoints).forEach(function(k) {
@@ -600,101 +781,103 @@ function doExport() {
   fetch('/api/export', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      output_dir: dir,
+    body: JSON.stringify(_projectPayload({
       max_towers_per_route: maxTowers,
       parameters: getSettings(),
       active_routes: _activeRoutePerPair,
       forced_waypoints: forcedWaypointsSerial,
-    })
+    }))
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
-    setStatus('Exported ' + data.count + ' sites to: ' + data.output_dir);
+    setStatus('Saved project "' + _currentProjectName + '" (' + data.count + ' sites)');
     if (data.config_path) {
-      saveProjectState(data.config_path);
-      _saveToHistory(data.config_path);
+      saveProjectState(null);
     }
   });
+}
+
+function _applyClearedState() {
+  sites = [];
+  selectedIdx = -1;
+  refresh();
+  Object.values(layerGroups).forEach(lg => lg.clearLayers());
+  coverageData = null;
+  hasCoverage = false;
+  coverageFetched = false;
+  towerCoverageData = null;
+  towerCoverageFetched = false;
+  _selectedTowerCoverageSource = null;
+  _manualCoverageSource = null;
+  _coverageSourceMode = 'manual';
+  _resetPointCoverageMode();
+  if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
+  layerGroups.gridCells.clearLayers();
+  map.removeLayer(layerGroups.gridCells);
+  document.getElementById('chk-grid-cells').checked = false;
+  layerGroups.gridCellsFull.clearLayers();
+  map.removeLayer(layerGroups.gridCellsFull);
+  document.getElementById('chk-grid-cells-full').checked = false;
+  layerGroups.gapRepairHexes.clearLayers();
+  map.removeLayer(layerGroups.gapRepairHexes);
+  document.getElementById('chk-gap-repair-hexes').checked = false;
+  _cachedGapRepairGeojson = null;
+  _cachedGridCells = null;
+  _cachedGridCellsFull = null;
+  _gridLayersFromProvider = false;
+  _gridViewportCacheKey = '';
+  _setGridRenderStatus('');
+  let gapRow = document.getElementById('gap-repair-filter-row');
+  if (gapRow) gapRow.style.display = 'none';
+  let gapLegend = document.getElementById('gap-repair-color-legend');
+  if (gapLegend) gapLegend.style.display = 'none';
+  document.getElementById('chk-coverage').checked = false;
+  document.getElementById('coverage-metric-row').style.display = 'none';
+  document.getElementById('chk-tower-coverage').checked = false;
+  document.getElementById('tower-coverage-metric-row').style.display = 'none';
+  _hideTowerCoverageProgress();
+  _cachedTowersGeojson = null;
+  wayIdToColor = {};
+  _allRoutes = [];
+  _forcedWaypoints = {};
+  _pinnedWayIds = new Set();
+
+  let rl = document.getElementById('route-list');
+  if (rl) rl.innerHTML = '';
+  elevationOverlay = null;
+  elevationMeta = null;
+  elevationFetched = false;
+  hasElevation = false;
+  _hasGridProvider = false;
+  _gridProviderReadyExplicit = null;
+  _gridProviderSummary = '';
+  let gridProg = document.getElementById('grid-progress');
+  if (gridProg) gridProg.style.display = 'none';
+  document.getElementById('chk-elevation').checked = false;
+  document.getElementById('chk-elevation').disabled = true;
+  document.getElementById('elevation-opacity-row').style.display = 'none';
+  document.getElementById('color-legend').style.display = 'none';
+  document.getElementById('tower-legend').style.display = 'none';
+  document.getElementById('report-panel').style.display = 'none';
+  let optProg = document.getElementById('opt-progress-panel');
+  if (optProg) optProg.style.display = 'none';
+  _selectedEdgeKey = null;
+  closeLinkAnalysis();
+  _hasRoads = false;
+  _hasRoutes = false;
+  _hasElevation = false;
+  _updateOptimizeBtn();
+  _refreshGridProviderStatusUI();
+  _syncCoverageFeatureUI();
+  _renderRunsPanel([], null);
+  saveProjectState(null);
 }
 
 function doClear() {
   if (!confirm('Close current project and clear map state? Project files will be kept on disk.')) return;
   fetch('/api/clear', {method: 'POST'})
     .then(safeJson).then(data => {
-      sites = [];
-      selectedIdx = -1;
-      refresh();
-      Object.values(layerGroups).forEach(lg => lg.clearLayers());
-      coverageData = null;
-      hasCoverage = false;
-      coverageFetched = false;
-      towerCoverageData = null;
-      towerCoverageFetched = false;
-      _selectedTowerCoverageSource = null;
-      _manualCoverageSource = null;
-      _coverageSourceMode = 'manual';
-      _resetPointCoverageMode();
-      if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
-      layerGroups.gridCells.clearLayers();
-      map.removeLayer(layerGroups.gridCells);
-      document.getElementById('chk-grid-cells').checked = false;
-      layerGroups.gridCellsFull.clearLayers();
-      map.removeLayer(layerGroups.gridCellsFull);
-      document.getElementById('chk-grid-cells-full').checked = false;
-      layerGroups.gapRepairHexes.clearLayers();
-      map.removeLayer(layerGroups.gapRepairHexes);
-      document.getElementById('chk-gap-repair-hexes').checked = false;
-      _cachedGapRepairGeojson = null;
-      _cachedGridCells = null;
-      _cachedGridCellsFull = null;
-      _gridLayersFromProvider = false;
-      _gridViewportCacheKey = '';
-      _setGridRenderStatus('');
-      let gapRow = document.getElementById('gap-repair-filter-row');
-      if (gapRow) gapRow.style.display = 'none';
-      let gapLegend = document.getElementById('gap-repair-color-legend');
-      if (gapLegend) gapLegend.style.display = 'none';
-      document.getElementById('chk-coverage').checked = false;
-      document.getElementById('coverage-metric-row').style.display = 'none';
-      document.getElementById('chk-tower-coverage').checked = false;
-      document.getElementById('tower-coverage-metric-row').style.display = 'none';
-      _hideTowerCoverageProgress();
-      _cachedTowersGeojson = null;
-      wayIdToColor = {};
-      _allRoutes = [];
-      _forcedWaypoints = {};
-      _pinnedWayIds = new Set();
-
-      let rl = document.getElementById('route-list');
-      if (rl) rl.innerHTML = '';
-      // Reset elevation
-      elevationOverlay = null;
-      elevationMeta = null;
-      elevationFetched = false;
-      hasElevation = false;
-      _hasGridProvider = false;
-      _gridProviderReadyExplicit = null;
-      _gridProviderSummary = '';
-      let gridProg = document.getElementById('grid-progress');
-      if (gridProg) gridProg.style.display = 'none';
-      document.getElementById('chk-elevation').checked = false;
-      document.getElementById('chk-elevation').disabled = true;
-      document.getElementById('elevation-opacity-row').style.display = 'none';
-      document.getElementById('color-legend').style.display = 'none';
-      document.getElementById('tower-legend').style.display = 'none';
-      document.getElementById('report-panel').style.display = 'none';
-      let optProg = document.getElementById('opt-progress-panel');
-      if (optProg) optProg.style.display = 'none';
-      _selectedEdgeKey = null;
-      closeLinkAnalysis();
-      setStatus('');
-      _hasRoads = false;
-      _hasRoutes = false;
-      _hasElevation = false;
-      _updateOptimizeBtn();
-      _refreshGridProviderStatusUI();
-      _syncCoverageFeatureUI();
-      try { localStorage.removeItem(_STATE_KEY); } catch(e) {}
+      _applyClearedState();
+      setStatus(_currentProjectName ? ('Cleared in-memory state for project: ' + _currentProjectName) : 'Cleared in-memory state');
     });
 }
 
@@ -708,7 +891,7 @@ function doFetchRoads() {
   prog.style.display = 'inline-flex';
   bar.removeAttribute('value');
   label.textContent = 'Fetching roads...';
-  let generatePayload = {output_dir: document.getElementById('output-dir').value.trim()};
+  let generatePayload = _projectPayload({});
   if (_bboxBounds) generatePayload.bbox = _bboxBounds;
   return fetch('/api/generate', {
     method: 'POST',
@@ -744,6 +927,7 @@ function doFetchRoads() {
 
 function doDownloadData() {
   if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
+  if (!_currentProjectName) { alert('Select a project first.'); return; }
   let btn = document.getElementById('btn-download');
   btn.disabled = true;
   btn.textContent = 'Downloading Roads\u2026';
@@ -1100,7 +1284,7 @@ function doFetchElevation() {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(Object.assign(
-      {output_dir: document.getElementById('output-dir').value.trim()},
+      _projectPayload({}),
       _bboxBounds ? {bbox: _bboxBounds} : {}
     ))
   }).then(safeJson).then(data => {
@@ -1176,29 +1360,10 @@ function _applyLoadedRoutes(data) {
 }
 
 function doLoadProject() {
-  setStatus('Opening file picker...');
-  fetch('/api/pick-file', {method: 'POST'})
-    .then(safeJson).then(function(res) {
-      if (res.path) {
-        _loadProjectFromPath(res.path);
-      } else if (res.error) {
-        // Picker unavailable — fall back to manual path input
-        setStatus('Native picker unavailable: ' + res.error);
-        alert('Native file picker failed.\n\n' + res.error + '\n\nEnter the project path manually.');
-        let configPath = prompt('Path to project directory or config.yaml:\n(e.g. /path/to/my-project or /path/to/my-project/config.yaml)');
-        if (configPath) _loadProjectFromPath(configPath);
-      } else {
-        // User cancelled the dialog
-        setStatus('');
-      }
-    }).catch(function() {
-      setStatus('');
-      let configPath = prompt('Path to config.yaml:');
-      if (configPath) _loadProjectFromPath(configPath);
-    });
+  doOpenProject();
 }
 
-function _loadProjectFromPath(configPath) {
+function _loadProjectFromPath(configPath, onLoaded) {
   setStatus('Loading project...');
   fetch('/api/load', {
     method: 'POST',
@@ -1223,10 +1388,11 @@ function _loadProjectFromPath(configPath) {
     applyProjectStatus(data.project_status, data);
     _autoCoverageModeFromCurrentState(true);
     _applyLoadedRoutes(data);
-    saveProjectState(data.config_path || configPath);
-    _saveToHistory(data.config_path || configPath);
+    if (data.project_name) _setCurrentProject(data.project_name);
+    saveProjectState(null);
     setStatus('Loaded project: ' + (data.config_path || ''));
     if (data.bounds) map.fitBounds(data.bounds);
+    if (typeof onLoaded === 'function') onLoaded(data);
   });
 }
 
@@ -2716,13 +2882,12 @@ function doSaveSettings() {
 }
 
 function doClearCalculations() {
-  let dir = document.getElementById('output-dir').value.trim();
-  if (!dir) { alert('No output directory set.'); return; }
-  if (!confirm('Clear calculation layers from the map? Files in ' + dir + ' will be kept.')) return;
+  if (!_currentProjectName) { alert('Select a project first.'); return; }
+  if (!confirm('Clear calculation layers from the map? Files in project "' + _currentProjectName + '" will be kept.')) return;
   fetch('/api/clear-calculations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({output_dir: dir})
+    body: JSON.stringify(_projectPayload({}))
   }).then(safeJson).then(function(data) {
     if (data.error) { alert(data.error); return; }
     layerGroups.towers.clearLayers();
@@ -2941,6 +3106,10 @@ function _renderOptimizationResult(res) {
 }
 
 function doRunOptimization() {
+  if (!_currentProjectName) {
+    alert('Select a project first.');
+    return;
+  }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let parameters = getSettings();
   _lastRunBaseH3Resolution = parameters.h3_resolution || null;
@@ -2988,11 +3157,10 @@ function doRunOptimization() {
   logPre.textContent = '';
   _resetOptimizationProgressUI();
 
-  let outputDir = document.getElementById('output-dir').value.trim();
   fetch('/api/run-optimization', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({max_towers_per_route: maxTowers, parameters: parameters, output_dir: outputDir})
+    body: JSON.stringify(_projectPayload({max_towers_per_route: maxTowers, parameters: parameters}))
   }).then(safeJson).then(function(res) {
     if (res.error) {
       _setOptimizationRunUiState(false);
@@ -3753,13 +3921,12 @@ function saveProjectState(projectPath) {
       forcedWaypointsSerial[k] = Array.from(_forcedWaypoints[k]);
     });
     let state = Object.assign(existing, {
-      projectPath: projectPath || existing.projectPath || null,
+      projectName: _currentProjectName || existing.projectName || null,
       hasRoads: _hasRoads,
       hasElevation: _hasElevation,
       hasGridProvider: _hasGridProvider,
       gridProviderReady: _gridProviderReadyExplicit,
       hasRoutes: _hasRoutes,
-      outputDir: document.getElementById('output-dir').value,
       bbox: _bboxBounds,
       settings: getSettings(),
       towerCoverageRadiusM: getTowerCoverageRadiusM(),
@@ -3872,11 +4039,25 @@ if (window.matchMedia) {
 // Apply theme on load
 applyTheme();
 
+let _projectSelectEl = document.getElementById('project-select');
+if (_projectSelectEl) {
+  _projectSelectEl.addEventListener('change', function() {
+    _setCurrentProject(_projectSelectEl.value);
+    if (_currentProjectName) {
+      fetch('/api/projects/runs?project_name=' + encodeURIComponent(_currentProjectName))
+        .then(safeJson)
+        .then(function(r) { _renderRunsPanel(r.runs || [], null); });
+    } else {
+      _renderRunsPanel([], null);
+    }
+    saveProjectState(null);
+  });
+}
+
 function restoreProjectState() {
   try {
     let state = JSON.parse(localStorage.getItem(_STATE_KEY) || '{}');
-    if (!state.projectPath) return;
-    if (state.outputDir) document.getElementById('output-dir').value = state.outputDir;
+    if (!state.projectName) return;
     if (state.bbox) {
       _bboxBounds = state.bbox;
       document.getElementById('bbox-status').style.display = '';
@@ -3885,32 +4066,10 @@ function restoreProjectState() {
     if (state.towerCoverageRadiusM != null) {
       document.getElementById('tower-coverage-radius-m').value = state.towerCoverageRadiusM;
     }
-    setStatus('Restoring project from ' + state.projectPath + '...');
-    fetch('/api/load', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({path: state.projectPath})
-    }).then(safeJson).then(data => {
-      if (data.error) { setStatus('Could not restore project: ' + data.error); return; }
-      sites = data.sites || [];
-      hasCoverage = data.has_coverage || false;
-      coverageData = null; coverageFetched = false;
-      towerCoverageData = null; towerCoverageFetched = false;
-      _selectedTowerCoverageSource = null;
-      _manualCoverageSource = null;
-      _resetPointCoverageMode();
-      if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
-      refresh();
-      renderLayers(data.layers || {});
-      if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
-      if (data.report) showReport(data.report);
-      // Merge localStorage flags with server-side project_status
-      let ps = Object.assign({}, data.project_status || {});
-      if (state.hasRoads) ps.has_roads = true;
-      if (state.hasRoutes) ps.has_routes = true;
-      if (state.hasElevation) ps.has_elevation = true;
-      if (state.hasGridProvider != null) ps.has_grid_provider = !!state.hasGridProvider;
-      applyProjectStatus(ps, data);
+    _setCurrentProject(state.projectName);
+    setStatus('Restoring project: ' + state.projectName + '...');
+    doOpenProject();
+    setTimeout(function() {
       if (state.gridProviderReady !== undefined && state.gridProviderReady !== null) {
         _gridProviderReadyExplicit = !!state.gridProviderReady;
       }
@@ -3921,16 +4080,13 @@ function restoreProjectState() {
       } else {
         _syncCoverageFeatureUI();
       }
-      _applyLoadedRoutes(data);
-      setStatus('Project restored: ' + (data.config_path || state.projectPath));
-      if (data.bounds) map.fitBounds(data.bounds);
-    }).catch(function(e) {
-      setStatus('Could not restore project: ' + e);
-    });
+    }, 200);
   } catch(e) { /* ignore */ }
 }
 
 // Restore state on page load
 _refreshGridProviderStatusUI();
 _syncCoverageFeatureUI();
-restoreProjectState();
+doRefreshProjects().then(function() {
+  restoreProjectState();
+});

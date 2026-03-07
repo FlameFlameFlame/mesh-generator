@@ -53,6 +53,9 @@ def test_save_project_routes_export_uses_runtime_parameters(tmp_path, monkeypatc
 
 
 def test_export_persists_loaded_calculation_outputs_and_run_history(tmp_path, monkeypatch):
+    projects_root = tmp_path / "projects"
+    projects_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(app_mod, "DEFAULT_OUTPUT_DIR", str(projects_root))
     store = SiteStore()
     store.add(SiteModel(name="A", lat=40.0, lon=44.0, priority=1))
     monkeypatch.setattr(app_mod, "store", store)
@@ -73,19 +76,23 @@ def test_export_persists_loaded_calculation_outputs_and_run_history(tmp_path, mo
     monkeypatch.setattr(app_mod, "_loaded_report", {"total_towers": 1, "visibility_edges": 0})
     monkeypatch.setattr(app_mod, "_opt_result", {"summary": {"total_towers": 1, "visibility_edges": 0}})
 
+    project_name = "New project"
+    project_dir = projects_root / project_name
+    project_dir.mkdir(parents=True, exist_ok=True)
+
     with app.test_client() as client:
         resp = client.post("/api/export", json={
-            "output_dir": str(tmp_path),
+            "project_name": project_name,
             "parameters": {"h3_resolution": 8, "mast_height_m": 5, "max_towers_per_route": 5},
         })
         assert resp.status_code == 200, resp.get_data(as_text=True)
 
-    assert os.path.isfile(tmp_path / "towers.geojson")
-    assert os.path.isfile(tmp_path / "visibility_edges.geojson")
-    assert os.path.isfile(tmp_path / "grid_cells.geojson")
-    assert os.path.isfile(tmp_path / "report.json")
+    assert os.path.isfile(project_dir / "towers.geojson")
+    assert os.path.isfile(project_dir / "visibility_edges.geojson")
+    assert os.path.isfile(project_dir / "grid_cells.geojson")
+    assert os.path.isfile(project_dir / "report.json")
 
-    runs_dir = tmp_path / "runs"
+    runs_dir = project_dir / "runs"
     assert runs_dir.is_dir()
     run_dirs = [p for p in runs_dir.iterdir() if p.is_dir()]
     assert len(run_dirs) == 1
@@ -96,7 +103,7 @@ def test_export_persists_loaded_calculation_outputs_and_run_history(tmp_path, mo
     assert run_settings["parameters"]["mast_height_m"] == 5
     assert "towers.geojson" in run_settings["files"]
 
-    with open(tmp_path / "status.json") as f:
+    with open(project_dir / "status.json") as f:
         status = json.load(f)
     assert len(status.get("optimization_runs", [])) == 1
     assert status.get("last_optimization_run", {}).get("run_id")

@@ -6,6 +6,14 @@
     padding: 6px 16px; cursor: pointer; border: 1px solid #aaa; border-radius: 3px;
     background: #fff; font-size: 0.85em; transition: background 0.15s;
   }
+  #toolbar select {
+    padding: 5px 8px;
+    border: 1px solid var(--btn-border);
+    border-radius: 3px;
+    background: var(--input-bg);
+    color: var(--fg);
+    font-size: 0.85em;
+  }
   #toolbar button:hover, #controls button:hover { background: #e8e8e8; }
   #toolbar button:disabled { opacity: 0.5; cursor: default; }
   #toolbar button.danger, #controls button.danger { background: #fee; border-color: #daa; }
@@ -61,6 +69,8 @@
   #report-panel td { padding: 3px 6px; }
   #report-panel td:first-child { color: #666; }
   #report-panel td:last-child { font-weight: 600; text-align: right; }
+  #runs-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
+  #runs-panel select { width: 100%; }
   #status-bar { padding: 6px 12px; background: #eafaea; border-top: 1px solid #ccc;
                 font-size: 0.85em; display: none; }
   .color-legend { position: absolute; bottom: 20px; right: 20px; background: white;

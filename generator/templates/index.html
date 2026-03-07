@@ -35,19 +35,19 @@
   <span class="toolbar-sep"></span>
 
   <!-- Group 3: Project I/O -->
-  <span style="position:relative;display:inline-flex;gap:0;">
-    <button onclick="doLoadProject()" title="Open a saved project directory (must contain config.yaml)">Open</button>
-    <button onclick="toggleHistoryDropdown()" style="padding:6px 4px;border-left:none;border-radius:0 3px 3px 0;" title="Recent projects">&#x25BE;</button>
-    <div id="history-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:999;background:#fff;border:1px solid #ccc;border-radius:4px;box-shadow:0 2px 8px rgba(0,0,0,0.15);min-width:260px;max-height:300px;overflow-y:auto;"></div>
-  </span>
+  <button onclick="doRefreshProjects()" title="Refresh projects list">Projects</button>
+  <select id="project-select" title="Project under projects/ root" style="max-width:220px;"></select>
+  <button onclick="doNewProject()" title="Create a new project">New Project</button>
+  <button onclick="doRenameProject()" title="Rename selected project">Rename Project</button>
+  <button onclick="doOpenProject()" title="Open selected project and load latest run">Open Project</button>
   <button class="primary" onclick="doExport()">Save</button>
-  <label>Output dir: <input id="output-dir" type="text" value="{{ default_output_dir }}" style="width:280px;padding:4px;"></label>
+  <input id="output-dir" type="hidden" value="{{ default_output_dir }}">
 
   <span class="toolbar-sep"></span>
 
   <!-- Group 4: Extras -->
   <button class="danger" onclick="doClear()">Clear</button>
-  <button class="danger" onclick="doClearCalculations()" title="Delete mesh_calculator output files and clear map layers">Clear Calc</button>
+  <button class="danger" onclick="doClearCalculations()" title="Clear map calculation layers only; keep files">Clear Calc</button>
   <button onclick="toggleSettings()" title="Mesh calculator settings">Settings &#x2699;</button>
   <span id="profile-controls" style="display:none;align-items:center;gap:4px;font-size:0.85em;">
     <select id="profile-route" title="Route to profile" style="max-width:240px;"></select>
@@ -217,6 +217,14 @@
     <div id="report-panel">
       <strong>Report</strong>
       <table id="report-table"></table>
+    </div>
+    <div id="runs-panel">
+      <strong>Calculation Runs</strong>
+      <select id="run-select" style="width:100%;margin-top:6px;" onchange="onRunSelectionChanged()"></select>
+      <div class="btn-row" style="margin-top:6px;">
+        <button onclick="doLoadSelectedRun()">Load Run</button>
+      </div>
+      <div id="run-meta" class="sub-note" style="margin-top:4px;"></div>
     </div>
     <div id="opt-log-panel">
       <strong>Optimization Log</strong>
