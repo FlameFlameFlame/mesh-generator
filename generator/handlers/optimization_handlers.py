@@ -75,7 +75,7 @@ def run_optimization(app_mod):
         return jsonify({
             "error": (
                 "mesh_calculator is not installed in this Python environment. "
-                f"Install it with: cd mesh_calculator && poetry install  ({exc})"
+                f"Install it with: cd mesh_calculator && uv sync --group dev  ({exc})"
             )
         }), 500
 

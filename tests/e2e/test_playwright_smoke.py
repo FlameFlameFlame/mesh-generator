@@ -231,7 +231,7 @@ def run() -> None:
     env["PYTHONUNBUFFERED"] = "1"
 
     cmd = [
-        "poetry",
+        "uv",
         "run",
         "flask",
         "--app",
