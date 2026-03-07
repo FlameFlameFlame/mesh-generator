@@ -1,5 +1,8 @@
 # Change Summary
 
+- 2026-03-07: Updated Playwright smoke test for the project-based workflow: switched server boot to app-factory Flask launch, added dynamic free-port binding/process-liveness readiness, created/opened projects explicitly, replaced brittle tower-coverage UI interaction with API validation, and removed fragile cache-log string assertions.
+- 2026-03-07: Fixed `/api/projects` listing robustness when `status.json` contains JSON `null` by normalizing non-dict status/`last_optimization_run` to empty dicts.
+- 2026-03-07: Added regression test `test_projects_list_handles_null_status_json` in `tests/test_visualizer.py`.
 - 2026-03-07: Removed optimization-pipeline dependency on `coverage.geojson`: optimization result ingestion/persistence now treats runtime tower coverage as the coverage source, clears stale road-coverage layers on rerun, and no longer copies pipeline `coverage.geojson` artifacts.
 - 2026-03-07: Optimization progress bars now show real link-calculation progress during the visibility stage via live completed/total link-check updates streamed from mesh_calculator.
 - 2026-03-07: Optimization progress label now shows live LOS chunk progress (`chunks X/Y`) when backend emits chunk counters during visibility computation.

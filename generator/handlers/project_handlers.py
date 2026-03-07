@@ -15,12 +15,16 @@ def list_projects(app_mod):
     projects = []
     for name in app_mod._list_project_names():
         pdir = os.path.join(root, name)
-        status = app_mod._read_json_if_exists(os.path.join(pdir, "status.json")) or {}
+        status_raw = app_mod._read_json_if_exists(os.path.join(pdir, "status.json"))
+        status = status_raw if isinstance(status_raw, dict) else {}
+        last_optimization_run = status.get("last_optimization_run")
+        if not isinstance(last_optimization_run, dict):
+            last_optimization_run = {}
         runs = app_mod._collect_project_runs(pdir)
         projects.append({
             "name": name,
             "path": pdir,
-            "updated_at_utc": status.get("last_optimization_run", {}).get("saved_at_utc"),
+            "updated_at_utc": last_optimization_run.get("saved_at_utc"),
             "run_count": len(runs),
             "last_run": runs[0] if runs else None,
             "has_config": os.path.isfile(os.path.join(pdir, "config.yaml")),

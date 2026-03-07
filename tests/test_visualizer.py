@@ -495,6 +495,22 @@ class TestProjectApis:
             assert run_data["report"]["total_towers"] == 7
             assert run_data["layers"]["towers"]["features"][0]["properties"]["tower_id"] == 7
 
+    def test_projects_list_handles_null_status_json(self, tmp_path, monkeypatch):
+        projects_root = tmp_path / "projects"
+        projects_root.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setattr(app_mod, "DEFAULT_OUTPUT_DIR", str(projects_root))
+        project_dir = projects_root / "null-status"
+        project_dir.mkdir(parents=True, exist_ok=True)
+        with open(project_dir / "status.json", "w", encoding="utf-8") as f:
+            f.write("null")
+
+        with app.test_client() as client:
+            resp = client.get("/api/projects")
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert any(p["name"] == "null-status" for p in data["projects"])
+
 
 def test_save_project_routes_export_uses_runtime_parameters(tmp_path, monkeypatch):
     store = SiteStore()
