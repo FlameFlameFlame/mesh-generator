@@ -33,6 +33,14 @@ def run_optimization(app_mod):
     if not app_mod._elevation_path or not os.path.isfile(app_mod._elevation_path):
         return jsonify({"error": "No elevation data. Download Elevation first."}), 400
 
+    if app_mod._grid_provider is None and app_mod._grid_bundle_path and os.path.isfile(app_mod._grid_bundle_path):
+        try:
+            app_mod._hydrate_grid_provider(app_mod._grid_bundle_path, elevation_path=app_mod._elevation_path)
+        except Exception:
+            app_mod.logger.warning("Failed to hydrate grid provider from bundle before optimization", exc_info=True)
+    if app_mod._grid_provider is None:
+        return jsonify({"error": "Grid provider is not ready. Download elevation first."}), 400
+
     body = request.json or {}
     max_towers = int(body.get("max_towers_per_route", 8))
     param_overrides = app_mod._normalize_mesh_parameters(body.get("parameters", {}))

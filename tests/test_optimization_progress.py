@@ -208,3 +208,20 @@ def test_optimization_can_be_canceled(monkeypatch, tmp_path):
 
     assert any(e.get("canceled") for e in events)
     assert not any(e.get("done") for e in events)
+
+
+def test_run_optimization_requires_grid_provider(monkeypatch, tmp_path):
+    _seed_minimum_optimization_state(tmp_path)
+    app_mod._grid_provider = None
+    app_mod._grid_bundle_path = ""
+
+    with app.test_client() as client:
+        start = client.post("/api/run-optimization", json={
+            "max_towers_per_route": 5,
+            "parameters": {},
+            "output_dir": "",
+        })
+
+    assert start.status_code == 400
+    err = start.get_json().get("error", "")
+    assert "Grid provider is not ready" in err

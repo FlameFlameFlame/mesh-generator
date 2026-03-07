@@ -1,5 +1,7 @@
 # Change Summary
 
+- 2026-03-07: Hardened optimization start preconditions: `POST /api/run-optimization` now ensures `grid_provider` is ready before launching background work, attempts re-hydration from `grid_bundle_path` when available, and returns a clear `400` (`Grid provider is not ready. Download elevation first.`) instead of async pipeline crash.
+- 2026-03-07: Added regression test `test_run_optimization_requires_grid_provider` in `tests/test_optimization_progress.py`.
 - 2026-03-07: Fixed `/api/elevation` first-run failure (`Failed to download elevation: Elevation is not available`) by forwarding the freshly downloaded elevation path and current boundary/roads into `_build_grid_bundle_for_current_state(...)` instead of relying on stale module-global state during handler execution.
 - 2026-03-07: Extended `_build_grid_bundle_for_current_state(...)` to accept explicit `elevation_path`, `boundary_geojson`, and `roads_geojson` overrides while keeping backward-compatible defaults.
 - 2026-03-07: Added regression test `TestElevationDownload.test_elevation_build_uses_fresh_downloaded_path` in `tests/test_visualizer.py`.
