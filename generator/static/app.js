@@ -71,8 +71,13 @@ let _hasGridProvider = false;
 let _gridProviderReadyExplicit = null; // null means unknown (legacy/backward-compatible mode)
 let _gridProviderSummary = '';
 let _gridLayersLoadingPromise = null;
+let _gridViewportCacheKey = '';
+let _gridLayersFromProvider = false;
+let _gridRefreshTimer = null;
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
+const _GRID_FULL_MIN_ZOOM = 10;
+const _GRID_VIEWPORT_MAX_CELLS = 12000;
 const _OPT_PROGRESS_ALGOS = ['dp'];
 let _optProgressState = {
   dp: {percent: 0, label: 'Queued…', error: false},
@@ -110,6 +115,45 @@ function _refreshGridProviderStatusUI() {
     el.textContent = 'Grid provider: elevation loaded, grid bundle not ready';
     el.classList.add('warn');
   }
+}
+
+function _setGridRenderStatus(msg) {
+  let el = document.getElementById('grid-render-status');
+  if (!el) return;
+  if (msg) {
+    el.style.display = '';
+    el.textContent = msg;
+  } else {
+    el.style.display = 'none';
+    el.textContent = '';
+  }
+}
+
+function _gridViewportPayload() {
+  let b = map.getBounds();
+  let zoom = map.getZoom();
+  return {
+    viewport: {
+      south: b.getSouth(),
+      west: b.getWest(),
+      north: b.getNorth(),
+      east: b.getEast(),
+    },
+    zoom: zoom,
+    include_full: zoom >= _GRID_FULL_MIN_ZOOM,
+    max_cells: _GRID_VIEWPORT_MAX_CELLS,
+  };
+}
+
+function _buildGridViewportKey(payload) {
+  if (!payload || !payload.viewport) return '';
+  let vp = payload.viewport;
+  function r(v) { return Number(v).toFixed(3); }
+  return [
+    r(vp.south), r(vp.west), r(vp.north), r(vp.east),
+    String(payload.zoom),
+    payload.include_full ? '1' : '0',
+  ].join('|');
 }
 
 function _titleCaseAlgo(algo) {
@@ -380,6 +424,13 @@ map.on('click', function(e) {
   toggleAddMode();
 });
 
+map.on('moveend', function() {
+  _refreshGridForViewportIfVisible();
+});
+map.on('zoomend', function() {
+  _refreshGridForViewportIfVisible();
+});
+
 function addSite(name, lat, lon, priority, siteHeightM) {
   fetch('/api/sites', {
     method: 'POST',
@@ -580,6 +631,9 @@ function doClear() {
       _cachedGapRepairGeojson = null;
       _cachedGridCells = null;
       _cachedGridCellsFull = null;
+      _gridLayersFromProvider = false;
+      _gridViewportCacheKey = '';
+      _setGridRenderStatus('');
       let gapRow = document.getElementById('gap-repair-filter-row');
       if (gapRow) gapRow.style.display = 'none';
       let gapLegend = document.getElementById('gap-repair-color-legend');
@@ -1051,6 +1105,11 @@ function doFetchElevation() {
       _gridProviderSummary = resolutions
         ? ('res ' + resolutions)
         : (bundle ? bundle.split('/').slice(-1)[0] : '');
+      _cachedGridCells = null;
+      _cachedGridCellsFull = null;
+      _gridLayersFromProvider = false;
+      _gridViewportCacheKey = '';
+      _setGridRenderStatus('');
       if (gridProg && gridBar && gridLabel) {
         gridBar.value = 1;
         gridBar.max = 1;
@@ -1619,8 +1678,16 @@ function renderLayers(layers) {
       if (siteIdx >= 0) siteCityLayers[siteIdx] = layer;
     });
   }
-  _cachedGridCells = layers.grid_cells || null;
-  _cachedGridCellsFull = layers.grid_cells_full || null;
+  if (Object.prototype.hasOwnProperty.call(layers, 'grid_cells')) {
+    _cachedGridCells = layers.grid_cells || null;
+    _gridLayersFromProvider = false;
+    _gridViewportCacheKey = '';
+  }
+  if (Object.prototype.hasOwnProperty.call(layers, 'grid_cells_full')) {
+    _cachedGridCellsFull = layers.grid_cells_full || null;
+    _gridLayersFromProvider = false;
+    _gridViewportCacheKey = '';
+  }
   rerenderGridLayersForActiveAlgo();
   // Gap repair search hexagons
   layerGroups.gapRepairHexes.clearLayers();
@@ -1813,33 +1880,52 @@ function showReport(report) {
 function toggleGridCells() {
   let chk = document.getElementById('chk-grid-cells');
   if (chk.checked) {
-    _ensureGridLayersLoaded().then(function() {
-      rerenderGridLayersForActiveAlgo();
+    _ensureGridLayersLoaded(false).then(function() {
+      _rerenderGridLayersWithIndicator();
       layerGroups.gridCells.addTo(map);
     }).catch(function(err) {
       setStatus('Grid layer load failed: ' + err);
       chk.checked = false;
     });
   }
-  else map.removeLayer(layerGroups.gridCells);
+  else {
+    map.removeLayer(layerGroups.gridCells);
+    if (!document.getElementById('chk-grid-cells-full').checked) _setGridRenderStatus('');
+  }
 }
 
 function toggleGridCellsFull() {
   let chk = document.getElementById('chk-grid-cells-full');
   if (chk.checked) {
-    _ensureGridLayersLoaded().then(function() {
-      rerenderGridLayersForActiveAlgo();
+    if (map.getZoom() < _GRID_FULL_MIN_ZOOM) {
+      setStatus('Zoom in to ' + _GRID_FULL_MIN_ZOOM + '+ to render full boundary grid.');
+    }
+    _ensureGridLayersLoaded(false).then(function() {
+      _rerenderGridLayersWithIndicator();
       layerGroups.gridCellsFull.addTo(map);
     }).catch(function(err) {
       setStatus('Full grid layer load failed: ' + err);
       chk.checked = false;
     });
   }
-  else map.removeLayer(layerGroups.gridCellsFull);
+  else {
+    map.removeLayer(layerGroups.gridCellsFull);
+    if (!document.getElementById('chk-grid-cells').checked) _setGridRenderStatus('');
+  }
 }
 
-function _ensureGridLayersLoaded() {
-  if (_cachedGridCells || _cachedGridCellsFull) {
+function _rerenderGridLayersWithIndicator() {
+  _setGridRenderStatus('Drawing grid layer…');
+  setTimeout(function() {
+    rerenderGridLayersForActiveAlgo();
+    _setGridRenderStatus('');
+  }, 0);
+}
+
+function _ensureGridLayersLoaded(forceRefresh) {
+  let payload = _gridViewportPayload();
+  let vKey = _buildGridViewportKey(payload);
+  if (!forceRefresh && (_cachedGridCells || _cachedGridCellsFull) && vKey === _gridViewportCacheKey) {
     return Promise.resolve();
   }
   if (!_isGridProviderReady()) {
@@ -1847,10 +1933,16 @@ function _ensureGridLayersLoaded() {
   }
   if (_gridLayersLoadingPromise) return _gridLayersLoadingPromise;
   setStatus('Loading adaptive grid layers...');
+  _setGridRenderStatus('Rendering grid for current map view…');
   _gridLayersLoadingPromise = fetch('/api/grid-layers', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({parameters: getSettings()}),
+    body: JSON.stringify({
+      parameters: getSettings(),
+      viewport: payload.viewport,
+      include_full: payload.include_full,
+      max_cells: payload.max_cells,
+    }),
   })
     .then(safeJson)
     .then(function(res) {
@@ -1858,15 +1950,41 @@ function _ensureGridLayersLoaded() {
       let layers = res.layers || {};
       _cachedGridCells = layers.grid_cells || null;
       _cachedGridCellsFull = layers.grid_cells_full || null;
+      _gridLayersFromProvider = true;
+      _gridViewportCacheKey = vKey;
       if (!_cachedGridCells && !_cachedGridCellsFull) {
         throw new Error('grid layer payload is empty');
       }
-      setStatus('Adaptive grid layers loaded.');
+      let fullSuppressed = payload.include_full ? '' : (' (full grid hidden below zoom ' + _GRID_FULL_MIN_ZOOM + ')');
+      setStatus(
+        'Adaptive grid layers loaded: road=' + (res.grid_cells_count || 0) +
+        ', full=' + (res.grid_cells_full_count || 0) + fullSuppressed
+      );
+      _setGridRenderStatus('');
     })
     .finally(function() {
+      _setGridRenderStatus('');
       _gridLayersLoadingPromise = null;
     });
   return _gridLayersLoadingPromise;
+}
+
+function _refreshGridForViewportIfVisible() {
+  let roadOn = !!(document.getElementById('chk-grid-cells') || {}).checked;
+  let fullOn = !!(document.getElementById('chk-grid-cells-full') || {}).checked;
+  if (!roadOn && !fullOn) return;
+  if (!_isGridProviderReady()) return;
+  if (!_gridLayersFromProvider && (_cachedGridCells || _cachedGridCellsFull)) return;
+  if (_gridRefreshTimer) clearTimeout(_gridRefreshTimer);
+  _gridRefreshTimer = setTimeout(function() {
+    _ensureGridLayersLoaded(true).then(function() {
+      _rerenderGridLayersWithIndicator();
+      if (roadOn) layerGroups.gridCells.addTo(map);
+      if (fullOn) layerGroups.gridCellsFull.addTo(map);
+    }).catch(function(err) {
+      _setGridRenderStatus('Grid render failed: ' + err);
+    });
+  }, 180);
 }
 
 // --- Coverage hexagons (lazy loaded) ---
@@ -2555,6 +2673,9 @@ function doClearCalculations() {
     _cachedGapRepairGeojson = null;
     _cachedGridCells = null;
     _cachedGridCellsFull = null;
+    _gridLayersFromProvider = false;
+    _gridViewportCacheKey = '';
+    _setGridRenderStatus('');
     layerGroups.gridCells.clearLayers();
     layerGroups.gridCellsFull.clearLayers();
     let gapRow = document.getElementById('gap-repair-filter-row');
@@ -2708,6 +2829,9 @@ function _renderOptimizationResult(res) {
   if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
   _cachedGridCells = dpData.grid_cells || null;
   _cachedGridCellsFull = dpData.grid_cells_full || null;
+  _gridLayersFromProvider = false;
+  _gridViewportCacheKey = '';
+  _setGridRenderStatus('');
   towerCoverageData = null;
   towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
@@ -2766,6 +2890,9 @@ function doRunOptimization() {
   _optResult = null;
   _cachedGridCells = null;
   _cachedGridCellsFull = null;
+  _gridLayersFromProvider = false;
+  _gridViewportCacheKey = '';
+  _setGridRenderStatus('');
   document.getElementById('tower-legend').style.display = 'none';
   document.getElementById('report-panel').style.display = 'none';
   hasCoverage = false; coverageFetched = false;

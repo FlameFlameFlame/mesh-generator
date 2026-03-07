@@ -178,6 +178,35 @@ def _grid_cells_to_geojson(
     return {"type": "FeatureCollection", "features": features}
 
 
+def _cells_in_bbox(cells: set[str], viewport: dict | None, max_cells: int | None = None) -> set[str]:
+    """Filter H3 cells by viewport bbox and optionally cap count."""
+    if not viewport:
+        if max_cells and len(cells) > max_cells:
+            return set(list(sorted(cells))[:max_cells])
+        return set(cells)
+    try:
+        south = float(viewport.get("south"))
+        west = float(viewport.get("west"))
+        north = float(viewport.get("north"))
+        east = float(viewport.get("east"))
+    except Exception:
+        return set(cells)
+
+    if north < south:
+        south, north = north, south
+
+    out: set[str] = set()
+    for h3_idx in cells:
+        lat, lon = h3.cell_to_latlng(h3_idx)
+        in_lon = (west <= lon <= east) if west <= east else (lon >= west or lon <= east)
+        if south <= lat <= north and in_lon:
+            out.add(h3_idx)
+    if max_cells and len(out) > max_cells:
+        # Deterministic cap keeps payload bounded for UI rendering.
+        return set(list(sorted(out))[:max_cells])
+    return out
+
+
 def _load_grid_provider_from_bundle(bundle_path: str, elevation_path: str | None = None):
     """Load grid provider from persisted bundle."""
     from mesh_calculator.core.grid_provider import GridProvider
@@ -671,6 +700,13 @@ def get_grid_layers():
 
     body = request.json or {}
     params = body.get("parameters") or {}
+    viewport = body.get("viewport") if isinstance(body.get("viewport"), dict) else None
+    include_full = bool(body.get("include_full", True))
+    try:
+        max_cells = int(body.get("max_cells", 12000))
+    except Exception:
+        max_cells = 12000
+    max_cells = max(1000, min(max_cells, 50000))
     try:
         from mesh_calculator.core.config import MeshConfig
     except Exception:
@@ -683,8 +719,14 @@ def get_grid_layers():
     cfg.h3_resolution = base_res
 
     summary = _grid_provider.adaptive_resolution_summary(base_res, cfg)
-    road_cells = _grid_provider.get_adaptive_road_cells(base_res, cfg)
-    full_cells = _grid_provider.get_adaptive_full_cells(base_res, cfg)
+    road_cells_all = _grid_provider.get_adaptive_road_cells(base_res, cfg)
+    full_cells_all = _grid_provider.get_adaptive_full_cells(base_res, cfg)
+    road_cells = _cells_in_bbox(road_cells_all, viewport, max_cells=max_cells)
+    full_cells = (
+        _cells_in_bbox(full_cells_all, viewport, max_cells=max_cells)
+        if include_full
+        else set()
+    )
     all_cells = set(full_cells) | set(road_cells)
     metadata_by_cell = {}
     for h3_idx in all_cells:
@@ -714,6 +756,10 @@ def get_grid_layers():
             "grid_cells_full": grid_cells_full,
         },
         "summary": summary,
+        "viewport_filtered": bool(viewport is not None),
+        "include_full": include_full,
+        "grid_cells_count": len(grid_cells.get("features", [])),
+        "grid_cells_full_count": len(grid_cells_full.get("features", [])),
     })
 
 
