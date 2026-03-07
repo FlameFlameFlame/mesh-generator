@@ -61,3 +61,4 @@
 - 2026-03-07: Fixed grid layer render failure on large datasets by replacing `Math.min/Math.max.apply` in resolution stats with streaming min/max aggregation (prevents JS argument-limit crash in `rerenderGridLayersForActiveAlgo`).
 - 2026-03-07: Fixed grid layer pre-optimization rendering by adding `/api/grid-layers` (provider-backed adaptive `grid_cells`/`grid_cells_full`) and frontend lazy-load fallback when grid caches are empty.
 - 2026-03-07: Added grid-layer color mode selector (`resolution` or `elevation`) in Layers panel; elevation mode colors road/full grid cells by normalized per-layer cell elevation.
+- 2026-03-07: Fixed provider-backed `/api/grid-layers` elevation export by populating per-cell max elevation from `GridProvider`; grid tooltips now treat missing elevation as `?` instead of coercing null to `0`.

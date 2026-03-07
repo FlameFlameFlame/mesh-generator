@@ -686,10 +686,11 @@ def get_grid_layers():
     road_cells = _grid_provider.get_adaptive_road_cells(base_res, cfg)
     full_cells = _grid_provider.get_adaptive_full_cells(base_res, cfg)
     all_cells = set(full_cells) | set(road_cells)
-    metadata_by_cell = {
-        h3_idx: _grid_provider.get_adaptive_cell_metadata(h3_idx, base_res, cfg)
-        for h3_idx in all_cells
-    }
+    metadata_by_cell = {}
+    for h3_idx in all_cells:
+        meta = _grid_provider.get_adaptive_cell_metadata(h3_idx, base_res, cfg)
+        meta["elevation"] = float(_grid_provider.get_h3_cell_max_elevation(h3_idx))
+        metadata_by_cell[h3_idx] = meta
 
     grid_cells = _grid_cells_to_geojson(
         road_cells,

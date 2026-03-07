@@ -1288,6 +1288,12 @@ function _gridColorByElevation(elevation, range, isFullGrid) {
   return terrainColor(t);
 }
 
+function _elevationText(value) {
+  if (value === null || value === undefined || value === '') return '?';
+  let elev = Number(value);
+  return Number.isFinite(elev) ? elev.toFixed(0) : '?';
+}
+
 function _resolutionStats(fc) {
   if (!fc || !Array.isArray(fc.features) || !fc.features.length) return null;
   let h3Min = null;
@@ -1381,7 +1387,7 @@ function rerenderGridLayersForActiveAlgo() {
       },
       onEachFeature: function(feature, layer) {
         let p = feature.properties || {};
-        let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
+        let elevText = _elevationText(p.elevation);
         let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
         let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
         let baseRes = (p.base_h3_resolution != null) ? p.base_h3_resolution : h3Res;
@@ -1421,7 +1427,7 @@ function rerenderGridLayersForActiveAlgo() {
       },
       onEachFeature: function(feature, layer) {
         let p = feature.properties || {};
-        let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
+        let elevText = _elevationText(p.elevation);
         let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
         let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
         let baseRes = (p.base_h3_resolution != null) ? p.base_h3_resolution : h3Res;
