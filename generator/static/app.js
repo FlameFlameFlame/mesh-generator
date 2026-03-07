@@ -609,7 +609,7 @@ function doExport() {
 }
 
 function doClear() {
-  if (!confirm('Clear all sites and layers?')) return;
+  if (!confirm('Close current project and clear map state? Project files will be kept on disk.')) return;
   fetch('/api/clear', {method: 'POST'})
     .then(safeJson).then(data => {
       sites = [];
@@ -2697,7 +2697,7 @@ function doSaveSettings() {
 function doClearCalculations() {
   let dir = document.getElementById('output-dir').value.trim();
   if (!dir) { alert('No output directory set.'); return; }
-  if (!confirm('Delete all mesh_calculator output files in: ' + dir + '?')) return;
+  if (!confirm('Clear calculation layers from the map? Files in ' + dir + ' will be kept.')) return;
   fetch('/api/clear-calculations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -2742,7 +2742,7 @@ function doClearCalculations() {
     closeLinkAnalysis();
     _refreshGridProviderStatusUI();
     _syncCoverageFeatureUI();
-    setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
+    setStatus('Calculation layers cleared from map (files preserved).');
   });
 }
 
