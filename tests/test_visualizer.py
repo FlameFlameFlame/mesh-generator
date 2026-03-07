@@ -307,7 +307,7 @@ class TestPickFile:
 
         def _fake_run(*args, **kwargs):
             calls["n"] += 1
-            if calls["n"] == 1:
+            if calls["n"] in (1, 2):
                 return _Res(1, "", "Not authorized to send Apple events.")
             return _Res(0, "/tmp/my_project\n", "")
 

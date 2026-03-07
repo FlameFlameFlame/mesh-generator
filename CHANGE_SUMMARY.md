@@ -78,3 +78,4 @@
 - 2026-03-07: Added second macOS native Open fallback using `osascript -l JavaScript` (`NSOpenPanel`) when AppleScript picker fails; only user-cancel returns empty path, non-cancel failures now propagate explicit detail.
 - 2026-03-07: Improved Open-button UX for picker failure by showing an explicit alert before manual path prompt fallback.
 - 2026-03-07: Suppressed noisy initial grid-bundle hydrate attempt when elevation is not yet known during project load (hydrate now deferred until elevation path exists).
+- 2026-03-07: Hardened macOS native Open flow further by trying `choose file` (config.yaml), then `choose folder`, then JXA `NSOpenPanel`, then Tk fallback; this addresses regressions where one chooser mode fails/crashes while another still works.
