@@ -49,6 +49,10 @@
   #layer-panel { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.85em; }
   #layer-panel label { display: block; margin: 3px 0; cursor: pointer; }
   #layer-panel .sub-control { margin-left: 22px; margin-top: 2px; }
+  #layer-panel .sub-note { margin-left: 22px; margin-top: 2px; color: var(--muted); font-size: 0.82em; }
+  #grid-provider-status.ready { color: #2e7d32; }
+  #grid-provider-status.warn { color: #b26a00; }
+  #grid-provider-status.error { color: #b23a3a; }
   #tower-legend { padding: 8px 10px; border-top: 1px solid #ddd; font-size: 0.82em; display: none; }
   #tower-legend .legend-item { display: flex; align-items: center; gap: 6px; margin: 2px 0; }
   #tower-legend .legend-dot { width: 12px; height: 12px; border-radius: 50%; border: 1px solid #333; display: inline-block; }

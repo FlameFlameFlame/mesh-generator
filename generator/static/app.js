@@ -71,6 +71,9 @@ let _lastRunBaseH3Resolution = null;
 let _hasRoads = false;
 let _hasRoutes = false;
 let _hasElevation = false;
+let _hasGridProvider = false;
+let _gridProviderReadyExplicit = null; // null means unknown (legacy/backward-compatible mode)
+let _gridProviderSummary = '';
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
 const _OPT_PROGRESS_ALGOS = ['dp', 'greedy'];
@@ -80,11 +83,37 @@ let _optProgressState = {
 };
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
-  let ready = _hasRoutes && _hasElevation;
+  let ready = _hasRoutes && _isGridProviderReady();
   btn.disabled = !ready;
   btn.title = ready
     ? 'Run mesh_calculator optimization'
-    : 'Requires: Filter P2P + Download Elevation';
+    : 'Requires: Filter P2P + Grid provider ready';
+}
+
+function _isGridProviderReady() {
+  if (_gridProviderReadyExplicit !== null) return !!_gridProviderReadyExplicit;
+  // Backward compatibility with projects/backends that do not expose provider readiness yet.
+  return _hasElevation || _hasGridProvider;
+}
+
+function _refreshGridProviderStatusUI() {
+  let el = document.getElementById('grid-provider-status');
+  if (!el) return;
+  el.classList.remove('ready', 'warn', 'error');
+  if (!_hasElevation) {
+    el.textContent = 'Grid provider: no elevation data';
+    el.classList.add('error');
+    return;
+  }
+  if (_isGridProviderReady()) {
+    el.textContent = _gridProviderSummary
+      ? ('Grid provider: ready (' + _gridProviderSummary + ')')
+      : 'Grid provider: ready';
+    el.classList.add('ready');
+  } else {
+    el.textContent = 'Grid provider: elevation loaded, grid bundle not ready';
+    el.classList.add('warn');
+  }
 }
 
 function _titleCaseAlgo(algo) {
@@ -578,6 +607,11 @@ function doClear() {
       elevationMeta = null;
       elevationFetched = false;
       hasElevation = false;
+      _hasGridProvider = false;
+      _gridProviderReadyExplicit = null;
+      _gridProviderSummary = '';
+      let gridProg = document.getElementById('grid-progress');
+      if (gridProg) gridProg.style.display = 'none';
       document.getElementById('chk-elevation').checked = false;
       document.getElementById('chk-elevation').disabled = true;
       document.getElementById('elevation-opacity-row').style.display = 'none';
@@ -593,6 +627,7 @@ function doClear() {
       _hasRoutes = false;
       _hasElevation = false;
       _updateOptimizeBtn();
+      _refreshGridProviderStatusUI();
       _syncCoverageFeatureUI();
       try { localStorage.removeItem(_STATE_KEY); } catch(e) {}
     });
@@ -985,9 +1020,17 @@ function doFetchElevation() {
   let prog = document.getElementById('elev-progress');
   let bar = document.getElementById('elev-bar');
   let label = document.getElementById('elev-label');
+  let gridProg = document.getElementById('grid-progress');
+  let gridBar = document.getElementById('grid-bar');
+  let gridLabel = document.getElementById('grid-label');
   prog.style.display = 'inline-flex';
   bar.removeAttribute('value');
   label.textContent = 'Downloading SRTM tiles...';
+  if (gridProg && gridBar && gridLabel) {
+    gridProg.style.display = 'inline-flex';
+    gridBar.removeAttribute('value');
+    gridLabel.textContent = 'Building grid...';
+  }
   return fetch('/api/elevation', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1002,11 +1045,41 @@ function doFetchElevation() {
       hasElevation = true;
       document.getElementById('chk-elevation').disabled = false;
       _hasElevation = true;
+      _hasGridProvider = true;
+      if (Object.prototype.hasOwnProperty.call(data, 'grid_provider_ready')) {
+        _gridProviderReadyExplicit = !!data.grid_provider_ready;
+      } else {
+        _gridProviderReadyExplicit = null;
+      }
+      let gInfo = data.grid_provider || data.grid_build || {};
+      let bundle = gInfo.bundle_path || gInfo.path || '';
+      let resolutions = Array.isArray(gInfo.resolutions) ? gInfo.resolutions.join(',') : '';
+      _gridProviderSummary = resolutions
+        ? ('res ' + resolutions)
+        : (bundle ? bundle.split('/').slice(-1)[0] : '');
+      if (gridProg && gridBar && gridLabel) {
+        gridBar.value = 1;
+        gridBar.max = 1;
+        if (_isGridProviderReady()) {
+          gridLabel.textContent = _gridProviderSummary
+            ? ('Grid ready (' + _gridProviderSummary + ')')
+            : 'Grid ready';
+        } else {
+          gridLabel.textContent = 'Grid pending';
+        }
+      }
       _updateOptimizeBtn();
+      _refreshGridProviderStatusUI();
       _autoCoverageModeFromCurrentState(false);
       saveProjectState(null);
+      if (gridProg) {
+        setTimeout(function() {
+          if (gridProg) gridProg.style.display = 'none';
+        }, 1500);
+      }
     }).catch(err => {
       prog.style.display = 'none';
+      if (gridProg) gridProg.style.display = 'none';
       throw err;
     });
 }
@@ -1098,10 +1171,26 @@ function applyProjectStatus(ps, loadData) {
     elevationFetched = false;
     document.getElementById('chk-elevation').disabled = false;
   }
+  if (Object.prototype.hasOwnProperty.call(ps, 'has_grid_provider')) {
+    _gridProviderReadyExplicit = !!ps.has_grid_provider;
+    _hasGridProvider = !!ps.has_grid_provider;
+  } else if (Object.prototype.hasOwnProperty.call(loadData, 'has_grid_provider')) {
+    _gridProviderReadyExplicit = !!loadData.has_grid_provider;
+    _hasGridProvider = !!loadData.has_grid_provider;
+  } else if (_hasElevation) {
+    _hasGridProvider = true;
+    _gridProviderReadyExplicit = null;
+  }
+  if (ps.grid_provider_summary) {
+    _gridProviderSummary = String(ps.grid_provider_summary);
+  } else if (loadData.grid_provider_summary) {
+    _gridProviderSummary = String(loadData.grid_provider_summary);
+  }
   if (ps.has_optimization) {
     hasCoverage = loadData.has_coverage || false;
   }
   if (ps.parameters) applySettings(ps.parameters);
+  _refreshGridProviderStatusUI();
   _autoCoverageModeFromCurrentState(false);
   _updateOptimizeBtn();
 }
@@ -1223,6 +1312,52 @@ function _gridColorByResolution(resolution, isFullGrid) {
   return palette[idx];
 }
 
+function _resolutionStats(fc) {
+  if (!fc || !Array.isArray(fc.features) || !fc.features.length) return null;
+  let h3Vals = [];
+  let effVals = [];
+  fc.features.forEach(function(f) {
+    let p = (f || {}).properties || {};
+    let h3r = Number(p.h3_resolution);
+    let eff = Number(p.effective_h3_resolution);
+    if (Number.isFinite(h3r)) h3Vals.push(h3r);
+    if (Number.isFinite(eff)) effVals.push(eff);
+  });
+  if (!h3Vals.length && !effVals.length) return null;
+  let h3Min = h3Vals.length ? Math.min.apply(null, h3Vals) : null;
+  let h3Max = h3Vals.length ? Math.max.apply(null, h3Vals) : null;
+  let effMin = effVals.length ? Math.min.apply(null, effVals) : null;
+  let effMax = effVals.length ? Math.max.apply(null, effVals) : null;
+  return {h3Min: h3Min, h3Max: h3Max, effMin: effMin, effMax: effMax};
+}
+
+function _renderGridResolutionInfo(roadGrid, fullGrid) {
+  let el = document.getElementById('grid-resolution-info');
+  if (!el) return;
+  let roadStats = _resolutionStats(roadGrid);
+  let fullStats = _resolutionStats(fullGrid);
+  if (!roadStats && !fullStats) {
+    el.style.display = 'none';
+    el.textContent = '';
+    return;
+  }
+  let parts = [];
+  if (roadStats) {
+    parts.push(
+      'Road grid H3 ' + roadStats.h3Min + '–' + roadStats.h3Max +
+      (roadStats.effMin != null ? (' (effective ' + roadStats.effMin + '–' + roadStats.effMax + ')') : '')
+    );
+  }
+  if (fullStats) {
+    parts.push(
+      'Full grid H3 ' + fullStats.h3Min + '–' + fullStats.h3Max +
+      (fullStats.effMin != null ? (' (effective ' + fullStats.effMin + '–' + fullStats.effMax + ')') : '')
+    );
+  }
+  el.textContent = parts.join(' | ');
+  el.style.display = '';
+}
+
 function rerenderGridLayersForActiveAlgo() {
   layerGroups.gridCells.clearLayers();
   layerGroups.gridCellsFull.clearLayers();
@@ -1279,6 +1414,7 @@ function rerenderGridLayersForActiveAlgo() {
     let chkFull = document.getElementById('chk-grid-cells-full');
     if (chkFull && chkFull.checked) layerGroups.gridCellsFull.addTo(map);
   }
+  _renderGridResolutionInfo(roadGrid, fullGrid);
 }
 
 function _filteredGapRepairFeatures(features) {
@@ -1298,6 +1434,37 @@ function _filteredGapRepairFeatures(features) {
     if (scope !== 'all' && fScope !== scope) return false;
     return true;
   });
+}
+
+function onGapRepairFilterChanged() {
+  let preset = document.getElementById('gap-repair-preset');
+  if (preset) preset.value = 'custom';
+  rerenderGapRepairHexes();
+}
+
+function applyGapRepairPreset() {
+  let preset = document.getElementById('gap-repair-preset');
+  if (!preset) return;
+  let algoEl = document.getElementById('gap-repair-algo-filter');
+  let phaseEl = document.getElementById('gap-repair-phase-filter');
+  let scopeEl = document.getElementById('gap-repair-scope-filter');
+  if (!algoEl || !phaseEl || !scopeEl) return;
+  if (preset.value === 'dp_fallback') {
+    algoEl.value = 'dp';
+    phaseEl.value = 'fallback_initial';
+    scopeEl.value = 'all';
+  } else if (preset.value === 'dp_gap') {
+    algoEl.value = 'dp';
+    phaseEl.value = 'gap_repair';
+    scopeEl.value = 'gap_repair_subcorridor';
+  } else if (preset.value === 'greedy_initial') {
+    algoEl.value = 'greedy';
+    phaseEl.value = 'initial';
+    scopeEl.value = 'greedy_step_candidates';
+  } else {
+    // custom: keep current filters
+  }
+  rerenderGapRepairHexes();
 }
 
 function rerenderGapRepairHexes() {
@@ -1722,7 +1889,8 @@ function _syncCoverageFeatureUI() {
   if (!sourceSel || !manualRow || !towersRow || !metricRow || !chk) return;
 
   let towersAvailable = _hasTowerCoverageSources();
-  if (!_hasElevation) {
+  let providerReady = _isGridProviderReady();
+  if (!_hasElevation || !providerReady) {
     _coverageSourceMode = 'manual';
     _resetPointCoverageMode();
     _manualCoverageSource = null;
@@ -1736,7 +1904,7 @@ function _syncCoverageFeatureUI() {
     map.removeLayer(layerGroups.towerCoverage);
   }
 
-  sourceSel.disabled = !_hasElevation;
+  sourceSel.disabled = !(_hasElevation && providerReady);
   for (let i = 0; i < sourceSel.options.length; i++) {
     let opt = sourceSel.options[i];
     if (opt.value === 'towers') opt.disabled = !towersAvailable;
@@ -1748,14 +1916,14 @@ function _syncCoverageFeatureUI() {
   manualRow.style.display = (_coverageSourceMode === 'manual') ? '' : 'none';
   towersRow.style.display = (_coverageSourceMode === 'towers') ? '' : 'none';
 
-  if (manualBtn) manualBtn.disabled = !_hasElevation;
-  if (calcSelBtn) calcSelBtn.disabled = (!_hasElevation || !towersAvailable);
-  if (calcAllBtn) calcAllBtn.disabled = (!_hasElevation || !towersAvailable);
-  metricRow.style.opacity = _hasElevation ? '1' : '0.6';
+  if (manualBtn) manualBtn.disabled = !(_hasElevation && providerReady);
+  if (calcSelBtn) calcSelBtn.disabled = (!(_hasElevation && providerReady) || !towersAvailable);
+  if (calcAllBtn) calcAllBtn.disabled = (!(_hasElevation && providerReady) || !towersAvailable);
+  metricRow.style.opacity = (_hasElevation && providerReady) ? '1' : '0.6';
 }
 
 function _autoCoverageModeFromCurrentState(preferTowers) {
-  if (!_hasElevation) {
+  if (!_hasElevation || !_isGridProviderReady()) {
     _setCoverageSourceMode('manual', {clearRuntimeCoverageOnModeChange: false});
     return;
   }
@@ -1863,6 +2031,10 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     setStatus('Download Elevation first.');
     return;
   }
+  if (!_isGridProviderReady()) {
+    setStatus('Grid provider is not ready yet.');
+    return;
+  }
   setStatus('Calculating tower coverage...');
   fetch(url, {
     method: 'POST',
@@ -1928,6 +2100,10 @@ function togglePointCoverageMode() {
     setStatus('Download Elevation first.');
     return;
   }
+  if (!_isGridProviderReady()) {
+    setStatus('Grid provider is not ready yet.');
+    return;
+  }
   if (_coverageSourceMode !== 'manual') {
     _setCoverageSourceMode('manual', {clearRuntimeCoverageOnModeChange: true});
   }
@@ -1979,6 +2155,12 @@ function toggleTowerCoverage() {
     chk.checked = false;
     metricRow.style.display = 'none';
     setStatus('Download Elevation first.');
+    return;
+  }
+  if (!_isGridProviderReady()) {
+    chk.checked = false;
+    metricRow.style.display = 'none';
+    setStatus('Grid provider is not ready yet.');
     return;
   }
   _syncCoverageFeatureUI();
@@ -2341,6 +2523,7 @@ function doClearCalculations() {
     if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
     _selectedEdgeKey = null;
     closeLinkAnalysis();
+    _refreshGridProviderStatusUI();
     _syncCoverageFeatureUI();
     setStatus('Calculations cleared: ' + (data.deleted || 0) + ' file(s) removed.');
   });
@@ -3333,6 +3516,8 @@ function saveProjectState(projectPath) {
       projectPath: projectPath || existing.projectPath || null,
       hasRoads: _hasRoads,
       hasElevation: _hasElevation,
+      hasGridProvider: _hasGridProvider,
+      gridProviderReady: _gridProviderReadyExplicit,
       hasRoutes: _hasRoutes,
       outputDir: document.getElementById('output-dir').value,
       bbox: _bboxBounds,
@@ -3499,7 +3684,12 @@ function restoreProjectState() {
       if (state.hasRoads) ps.has_roads = true;
       if (state.hasRoutes) ps.has_routes = true;
       if (state.hasElevation) ps.has_elevation = true;
+      if (state.hasGridProvider != null) ps.has_grid_provider = !!state.hasGridProvider;
       applyProjectStatus(ps, data);
+      if (state.gridProviderReady !== undefined && state.gridProviderReady !== null) {
+        _gridProviderReadyExplicit = !!state.gridProviderReady;
+      }
+      _refreshGridProviderStatusUI();
       _autoCoverageModeFromCurrentState(true);
       if (state.coverageSourceMode) {
         _setCoverageSourceMode(state.coverageSourceMode, {clearRuntimeCoverageOnModeChange: false});
@@ -3516,5 +3706,6 @@ function restoreProjectState() {
 }
 
 // Restore state on page load
+_refreshGridProviderStatusUI();
 _syncCoverageFeatureUI();
 restoreProjectState();
