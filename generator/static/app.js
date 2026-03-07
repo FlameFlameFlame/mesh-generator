@@ -89,6 +89,7 @@ let _optEventSource = null;
 let _optCancelInFlight = false;
 let _currentProjectName = null;
 let _projectRuns = [];
+let _projectDirty = false;
 
 function _setOptimizationRunUiState(isRunning) {
   let runBtn = document.getElementById('btn-optimize');
@@ -463,7 +464,7 @@ function addSite(name, lat, lon, priority, siteHeightM) {
       priority,
       site_height_m: Number.isFinite(siteHeightM) ? siteHeightM : 0.0,
     })
-  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
+  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); _setProjectDirty(true); });
 }
 
 function refresh() {
@@ -527,13 +528,13 @@ function doUpdate() {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, priority, site_height_m: siteHeight})
-  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); });
+  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); _setProjectDirty(true); });
 }
 
 function doDelete() {
   if (selectedIdx < 0) return;
   fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
-    .then(safeJson).then(data => { sites = data; selectedIdx = -1; _hasRoads = false; refresh(); });
+    .then(safeJson).then(data => { sites = data; selectedIdx = -1; _hasRoads = false; refresh(); _setProjectDirty(true); });
 }
 
 function toggleFetchCity(idx, value) {
@@ -549,6 +550,7 @@ function toggleFetchCity(idx, value) {
       delete siteCityLayers[idx];
     }
     refresh();
+    _setProjectDirty(true);
   });
 }
 
@@ -568,6 +570,22 @@ function _projectPayload(extra) {
   return payload;
 }
 
+function _refreshProjectSelectLabels() {
+  let sel = document.getElementById('project-select');
+  if (!sel) return;
+  Array.from(sel.options || []).forEach(function(opt) {
+    let name = opt.getAttribute('data-base-name') || opt.value || '';
+    let runCount = parseInt(opt.getAttribute('data-run-count') || '0', 10) || 0;
+    let mark = (_projectDirty && _currentProjectName && opt.value === _currentProjectName) ? '*' : '';
+    opt.textContent = name + mark + (runCount ? (' (' + runCount + ' runs)') : '');
+  });
+}
+
+function _setProjectDirty(isDirty) {
+  _projectDirty = !!isDirty;
+  _refreshProjectSelectLabels();
+}
+
 function _setCurrentProject(name) {
   _currentProjectName = name || null;
   let sel = document.getElementById('project-select');
@@ -576,6 +594,7 @@ function _setCurrentProject(name) {
     let p = sel.selectedOptions[0].getAttribute('data-path');
     if (p) document.getElementById('output-dir').value = p;
   }
+  _refreshProjectSelectLabels();
 }
 
 function _renderProjectList(projects) {
@@ -586,7 +605,8 @@ function _renderProjectList(projects) {
   (projects || []).forEach(function(p) {
     let opt = document.createElement('option');
     opt.value = p.name;
-    opt.textContent = p.name + (p.run_count ? (' (' + p.run_count + ' runs)') : '');
+    opt.setAttribute('data-base-name', p.name);
+    opt.setAttribute('data-run-count', String(p.run_count || 0));
     opt.setAttribute('data-path', p.path || '');
     sel.appendChild(opt);
   });
@@ -594,6 +614,7 @@ function _renderProjectList(projects) {
   let hasPrev = Array.from(sel.options).some(function(o) { return o.value === prev; });
   sel.value = hasPrev ? prev : sel.options[0].value;
   _setCurrentProject(sel.value);
+  _refreshProjectSelectLabels();
 }
 
 function _renderRunsPanel(runs, selectedRunId) {
@@ -711,6 +732,7 @@ function doLoadSelectedRun() {
     _manualCoverageSource = null;
     _resetPointCoverageMode();
     _syncCoverageFeatureUI();
+    _setProjectDirty(false);
     setStatus('Loaded run: ' + sel.value);
   });
 }
@@ -727,6 +749,7 @@ function doOpenProject() {
     if (!info.config_path) {
       fetch('/api/clear', {method: 'POST'}).then(safeJson).then(function() {
         _applyClearedState();
+        _setProjectDirty(false);
       });
       _renderRunsPanel(info.runs || [], null);
       setStatus('Opened empty project: ' + info.project_name);
@@ -737,6 +760,7 @@ function doOpenProject() {
       if (info.latest_run_id) {
         doLoadSelectedRun();
       }
+      _setProjectDirty(false);
       setStatus('Opened project: ' + info.project_name);
     });
   });
@@ -763,6 +787,7 @@ function doDetectCity() {
         // Update site list display
         if (sites[selectedIdx]) sites[selectedIdx].boundary_name = data.name;
         refresh();
+        _setProjectDirty(true);
       } else {
         setStatus('No city boundary found at this location');
         info.textContent = 'No city found';
@@ -793,6 +818,7 @@ function doExport() {
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); return; }
     setStatus('Saved project "' + _currentProjectName + '" (' + data.count + ' sites)');
+    _setProjectDirty(false);
     if (data.config_path) {
       saveProjectState(null);
     }
@@ -874,6 +900,7 @@ function _applyClearedState() {
   _refreshGridProviderStatusUI();
   _syncCoverageFeatureUI();
   _renderRunsPanel([], null);
+  _setProjectDirty(false);
   saveProjectState(null);
 }
 
@@ -882,6 +909,7 @@ function doClear() {
   fetch('/api/clear', {method: 'POST'})
     .then(safeJson).then(data => {
       _applyClearedState();
+      _setProjectDirty(false);
       setStatus(_currentProjectName ? ('Cleared in-memory state for project: ' + _currentProjectName) : 'Cleared in-memory state');
     });
 }
@@ -922,6 +950,7 @@ function doFetchRoads() {
       });
       _hasRoads = true;
       saveProjectState(null);
+      _setProjectDirty(true);
       if ((data.city_boundaries || []).length > 0) refresh();
       if (data.bounds) map.fitBounds(data.bounds, {padding: [30, 30]});
     }).catch(err => {
@@ -976,6 +1005,7 @@ function doFilterP2P() {
     _hasRoutes = (res.routes || []).length > 0;
     _updateOptimizeBtn();
     saveProjectState(null);
+    _setProjectDirty(true);
 
     // Draw site-to-site connection overlay
     layerGroups.connections.clearLayers();
@@ -1069,6 +1099,7 @@ function selectRoute(pairKey, routeId) {
     }
   });
   applyRouteSelection();
+  _setProjectDirty(true);
   _refreshProfileIfVisible(pairKey);
 }
 
@@ -1261,6 +1292,7 @@ function _rerouteWithWaypoints(pairKey) {
     });
     renderRouteList(_allRoutes);
     setStatus('Re-routed ' + pairKey + ' via ' + wayIds.length + ' forced segment(s)');
+    _setProjectDirty(true);
     _refreshProfileIfVisible(pairKey);
   }).catch(function(err) {
     setStatus('Re-route error: ' + err);
@@ -1332,6 +1364,7 @@ function doFetchElevation() {
       _updateOptimizeBtn();
       _refreshGridProviderStatusUI();
       _autoCoverageModeFromCurrentState(false);
+      _setProjectDirty(true);
       saveProjectState(null);
       if (gridProg) {
         setTimeout(function() {
@@ -2921,6 +2954,7 @@ function applySettings(s) {
 function doSaveSettings() {
   saveProjectState(null);
   setStatus('Settings saved.');
+  _setProjectDirty(true);
 }
 
 function doClearCalculations() {
