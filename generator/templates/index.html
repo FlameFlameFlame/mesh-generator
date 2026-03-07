@@ -161,12 +161,11 @@
       </div>
       <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
       <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
-        <label title="H3 resolution used only for runtime tower coverage">
-          Tower coverage H3
-          <input id="tower-coverage-h3-resolution" type="number" value="8" min="6" max="9" step="1" style="width:70px;">
+        <label title="Maximum distance from source used for runtime coverage computation">
+          Calculation radius (m)
+          <input id="tower-coverage-radius-m" type="number" value="15000" min="100" max="200000" step="100" style="width:110px;">
         </label>
         <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
-          <option value="tower_id">Color by tower</option>
           <option value="received_power_dbm">Received power (dBm)</option>
           <option value="path_loss_db">Path loss (dB)</option>
           <option value="distance_m">Distance to tower (m)</option>
