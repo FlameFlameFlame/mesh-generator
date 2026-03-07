@@ -135,6 +135,7 @@ _p2p_routes = []             # list of route dicts from find_p2p_roads
 _p2p_all_route_features = {} # route_id → list of feature dicts (for select-routes)
 _p2p_display_features = {}   # route_id → clipped feature dicts (frontend rendering)
 _forced_waypoints = {}       # pair_key → list of osm_way_ids
+_active_mesh_parameters = {} # last loaded/applied mesh parameters for runtime coverage
 
 
 def _close_grid_provider():
@@ -373,6 +374,7 @@ def clear_project():
     global _counter, _roads_geojson, _full_roads_geojson, _loaded_layers, _loaded_report
     global _loaded_coverage, _runtime_tower_coverage, _elevation_path, _p2p_routes, _p2p_all_route_features
     global _p2p_display_features, _forced_waypoints, _grid_bundle_path, _grid_provider_summary
+    global _active_mesh_parameters
     store._sites.clear()
     _counter = 0
     _roads_geojson = None
@@ -385,6 +387,7 @@ def clear_project():
     _p2p_all_route_features = {}
     _p2p_display_features = {}
     _forced_waypoints = {}
+    _active_mesh_parameters = {}
     if _elevation_path and os.path.isfile(_elevation_path):
         try:
             os.unlink(_elevation_path)
@@ -426,7 +429,14 @@ def clear_calculations():
 
 @app.route("/api/coverage", methods=["GET"])
 def get_coverage():
-    """Serve cached coverage GeoJSON (lazy-loaded by frontend on toggle)."""
+    """Serve cached road coverage; build runtime fallback from loaded layers if needed."""
+    global _loaded_coverage
+    if _loaded_coverage is None:
+        try:
+            _loaded_coverage = _build_runtime_road_coverage_from_layers()
+        except Exception:
+            logger.warning("Failed to build runtime road coverage fallback", exc_info=True)
+            _loaded_coverage = None
     if _loaded_coverage is None:
         return jsonify({"error": "No coverage data loaded"}), 404
     return jsonify(_loaded_coverage)
@@ -452,6 +462,152 @@ def _coverage_results_to_geojson(results: list[dict]) -> dict:
             "geometry": {"type": "Polygon", "coordinates": [coords]},
             "properties": props,
         })
+    return {"type": "FeatureCollection", "features": features}
+
+
+def _build_runtime_road_coverage_from_layers() -> dict | None:
+    """
+    Build road coverage lazily from loaded towers + grid cells.
+
+    This keeps road coverage available after pipeline-time coverage export removal.
+    """
+    grid_geojson = (_loaded_layers or {}).get("grid_cells")
+    towers_geojson = (_loaded_layers or {}).get("towers")
+    if not isinstance(grid_geojson, dict) or not isinstance(towers_geojson, dict):
+        return None
+    grid_features = grid_geojson.get("features") or []
+    tower_features = towers_geojson.get("features") or []
+    if not grid_features or not tower_features:
+        return None
+
+    try:
+        from mesh_calculator.core.config import MeshConfig
+        from mesh_calculator.core.grid import H3Cell
+        from mesh_calculator.data.cache import LOSCache
+        from mesh_calculator.network.graph import MeshSurface
+    except ImportError:
+        logger.warning("mesh_calculator imports unavailable for runtime coverage fallback")
+        return None
+
+    valid = MeshConfig.__dataclass_fields__
+    cfg = MeshConfig(**{
+        k: v for k, v in (_active_mesh_parameters or {}).items()
+        if k in valid
+    })
+
+    cells = {}
+    road_cells = set()
+    for feat in grid_features:
+        props = feat.get("properties") or {}
+        h3_idx = props.get("h3_index")
+        if not h3_idx:
+            continue
+        try:
+            lat, lon = h3.cell_to_latlng(h3_idx)
+        except Exception:
+            continue
+        elev = props.get("elevation")
+        if elev is None and _grid_provider is not None:
+            try:
+                elev = float(_grid_provider.get_h3_cell_max_elevation(h3_idx))
+            except Exception:
+                elev = 0.0
+        if elev is None:
+            elev = 0.0
+        has_road = bool(props.get("has_road", True))
+        cell = H3Cell(
+            h3_index=h3_idx,
+            lat=float(lat),
+            lon=float(lon),
+            elevation=float(elev),
+            has_road=has_road,
+            is_in_boundary=True,
+        )
+        cells[h3_idx] = cell
+        if has_road:
+            road_cells.add(h3_idx)
+    if not cells:
+        return None
+
+    surface = MeshSurface(cells, cfg, _grid_provider)
+    for feat in tower_features:
+        props = feat.get("properties") or {}
+        coords = (feat.get("geometry") or {}).get("coordinates") or []
+        tower_h3 = props.get("h3_index")
+        if not tower_h3 and len(coords) >= 2:
+            try:
+                tower_h3 = h3.latlng_to_cell(float(coords[1]), float(coords[0]), cfg.h3_resolution)
+            except Exception:
+                tower_h3 = None
+        if not tower_h3:
+            continue
+        if tower_h3 not in surface.cells and _grid_provider is not None:
+            try:
+                materialized = _grid_provider.materialize_cells(
+                    [tower_h3], cfg, road_cells=road_cells, is_in_boundary=True
+                )
+                surface.cells.update(materialized)
+            except Exception:
+                logger.debug("Could not materialize tower cell %s for coverage fallback", tower_h3, exc_info=True)
+        if tower_h3 not in surface.cells:
+            continue
+        source = props.get("source", "site")
+        tower = surface.place_tower(tower_h3, source=source)
+        tower.coverage_radius_m = cfg.max_coverage_radius_m
+
+    if not surface.towers:
+        return None
+
+    surface.compute_cell_coverage(LOSCache())
+
+    features = []
+    for h3_idx, cell in surface.cells.items():
+        if not getattr(cell, "has_road", False):
+            continue
+        boundary = h3.cell_to_boundary(h3_idx)
+        coords = [[lon, lat] for lat, lon in boundary]
+        coords.append(coords[0])
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [coords]},
+            "properties": {
+                "h3_index": h3_idx,
+                "elevation": float(cell.elevation),
+                "has_road": bool(cell.has_road),
+                "has_tower": bool(cell.has_tower),
+                "visible_tower_count": int(cell.visible_tower_count),
+                "distance_to_closest_tower": (
+                    None
+                    if cell.distance_to_closest_tower == float("inf")
+                    else float(cell.distance_to_closest_tower)
+                ),
+                "clearance": (
+                    float(cell.clearance)
+                    if cell.clearance is not None and cell.clearance != float("inf")
+                    else None
+                ),
+                "path_loss": (
+                    float(cell.path_loss)
+                    if cell.path_loss is not None
+                    else None
+                ),
+                "received_power_dbm": (
+                    float(cell.received_power_dbm)
+                    if cell.received_power_dbm is not None
+                    else None
+                ),
+                "is_covered": bool(cell.is_covered),
+            },
+        })
+
+    if not features:
+        return None
+
+    logger.info(
+        "Built runtime road coverage fallback: cells=%d towers=%d",
+        len(features),
+        len(surface.towers),
+    )
     return {"type": "FeatureCollection", "features": features}
 
 
@@ -1519,7 +1675,7 @@ def run_optimization():
     Launches the pipeline in a background thread and returns immediately.
     Results are streamed via /api/optimization-stream (SSE).
     """
-    global _opt_running, _opt_result
+    global _opt_running, _opt_result, _active_mesh_parameters
     try:
         from mesh_calculator.core.config import MeshConfig, RouteSpec
         from mesh_calculator.optimization.route_pipeline import run_route_pipeline
@@ -1543,6 +1699,7 @@ def run_optimization():
     body = request.json or {}
     max_towers = int(body.get("max_towers_per_route", 8))
     param_overrides = _normalize_mesh_parameters(body.get("parameters", {}))
+    _active_mesh_parameters = dict(param_overrides)
     output_dir = body.get("output_dir", "")
 
     # Build MeshConfig (with optional overrides from request body)
@@ -1881,7 +2038,7 @@ def load_project():
     global _counter, _loaded_layers, _roads_geojson, _full_roads_geojson
     global _loaded_report, _loaded_coverage, _runtime_tower_coverage
     global _elevation_path, _p2p_routes, _p2p_all_route_features
-    global _grid_bundle_path, _grid_provider_summary
+    global _grid_bundle_path, _grid_provider_summary, _active_mesh_parameters
     data = request.json
     path = data.get("path", "").strip()
 
@@ -2069,6 +2226,9 @@ def load_project():
             merged_params.update(project_status["parameters"])
         merged_params.update(config_parameters)
         project_status["parameters"] = merged_params
+        _active_mesh_parameters = dict(merged_params)
+    else:
+        _active_mesh_parameters = {}
 
     # Backward compatibility: build provider on demand when bundle is missing.
     if _grid_provider is None and _elevation_path and layers.get("boundary"):

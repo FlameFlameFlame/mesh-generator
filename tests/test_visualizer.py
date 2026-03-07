@@ -2,6 +2,7 @@
 import json
 import os
 
+import h3
 import yaml
 
 from generator import app as app_mod
@@ -253,6 +254,78 @@ class TestCoverageEndpoint:
             resp = client.get("/api/coverage")
 
         assert resp.status_code == 404
+
+    def test_coverage_runtime_fallback_from_grid_and_towers(self, tmp_path):
+        h3_idx = h3.latlng_to_cell(40.2, 44.5, 8)
+        lat, lon = h3.cell_to_latlng(h3_idx)
+        boundary = h3.cell_to_boundary(h3_idx)
+        poly_coords = [[lng, lt] for lt, lng in boundary] + [[boundary[0][1], boundary[0][0]]]
+
+        sites = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"name": "A", "priority": 1},
+            }],
+        }
+        sites_path = str(tmp_path / "sites.geojson")
+        with open(sites_path, "w") as f:
+            json.dump(sites, f)
+
+        towers = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                "properties": {"tower_id": 1, "source": "site", "h3_index": h3_idx},
+            }],
+        }
+        with open(tmp_path / "towers.geojson", "w") as f:
+            json.dump(towers, f)
+
+        grid_cells = {
+            "type": "FeatureCollection",
+            "features": [{
+                "type": "Feature",
+                "geometry": {"type": "Polygon", "coordinates": [poly_coords]},
+                "properties": {"h3_index": h3_idx, "elevation": 1200.0, "has_road": True},
+            }],
+        }
+        with open(tmp_path / "grid_cells.geojson", "w") as f:
+            json.dump(grid_cells, f)
+
+        config = {
+            "parameters": {"h3_resolution": 8},
+            "inputs": {
+                "target_sites": sites_path,
+                "boundary": "",
+                "roads": "",
+                "elevation": "",
+            },
+            "outputs": {
+                "towers": str(tmp_path / "towers.geojson"),
+                "coverage": str(tmp_path / "missing_coverage.geojson"),
+                "report": str(tmp_path / "missing_report.json"),
+                "visibility_edges": str(tmp_path / "missing_edges.geojson"),
+            },
+        }
+        config_path = str(tmp_path / "config.yaml")
+        with open(config_path, "w") as f:
+            yaml.safe_dump(config, f)
+
+        with app.test_client() as client:
+            load_resp = client.post("/api/load", json={"path": config_path})
+            assert load_resp.status_code == 200
+            resp = client.get("/api/coverage")
+
+        assert resp.status_code == 200
+        data = resp.get_json()
+        assert data["type"] == "FeatureCollection"
+        assert len(data["features"]) == 1
+        props = data["features"][0]["properties"]
+        assert props["h3_index"] == h3_idx
+        assert props["visible_tower_count"] >= 1
 
 
 class TestPickFile:
