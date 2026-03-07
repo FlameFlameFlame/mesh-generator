@@ -105,6 +105,12 @@
 
       <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
       <label><input type="checkbox" id="chk-grid-cells-full" onchange="toggleGridCellsFull()"> Grid Cells (full boundary)</label>
+      <div class="sub-control">
+        <select id="grid-color-mode" onchange="rerenderGridLayersForActiveAlgo()">
+          <option value="resolution">Grid color: resolution</option>
+          <option value="elevation">Grid color: elevation</option>
+        </select>
+      </div>
       <div class="sub-control sub-note" id="grid-resolution-info" style="display:none;"></div>
       <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Search Hexes (all attempts)</label>
       <div class="sub-control" id="gap-repair-filter-row" style="display:none;">

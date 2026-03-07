@@ -1263,6 +1263,31 @@ function _gridColorByResolution(resolution, isFullGrid) {
   return palette[idx];
 }
 
+function _elevationRange(fc) {
+  if (!fc || !Array.isArray(fc.features)) return null;
+  let minElev = null;
+  let maxElev = null;
+  fc.features.forEach(function(f) {
+    let p = (f || {}).properties || {};
+    let elev = Number(p.elevation);
+    if (!Number.isFinite(elev)) return;
+    if (minElev === null || elev < minElev) minElev = elev;
+    if (maxElev === null || elev > maxElev) maxElev = elev;
+  });
+  if (minElev === null || maxElev === null) return null;
+  return {min: minElev, max: maxElev};
+}
+
+function _gridColorByElevation(elevation, range, isFullGrid) {
+  let elev = Number(elevation);
+  if (!Number.isFinite(elev) || !range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) {
+    return _gridColorByResolution(null, isFullGrid);
+  }
+  let span = range.max - range.min;
+  let t = span > 0 ? ((elev - range.min) / span) : 0.5;
+  return terrainColor(t);
+}
+
 function _resolutionStats(fc) {
   if (!fc || !Array.isArray(fc.features) || !fc.features.length) return null;
   let h3Min = null;
@@ -1335,15 +1360,23 @@ function _renderGridResolutionInfo(roadGrid, fullGrid) {
 function rerenderGridLayersForActiveAlgo() {
   layerGroups.gridCells.clearLayers();
   layerGroups.gridCellsFull.clearLayers();
+  let gridColorModeEl = document.getElementById('grid-color-mode');
+  let gridColorMode = gridColorModeEl ? gridColorModeEl.value : 'resolution';
 
   let roadGrid = _cachedGridCells;
+  let roadElevRange = _elevationRange(roadGrid);
   if (roadGrid) {
     L.geoJSON(roadGrid, {
       style: function(feature) {
         let p = feature.properties || {};
-        let fill = p.is_in_unfit_area
-          ? '#cc4444'
-          : _gridColorByResolution(p.h3_resolution, false);
+        let fill;
+        if (p.is_in_unfit_area) {
+          fill = '#cc4444';
+        } else if (gridColorMode === 'elevation') {
+          fill = _gridColorByElevation(p.elevation, roadElevRange, false);
+        } else {
+          fill = _gridColorByResolution(p.h3_resolution, false);
+        }
         return { color: fill, weight: 0.5, opacity: 0.6, fillColor: fill, fillOpacity: 0.25 };
       },
       onEachFeature: function(feature, layer) {
@@ -1371,13 +1404,19 @@ function rerenderGridLayersForActiveAlgo() {
   }
 
   let fullGrid = _cachedGridCellsFull;
+  let fullElevRange = _elevationRange(fullGrid);
   if (fullGrid) {
     L.geoJSON(fullGrid, {
       style: function(feature) {
         let p = feature.properties || {};
-        let fill = p.is_in_unfit_area
-          ? '#d46a6a'
-          : _gridColorByResolution(p.h3_resolution, true);
+        let fill;
+        if (p.is_in_unfit_area) {
+          fill = '#d46a6a';
+        } else if (gridColorMode === 'elevation') {
+          fill = _gridColorByElevation(p.elevation, fullElevRange, true);
+        } else {
+          fill = _gridColorByResolution(p.h3_resolution, true);
+        }
         return { color: fill, weight: 0.4, opacity: 0.55, fillColor: fill, fillOpacity: 0.12 };
       },
       onEachFeature: function(feature, layer) {
