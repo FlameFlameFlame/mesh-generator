@@ -1,5 +1,7 @@
 # Change Summary
 
+- 2026-03-08: Fixed project reopen readiness regression where `Run Optimization` stayed disabled despite loaded elevation/grid data: backend load now normalizes `project_status` flags (`has_elevation`, `has_grid_provider`, `has_routes`, `grid_provider_summary`) from current in-memory state, and frontend `applyProjectStatus(...)` now prefers live `loadData.has_grid_provider` over stale status-file values.
+- 2026-03-08: Added regression test `test_load_overrides_stale_status_provider_flags` in `tests/test_visualizer.py`.
 - 2026-03-07: Hardened optimization start preconditions: `POST /api/run-optimization` now ensures `grid_provider` is ready before launching background work, attempts re-hydration from `grid_bundle_path` when available, and returns a clear `400` (`Grid provider is not ready. Download elevation first.`) instead of async pipeline crash.
 - 2026-03-07: Added regression test `test_run_optimization_requires_grid_provider` in `tests/test_optimization_progress.py`.
 - 2026-03-07: Fixed `/api/elevation` first-run failure (`Failed to download elevation: Elevation is not available`) by forwarding the freshly downloaded elevation path and current boundary/roads into `_build_grid_bundle_for_current_state(...)` instead of relying on stale module-global state during handler execution.

@@ -416,6 +416,13 @@ def load_project(app_mod):
         app_mod.logger.info("Restored %d routes from %s", len(app_mod._p2p_routes), routes_file)
         project_status["has_routes"] = True
 
+    # Normalize returned status flags to current in-memory truth so stale status.json
+    # does not disable frontend actions after successful project load/hydration.
+    project_status["has_elevation"] = bool(app_mod._elevation_path and os.path.isfile(app_mod._elevation_path))
+    project_status["has_grid_provider"] = app_mod._grid_provider is not None
+    project_status["has_routes"] = bool(app_mod._p2p_routes)
+    project_status["grid_provider_summary"] = app_mod._grid_provider_summary or project_status.get("grid_provider_summary", "")
+
     bounds = app_mod._compute_bounds(layers, app_mod.store)
     project_name = None
     try:

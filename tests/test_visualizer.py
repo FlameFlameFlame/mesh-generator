@@ -234,6 +234,45 @@ class TestLoadProject:
         assert captured["bundle_path"] == str(tmp_path / "grid_bundle.json")
         assert captured["elevation_path"] == str(fallback_elevation)
 
+    def test_load_overrides_stale_status_provider_flags(self, tmp_path, monkeypatch):
+        config_path = _write_fixture(tmp_path)
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        cfg["inputs"]["elevation"] = "elevation.tif"
+        cfg["inputs"]["grid_bundle"] = "grid_bundle.json"
+        with open(config_path, "w") as f:
+            yaml.safe_dump(cfg, f)
+
+        elevation_path = tmp_path / "elevation.tif"
+        elevation_path.write_bytes(b"fake-geotiff")
+        (tmp_path / "grid_bundle.json").write_text("{}", encoding="utf-8")
+        with open(tmp_path / "status.json", "w") as f:
+            json.dump({
+                "has_elevation": False,
+                "has_grid_provider": False,
+                "grid_provider_summary": "",
+                "has_routes": False,
+            }, f)
+
+        def _fake_hydrate(bundle_path, elevation_path=None):
+            app_mod._grid_provider = object()
+            app_mod._grid_bundle_path = bundle_path
+            app_mod._grid_provider_summary = "res=8,9"
+
+        monkeypatch.setattr(app_mod, "_hydrate_grid_provider", _fake_hydrate)
+        monkeypatch.setattr(app_mod, "_close_grid_provider", lambda: None)
+
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data["has_elevation"] is True
+        assert data["has_grid_provider"] is True
+        assert data["project_status"]["has_elevation"] is True
+        assert data["project_status"]["has_grid_provider"] is True
+        assert data["project_status"]["grid_provider_summary"] == "res=8,9"
+
 
 class TestElevationDownload:
     def test_elevation_build_uses_fresh_downloaded_path(self, tmp_path, monkeypatch):

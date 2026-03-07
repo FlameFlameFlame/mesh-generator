@@ -1408,12 +1408,12 @@ function applyProjectStatus(ps, loadData) {
     elevationFetched = false;
     document.getElementById('chk-elevation').disabled = false;
   }
-  if (Object.prototype.hasOwnProperty.call(ps, 'has_grid_provider')) {
-    _gridProviderReadyExplicit = !!ps.has_grid_provider;
-    _hasGridProvider = !!ps.has_grid_provider;
-  } else if (Object.prototype.hasOwnProperty.call(loadData, 'has_grid_provider')) {
+  if (Object.prototype.hasOwnProperty.call(loadData, 'has_grid_provider')) {
     _gridProviderReadyExplicit = !!loadData.has_grid_provider;
     _hasGridProvider = !!loadData.has_grid_provider;
+  } else if (Object.prototype.hasOwnProperty.call(ps, 'has_grid_provider')) {
+    _gridProviderReadyExplicit = !!ps.has_grid_provider;
+    _hasGridProvider = !!ps.has_grid_provider;
   } else if (_hasElevation) {
     _hasGridProvider = true;
     _gridProviderReadyExplicit = null;
