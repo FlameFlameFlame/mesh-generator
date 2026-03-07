@@ -1446,31 +1446,26 @@ def run_optimization():
         import copy
         import shutil
         import tempfile
-        from concurrent.futures import ThreadPoolExecutor, as_completed
 
         global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _runtime_tower_coverage
         _opt_running = True
         try:
             tmp_dir_dp = tempfile.mkdtemp(prefix="mesh_opt_dp_")
-            tmp_dir_greedy = tempfile.mkdtemp(prefix="mesh_opt_greedy_")
 
             logger.info(
-                "run_optimization: %d routes, max_towers=%d (DP + Greedy in parallel)",
+                "run_optimization: %d routes, max_towers=%d (DP)",
                 len(route_specs), max_towers,
             )
             boundary_geojson = (_loaded_layers or {}).get("boundary")
 
-            def _make_progress_callback(strategy: str):
+            def _make_progress_callback():
                 def _callback(event: dict):
-                    if not isinstance(event, dict):
-                        return
-                    payload = dict(event)
-                    payload["algorithm"] = strategy
-                    _opt_log_queue.put({"progress": payload})
+                    if isinstance(event, dict):
+                        _opt_log_queue.put({"progress": dict(event)})
                 return _callback
 
-            def _run_one(strategy, out_dir):
-                _thread_local.strategy_label = strategy
+            def _run_one(out_dir):
+                _thread_local.strategy_label = "dp"
                 config_copy = copy.deepcopy(mesh_config)
                 return run_route_pipeline(
                     routes=route_specs,
@@ -1479,38 +1474,11 @@ def run_optimization():
                     city_boundaries_geojson=city_boundaries_geojson,
                     boundary_geojson=boundary_geojson,
                     output_dir=out_dir,
-                    strategy=strategy,
-                    progress_callback=_make_progress_callback(strategy),
+                    progress_callback=_make_progress_callback(),
                 )
 
-            pipeline_results = {}
-            pipeline_errors = {}
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                futures = {
-                    pool.submit(_run_one, 'dp', tmp_dir_dp): 'dp',
-                    pool.submit(_run_one, 'greedy', tmp_dir_greedy): 'greedy',
-                }
-                for future in as_completed(futures):
-                    label = futures[future]
-                    try:
-                        pipeline_results[label] = future.result()
-                    except Exception as exc:
-                        pipeline_errors[label] = str(exc)
-                        _opt_log_queue.put({
-                            "progress": {
-                                "algorithm": label,
-                                "stage": "error",
-                                "step": f"Error: {exc}",
-                                "percent": 100.0,
-                                "route_index": 0,
-                                "route_total": len(route_specs),
-                                "route_id": None,
-                                "route_label": None,
-                            }
-                        })
-                        logger.error("Pipeline '%s' failed: %s", label, exc)
+            summary = _run_one(tmp_dir_dp)
 
-            # Load output GeoJSON files for each strategy
             output_keys = [
                 ("towers", "towers.geojson"),
                 ("edges", "visibility_edges.geojson"),
@@ -1520,47 +1488,35 @@ def run_optimization():
                 ("gap_repair_hexes", "gap_repair_hexes.geojson"),
             ]
 
-            dual_result = {}
-            for label, tmp_dir in [('dp', tmp_dir_dp), ('greedy', tmp_dir_greedy)]:
-                if label in pipeline_errors:
-                    dual_result[label] = {"error": pipeline_errors[label]}
-                    continue
-                summary = pipeline_results[label]
-                algo_result = {"summary": summary}
-                for key, fname in output_keys:
-                    fpath = os.path.join(tmp_dir, fname)
-                    if os.path.isfile(fpath):
-                        with open(fpath) as f:
-                            algo_result[key] = json.load(f)
-                dual_result[label] = algo_result
-                _opt_log_queue.put({
-                    "progress": {
-                        "algorithm": label,
-                        "stage": "done",
-                        "step": (
-                            f"Done • {summary.get('total_towers', 0)} towers • "
-                            f"{summary.get('visibility_edges', 0)} links"
-                        ),
-                        "percent": 100.0,
-                        "route_index": len(route_specs),
-                        "route_total": len(route_specs),
-                        "route_id": None,
-                        "route_label": None,
-                    }
-                })
+            result = {"summary": summary}
+            for key, fname in output_keys:
+                fpath = os.path.join(tmp_dir_dp, fname)
+                if os.path.isfile(fpath):
+                    with open(fpath) as f:
+                        result[key] = json.load(f)
+            _opt_log_queue.put({
+                "progress": {
+                    "stage": "done",
+                    "step": (
+                        f"Done • {summary.get('total_towers', 0)} towers • "
+                        f"{summary.get('visibility_edges', 0)} links"
+                    ),
+                    "percent": 100.0,
+                    "route_index": len(route_specs),
+                    "route_total": len(route_specs),
+                    "route_id": None,
+                    "route_label": None,
+                }
+            })
 
-            # Update _loaded_layers from DP result (primary algorithm for coverage/grid UI)
-            dp_data = dual_result.get('dp', {})
             for key, _ in output_keys:
-                if key in dp_data:
-                    _loaded_layers[key] = dp_data[key]
+                if key in result:
+                    _loaded_layers[key] = result[key]
 
-            dp_summary = pipeline_results.get('dp', {})
-            greedy_summary = pipeline_results.get('greedy', {})
             logger.info(
-                "run_optimization complete: DP=%d towers/%d edges, Greedy=%d towers/%d edges",
-                dp_summary.get("total_towers", 0), dp_summary.get("visibility_edges", 0),
-                greedy_summary.get("total_towers", 0), greedy_summary.get("visibility_edges", 0),
+                "run_optimization complete: DP=%d towers/%d edges",
+                summary.get("total_towers", 0),
+                summary.get("visibility_edges", 0),
             )
 
             # Persist DP results to project output_dir if provided
@@ -1574,21 +1530,14 @@ def run_optimization():
                     src = os.path.join(tmp_dir_dp, fname)
                     if os.path.isfile(src):
                         shutil.copy2(src, os.path.join(output_dir, fname))
-                # Also save greedy results in a subdirectory
-                greedy_out = os.path.join(output_dir, "greedy")
-                os.makedirs(greedy_out, exist_ok=True)
-                for fname in ["towers.geojson", "visibility_edges.geojson", "report.json"]:
-                    src = os.path.join(tmp_dir_greedy, fname)
-                    if os.path.isfile(src):
-                        shutil.copy2(src, os.path.join(greedy_out, fname))
                 # Write full project state so the directory can be reopened
                 _save_project_to_dir(output_dir, parameters=param_overrides)
                 logger.info("Saved optimization results to %s", output_dir)
 
             _runtime_tower_coverage = None
 
-            _opt_result = dual_result
-            _opt_log_queue.put({"done": True, "summary": dp_summary})
+            _opt_result = result
+            _opt_log_queue.put({"done": True, "summary": summary})
 
         except Exception as exc:
             logger.exception("run_optimization failed")

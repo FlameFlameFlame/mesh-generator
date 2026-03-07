@@ -1,5 +1,6 @@
 # Change Summary
 
+- 2026-03-07: Removed greedy optimization mode end-to-end; `/api/run-optimization` now runs a single DP pipeline, `/api/optimization-result` returns one DP result object, frontend optimization rendering/progress is single-result DP-only, and greedy output artifact directories are no longer produced.
 - 2026-03-05: Fixed export parameter drift in `generator/app.py` by replacing hardcoded `routes.json` parameters with merged runtime/export parameters.
 - 2026-03-05: Unified parameter propagation so `config.yaml`, `routes.json`, and `status.json` share the same parameter set.
 - 2026-03-05: Added regression test `tests/test_save_project.py` to validate exported route parameters and tower limits.

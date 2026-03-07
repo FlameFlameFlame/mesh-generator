@@ -1,5 +1,5 @@
 const COLORS = {1:"red", 2:"orange", 3:"blue", 4:"green", 5:"gray"};
-const TOWER_COLORS = {seed:"#e74c3c", route:"#3498db", bridge:"#9b59b6", greedy:"#e67e22", corridor:"#27ae60"};
+const TOWER_COLORS = {seed:"#e74c3c", route:"#3498db", bridge:"#9b59b6", corridor:"#27ae60"};
 let map = L.map('map', {preferCanvas: true}).setView([40.18, 44.51], 8);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors', maxZoom: 19
@@ -24,9 +24,7 @@ let layerGroups = { roads: L.layerGroup().addTo(map),
                     towerCoverage: L.layerGroup(),
                     elevation: L.layerGroup(),
                     gapRepairHexes: L.layerGroup() };
-// Per-algorithm sublayer groups for dual-result display
 let dpLayerGroup = L.layerGroup().addTo(map);
-let greedyLayerGroup = L.layerGroup();
 let coverageData = null;  // cached GeoJSON from /api/coverage
 let towerCoverageData = null;  // runtime coverage GeoJSON from /api/tower-coverage
 let towerCoverageFetched = false;
@@ -63,9 +61,7 @@ let _forcedWaypoints = {};      // pair_key -> Set of way_ids (forced waypoints)
 let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
 let _sharedWayIds = new Set();   // way_ids used by 2+ active routes (for shared-road style)
 let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by multiple routes
-// Dual-algorithm optimization results
-let _optDualResult = null;  // { dp: {...}, greedy: {...} } from last optimization
-let _activeAlgo = 'dp';     // 'dp' | 'greedy' | 'both'
+let _optResult = null;
 let _lastRunBaseH3Resolution = null;
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
@@ -76,10 +72,9 @@ let _gridProviderReadyExplicit = null; // null means unknown (legacy/backward-co
 let _gridProviderSummary = '';
 let _lowMastWarningActive = false;
 const _LOW_MAST_WARN_THRESHOLD_M = 5.0;
-const _OPT_PROGRESS_ALGOS = ['dp', 'greedy'];
+const _OPT_PROGRESS_ALGOS = ['dp'];
 let _optProgressState = {
   dp: {percent: 0, label: 'Queued…', error: false},
-  greedy: {percent: 0, label: 'Queued…', error: false},
 };
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
@@ -117,7 +112,7 @@ function _refreshGridProviderStatusUI() {
 }
 
 function _titleCaseAlgo(algo) {
-  return algo === 'dp' ? 'DP' : 'Greedy';
+  return algo === 'dp' ? 'DP' : String(algo || '').toUpperCase();
 }
 
 function _setOptimizationProgressRow(algo, percent, label, hasError) {
@@ -137,7 +132,6 @@ function _setOptimizationProgressRow(algo, percent, label, hasError) {
 function _resetOptimizationProgressUI() {
   _optProgressState = {
     dp: {percent: 0, label: 'Queued…', error: false},
-    greedy: {percent: 0, label: 'Queued…', error: false},
   };
   let panel = document.getElementById('opt-progress-panel');
   if (panel) panel.style.display = 'grid';
@@ -165,8 +159,7 @@ function _formatOptimizationProgressLabel(progress) {
 
 function _handleOptimizationProgress(progress) {
   if (!progress || typeof progress !== 'object') return;
-  let algo = String(progress.algorithm || '').toLowerCase();
-  if (_OPT_PROGRESS_ALGOS.indexOf(algo) < 0) return;
+  let algo = 'dp';
   let prev = _optProgressState[algo] || {percent: 0, label: 'Queued…', error: false};
   let rawPct = Number(progress.percent);
   let pct = Number.isFinite(rawPct) ? rawPct : prev.percent;
@@ -584,8 +577,8 @@ function doClear() {
       map.removeLayer(layerGroups.gapRepairHexes);
       document.getElementById('chk-gap-repair-hexes').checked = false;
       _cachedGapRepairGeojson = null;
-      _cachedGridCellsByAlgo = {dp: null, greedy: null};
-      _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
+      _cachedGridCells = null;
+      _cachedGridCellsFull = null;
       let gapRow = document.getElementById('gap-repair-filter-row');
       if (gapRow) gapRow.style.display = 'none';
       let gapLegend = document.getElementById('gap-repair-color-legend');
@@ -1210,22 +1203,16 @@ let _cachedRoadsGeojson = null;
 let _cachedTowersGeojson = null;
 let _cachedEdgesGeojson = null;
 let _cachedGapRepairGeojson = null;
-let _cachedGridCellsByAlgo = {dp: null, greedy: null};
-let _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
+let _cachedGridCells = null;
+let _cachedGridCellsFull = null;
 
 function _phaseColor(algorithm, phase, repairRound) {
   let color = '#ff6600';
-  if (algorithm === 'greedy') {
-    if (phase === 'initial') color = '#22aa66';
-    else if (phase === 'fallback_initial') color = '#117744';
-    else color = '#66cc88';
-  } else {
-    if (phase === 'initial') color = '#3b82f6';
-    else if (phase === 'fallback_initial') color = '#8b5cf6';
-    else {
-      let round = repairRound || 1;
-      color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
-    }
+  if (phase === 'initial') color = '#3b82f6';
+  else if (phase === 'fallback_initial') color = '#8b5cf6';
+  else {
+    let round = repairRound || 1;
+    color = GAP_REPAIR_COLORS[(round - 1) % GAP_REPAIR_COLORS.length];
   }
   return color;
 }
@@ -1235,9 +1222,7 @@ function _normalizeSearchScope(props) {
   let scope = p.search_scope;
   if (scope) return String(scope).toLowerCase();
   let phase = (p.phase || 'initial').toLowerCase();
-  let algorithm = (p.algorithm || 'dp').toLowerCase();
   if (phase === 'gap_repair') return 'gap_repair_subcorridor';
-  if (algorithm === 'greedy') return 'greedy_step_candidates';
   if (phase === 'fallback_initial') return 'fallback_corridor';
   return 'initial_corridor';
 }
@@ -1263,41 +1248,6 @@ function _growthColor(value, minValue, maxValue) {
   t = Math.max(0, Math.min(1, t));
   let idx = Math.round(t * (palette.length - 1));
   return palette[idx];
-}
-
-function _cloneFeatureWithAlgorithm(feature, algorithm) {
-  let clonedProps = Object.assign({}, (feature || {}).properties || {});
-  if (!clonedProps.algorithm && algorithm) clonedProps.algorithm = algorithm;
-  return {
-    type: 'Feature',
-    geometry: (feature || {}).geometry,
-    properties: clonedProps,
-  };
-}
-
-function _mergeFeatureCollectionsWithAlgorithm(fcList) {
-  let features = [];
-  (fcList || []).forEach(function(entry) {
-    let fc = entry && entry.fc;
-    let algorithm = entry && entry.algorithm;
-    if (!fc || !Array.isArray(fc.features)) return;
-    fc.features.forEach(function(feature) {
-      features.push(_cloneFeatureWithAlgorithm(feature, algorithm));
-    });
-  });
-  if (!features.length) return null;
-  return {type: 'FeatureCollection', features: features};
-}
-
-function _activeAlgoFeatureCollection(cacheByAlgo) {
-  if (!_optDualResult) return cacheByAlgo.dp || null;
-  if (_activeAlgo === 'dp') return cacheByAlgo.dp || null;
-  if (_activeAlgo === 'greedy') return cacheByAlgo.greedy || cacheByAlgo.dp || null;
-  if (!cacheByAlgo.greedy) return cacheByAlgo.dp || null;
-  return _mergeFeatureCollectionsWithAlgorithm([
-    {fc: cacheByAlgo.dp, algorithm: 'dp'},
-    {fc: cacheByAlgo.greedy, algorithm: 'greedy'},
-  ]);
 }
 
 function _gridColorByResolution(resolution, isFullGrid) {
@@ -1379,7 +1329,7 @@ function rerenderGridLayersForActiveAlgo() {
   layerGroups.gridCells.clearLayers();
   layerGroups.gridCellsFull.clearLayers();
 
-  let roadGrid = _activeAlgoFeatureCollection(_cachedGridCellsByAlgo);
+  let roadGrid = _cachedGridCells;
   if (roadGrid) {
     L.geoJSON(roadGrid, {
       style: function(feature) {
@@ -1413,7 +1363,7 @@ function rerenderGridLayersForActiveAlgo() {
     if (chkRoad && chkRoad.checked) layerGroups.gridCells.addTo(map);
   }
 
-  let fullGrid = _activeAlgoFeatureCollection(_cachedGridCellsFullByAlgo);
+  let fullGrid = _cachedGridCellsFull;
   if (fullGrid) {
     L.geoJSON(fullGrid, {
       style: function(feature) {
@@ -1488,10 +1438,6 @@ function applyGapRepairPreset() {
     algoEl.value = 'dp';
     phaseEl.value = 'gap_repair';
     scopeEl.value = 'gap_repair_subcorridor';
-  } else if (preset.value === 'greedy_initial') {
-    algoEl.value = 'greedy';
-    phaseEl.value = 'initial';
-    scopeEl.value = 'greedy_step_candidates';
   } else {
     // custom: keep current filters
   }
@@ -1621,10 +1567,8 @@ function renderLayers(layers) {
       if (siteIdx >= 0) siteCityLayers[siteIdx] = layer;
     });
   }
-  _cachedGridCellsByAlgo.dp = layers.grid_cells || null;
-  _cachedGridCellsFullByAlgo.dp = layers.grid_cells_full || null;
-  _cachedGridCellsByAlgo.greedy = null;
-  _cachedGridCellsFullByAlgo.greedy = null;
+  _cachedGridCells = layers.grid_cells || null;
+  _cachedGridCellsFull = layers.grid_cells_full || null;
   rerenderGridLayersForActiveAlgo();
   // Gap repair search hexagons
   layerGroups.gapRepairHexes.clearLayers();
@@ -1743,8 +1687,8 @@ function _renderEdgeLayer(edgesGeojson, styleOverrides) {
 function rerenderEdges() {
   let chk = document.getElementById('chk-edges');
   if (chk && !chk.checked) return;
-  if (_optDualResult) {
-    _applyAlgoToggle(_activeAlgo);
+  if (_optResult) {
+    _renderOptimizationLayers();
     return;
   }
   layerGroups.edges.clearLayers();
@@ -1753,8 +1697,8 @@ function rerenderEdges() {
 
 function toggleEdges() {
   let chk = document.getElementById('chk-edges');
-  if (_optDualResult) {
-    _applyAlgoToggle(_activeAlgo);
+  if (_optResult) {
+    _renderOptimizationLayers();
     return;
   }
   if (chk.checked) {
@@ -1867,7 +1811,7 @@ function toggleCoverage() {
 }
 
 function _hasTowerCoverageSources() {
-  if (_optDualResult) {
+  if (_optResult) {
     return _visibleTowerCoverageSources().length > 0;
   }
   return !!(_cachedTowersGeojson && (_cachedTowersGeojson.features || []).length);
@@ -2036,23 +1980,8 @@ function _collectCoverageSourcesFromTowerGeojson(geojson) {
 }
 
 function _visibleTowerCoverageSources() {
-  if (_optDualResult) {
-    let all = [];
-    if (_activeAlgo === 'dp' || _activeAlgo === 'both') {
-      all = all.concat(_collectCoverageSourcesFromTowerGeojson((_optDualResult.dp || {}).towers));
-    }
-    if (_activeAlgo === 'greedy' || _activeAlgo === 'both') {
-      all = all.concat(_collectCoverageSourcesFromTowerGeojson((_optDualResult.greedy || {}).towers));
-    }
-    let dedup = [];
-    let seen = new Set();
-    all.forEach(function(src) {
-      let key = src.h3_index || (src.lat.toFixed(6) + ',' + src.lon.toFixed(6));
-      if (seen.has(key)) return;
-      seen.add(key);
-      dedup.push(src);
-    });
-    return dedup;
+  if (_optResult) {
+    return _collectCoverageSourcesFromTowerGeojson((_optResult || {}).towers);
   }
   return _collectCoverageSourcesFromTowerGeojson(_cachedTowersGeojson);
 }
@@ -2531,8 +2460,8 @@ function doClearCalculations() {
     document.getElementById('tower-coverage-metric-row').style.display = 'none';
     layerGroups.gapRepairHexes.clearLayers();
     _cachedGapRepairGeojson = null;
-    _cachedGridCellsByAlgo = {dp: null, greedy: null};
-    _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
+    _cachedGridCells = null;
+    _cachedGridCellsFull = null;
     layerGroups.gridCells.clearLayers();
     layerGroups.gridCellsFull.clearLayers();
     let gapRow = document.getElementById('gap-repair-filter-row');
@@ -2540,10 +2469,7 @@ function doClearCalculations() {
     let gapLegend = document.getElementById('gap-repair-color-legend');
     if (gapLegend) gapLegend.style.display = 'none';
     dpLayerGroup.clearLayers();
-    greedyLayerGroup.clearLayers();
-    _optDualResult = null;
-    let toggleEl2 = document.getElementById('algo-toggle');
-    if (toggleEl2) toggleEl2.style.display = 'none';
+    _optResult = null;
     document.getElementById('tower-legend').style.display = 'none';
     document.getElementById('report-panel').style.display = 'none';
     let optProg = document.getElementById('opt-progress-panel');
@@ -2564,13 +2490,11 @@ function doClearCalculations() {
   });
 }
 
-/** Render towers from a single algorithm's data into targetLayerGroup.
- * algo: 'dp' | 'greedy' — controls visual style
- */
-function _renderAlgorithmTowers(algoData, targetLayerGroup, algo) {
-  if (!algoData || !algoData.towers) return {};
+/** Render towers from optimization result into targetLayerGroup. */
+function _renderAlgorithmTowers(resultData, targetLayerGroup) {
+  if (!resultData || !resultData.towers) return {};
   let sourceCounts = {};
-  L.geoJSON(algoData.towers, {
+  L.geoJSON(resultData.towers, {
     pointToLayer: function(feature, latlng) {
       let src = feature.properties.route_id || feature.properties.source || 'route';
       sourceCounts[src] = (sourceCounts[src] || 0) + 1;
@@ -2579,19 +2503,16 @@ function _renderAlgorithmTowers(algoData, targetLayerGroup, algo) {
       let borderColor = alg === 'dp_repair' ? '#e6a000'
                       : alg === 'endpoint_fallback' || alg === 'peak_fallback' ? '#dd2222'
                       : '#000';
-      // Greedy: hollow circles with thicker border; DP: filled (standard style)
-      let isGreedy = (algo === 'greedy');
       let marker = L.circleMarker(latlng, {
         radius: 7,
-        color: isGreedy ? '#e67e22' : borderColor,
-        weight: isGreedy ? 3 : (alg === 'dp' || alg === 'site' ? 1.5 : 3),
+        color: borderColor,
+        weight: (alg === 'dp' || alg === 'site' ? 1.5 : 3),
         fillColor: color,
-        fillOpacity: isGreedy ? 0 : 0.9,
+        fillOpacity: 0.9,
       });
       let cityLink = feature.properties.city_link ? ' \ud83c\udfd9 City link' : '';
-      let algoLabel = isGreedy ? ' [Greedy]' : ' [DP]';
       marker.bindTooltip(
-        '<b>Tower ' + (feature.properties.tower_id || '') + '</b>' + algoLabel + '<br>' +
+        '<b>Tower ' + (feature.properties.tower_id || '') + '</b> [DP]<br>' +
         'Route: ' + src + cityLink + '<br>' +
         'H3: ' + (feature.properties.h3_index || '').substring(0, 12) + '\u2026' +
         _algorithmBadge(alg, feature.properties.dp_steps, feature.properties.repair_round),
@@ -2607,37 +2528,19 @@ function _renderAlgorithmTowers(algoData, targetLayerGroup, algo) {
   return sourceCounts;
 }
 
-/** Render visibility edges from a single algorithm's data into targetLayerGroup.
- * algo: 'dp' | 'greedy' — greedy uses dashed lines
- */
-function _renderAlgorithmEdges(algoData, targetLayerGroup, algo) {
-  if (!algoData || !algoData.edges) return;
-  let isGreedy = (algo === 'greedy');
+/** Render visibility edges from optimization result into targetLayerGroup. */
+function _renderAlgorithmEdges(resultData, targetLayerGroup) {
+  if (!resultData || !resultData.edges) return;
   // Use a temporary swap of layerGroups.edges so _renderEdgeLayer targets targetLayerGroup
   let saved = layerGroups.edges;
   layerGroups.edges = targetLayerGroup;
-  if (isGreedy) {
-    // Render greedy edges with dashed style by injecting dash override
-    _renderEdgeLayerStyled(algoData.edges, {dashArray: '6 4'});
-  } else {
-    _renderEdgeLayer(algoData.edges);
-  }
+  _renderEdgeLayer(resultData.edges);
   layerGroups.edges = saved;
 }
 
 function _edgesEnabled() {
   let chk = document.getElementById('chk-edges');
   return !chk || chk.checked;
-}
-
-function _mergeGapRepairCollections(parts) {
-  let features = [];
-  (parts || []).forEach(function(fc) {
-    if (!fc || !fc.features) return;
-    features = features.concat(fc.features);
-  });
-  if (!features.length) return null;
-  return {type: 'FeatureCollection', features: features};
 }
 
 function _formatAlgoH3Status(label, summary) {
@@ -2665,43 +2568,14 @@ function _formatAlgoH3Status(label, summary) {
   );
 }
 
-/** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
-function _applyAlgoToggle(mode) {
-  _activeAlgo = mode;
+/** Render optimization layers from the single DP result. */
+function _renderOptimizationLayers() {
   dpLayerGroup.clearLayers();
-  greedyLayerGroup.clearLayers();
+  if (!_optResult) return;
 
-  if (!_optDualResult) return;
-
-  let allSourceCounts = {};
-  if (mode === 'dp' || mode === 'both') {
-    let sc = _renderAlgorithmTowers(_optDualResult.dp, dpLayerGroup, 'dp');
-    Object.assign(allSourceCounts, sc);
-    if (_edgesEnabled()) _renderAlgorithmEdges(_optDualResult.dp, dpLayerGroup, 'dp');
-  }
-  if (mode === 'greedy' || mode === 'both') {
-    let sc = _renderAlgorithmTowers(_optDualResult.greedy, greedyLayerGroup, 'greedy');
-    if (mode === 'greedy') Object.assign(allSourceCounts, sc);
-    if (_edgesEnabled()) _renderAlgorithmEdges(_optDualResult.greedy, greedyLayerGroup, 'greedy');
-  }
-
-  // Show/hide greedy layer
-  if (mode === 'greedy' || mode === 'both') {
-    greedyLayerGroup.addTo(map);
-  } else {
-    map.removeLayer(greedyLayerGroup);
-  }
-
-  if (mode === 'dp') {
-    _cachedGapRepairGeojson = (_optDualResult.dp || {}).gap_repair_hexes || null;
-  } else if (mode === 'greedy') {
-    _cachedGapRepairGeojson = (_optDualResult.greedy || {}).gap_repair_hexes || null;
-  } else {
-    _cachedGapRepairGeojson = _mergeGapRepairCollections([
-      (_optDualResult.dp || {}).gap_repair_hexes,
-      (_optDualResult.greedy || {}).gap_repair_hexes,
-    ]);
-  }
+  let allSourceCounts = _renderAlgorithmTowers(_optResult, dpLayerGroup);
+  if (_edgesEnabled()) _renderAlgorithmEdges(_optResult, dpLayerGroup);
+  _cachedGapRepairGeojson = (_optResult || {}).gap_repair_hexes || null;
   rerenderGapRepairHexes();
   rerenderGridLayersForActiveAlgo();
 
@@ -2710,35 +2584,27 @@ function _applyAlgoToggle(mode) {
 }
 
 function _renderOptimizationResult(res) {
-  // res is { dp: {...}, greedy: {...} }
-  _optDualResult = res;
-
-  let dpData = res.dp || {};
-  let greedyData = res.greedy || {};
+  _optResult = res || {};
+  let dpData = _optResult;
   let dpSummary = dpData.summary || {};
-  let greedySummary = greedyData.summary || {};
 
   let status = (
     'Optimization complete — DP: ' + (dpSummary.total_towers || 0) + ' towers / ' +
-    (dpSummary.visibility_edges || 0) + ' links' +
-    '  |  Greedy: ' + (greedySummary.total_towers || 0) + ' towers / ' +
-    (greedySummary.visibility_edges || 0) + ' links'
+    (dpSummary.visibility_edges || 0) + ' links'
   );
   if (_lowMastWarningActive) {
     status += '  |  Warning: mast height < ' + _LOW_MAST_WARN_THRESHOLD_M +
       ' m can cause NLOS/disconnected results; increase mast or towers/route.';
   }
   let strictLos = document.getElementById('set-los-policy').value !== 'budget';
-  if (strictLos && ((dpSummary.num_clusters || 1) > 1 || (greedySummary.num_clusters || 1) > 1)) {
+  if (strictLos && (dpSummary.num_clusters || 1) > 1) {
     status += '  |  Strict LOS produced disconnected clusters. Increase mast height or towers/route.';
   }
   let dpH3Status = _formatAlgoH3Status('DP', dpSummary);
-  let greedyH3Status = _formatAlgoH3Status('Greedy', greedySummary);
   if (dpH3Status) status += '  |  ' + dpH3Status;
-  if (greedyH3Status) status += '  |  ' + greedyH3Status;
   setStatus(status);
 
-  // Clear legacy tower/edge layers (they are now managed by dp/greedyLayerGroup)
+  // Clear legacy tower/edge layers (they are now managed by dpLayerGroup)
   layerGroups.towers.clearLayers();
   layerGroups.edges.clearLayers();
 
@@ -2747,10 +2613,8 @@ function _renderOptimizationResult(res) {
 
   // Coverage/grid from DP result
   if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
-  _cachedGridCellsByAlgo.dp = dpData.grid_cells || null;
-  _cachedGridCellsByAlgo.greedy = greedyData.grid_cells || null;
-  _cachedGridCellsFullByAlgo.dp = dpData.grid_cells_full || null;
-  _cachedGridCellsFullByAlgo.greedy = greedyData.grid_cells_full || null;
+  _cachedGridCells = dpData.grid_cells || null;
+  _cachedGridCellsFull = dpData.grid_cells_full || null;
   towerCoverageData = null;
   towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
@@ -2763,16 +2627,7 @@ function _renderOptimizationResult(res) {
   _cachedGapRepairGeojson = dpData.gap_repair_hexes || null;
   if (_cachedGapRepairGeojson) rerenderGapRepairHexes();
 
-  // Show algo toggle and reset to DP
-  let toggle = document.getElementById('algo-toggle');
-  if (toggle) {
-    toggle.style.display = 'inline-flex';
-    let radios = document.querySelectorAll('input[name="algo"]');
-    radios.forEach(r => { r.checked = (r.value === 'dp'); });
-  }
-
-  // Render initial view (DP only)
-  _applyAlgoToggle('dp');
+  _renderOptimizationLayers();
   _autoCoverageModeFromCurrentState(true);
   document.getElementById('chk-edges').checked = true;
 
@@ -2815,14 +2670,11 @@ function doRunOptimization() {
   document.getElementById('chk-tower-coverage').checked = false;
   document.getElementById('tower-coverage-metric-row').style.display = 'none';
   dpLayerGroup.clearLayers();
-  greedyLayerGroup.clearLayers();
-  _optDualResult = null;
-  _cachedGridCellsByAlgo = {dp: null, greedy: null};
-  _cachedGridCellsFullByAlgo = {dp: null, greedy: null};
+  _optResult = null;
+  _cachedGridCells = null;
+  _cachedGridCellsFull = null;
   document.getElementById('tower-legend').style.display = 'none';
   document.getElementById('report-panel').style.display = 'none';
-  let toggleEl = document.getElementById('algo-toggle');
-  if (toggleEl) toggleEl.style.display = 'none';
   hasCoverage = false; coverageFetched = false;
   towerCoverageData = null; towerCoverageFetched = false;
   _selectedTowerCoverageSource = null;
@@ -3639,13 +3491,6 @@ document.addEventListener('click', function(e) {
   if (!e.target.closest('#history-dropdown') && !e.target.closest('#btn-history')) {
     dd.style.display = 'none';
   }
-});
-
-// Algorithm toggle (DP / Greedy / Both) — shown after optimization completes
-document.querySelectorAll('input[name="algo"]').forEach(function(r) {
-  r.addEventListener('change', function(e) {
-    _applyAlgoToggle(e.target.value);
-  });
 });
 
 let _towerCoverageResInput = document.getElementById('tower-coverage-h3-resolution');
