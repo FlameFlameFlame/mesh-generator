@@ -2193,6 +2193,57 @@ def pick_file():
         cmd.extend(["-e", script])
         return subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
+    def _pick_with_swift_open_panel() -> str:
+        # Native macOS fallback that does not rely on AppleScript/JXA.
+        # Uses NSOpenPanel through Swift + AppKit.
+        import tempfile
+        from pathlib import Path
+
+        swift_code = r'''
+import AppKit
+
+let panel = NSOpenPanel()
+panel.canChooseFiles = false
+panel.canChooseDirectories = true
+panel.allowsMultipleSelection = false
+panel.canCreateDirectories = false
+panel.title = "Select project directory (must contain config.yaml)"
+panel.prompt = "Open"
+let response = panel.runModal()
+if response == .OK, let url = panel.url {
+    print(url.path)
+    exit(0)
+}
+fputs("User canceled.\n", stderr)
+exit(1)
+'''
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            suffix=".swift",
+            prefix="mesh_open_panel_",
+            delete=False,
+        ) as f:
+            f.write(swift_code)
+            script_path = f.name
+        try:
+            result = subprocess.run(
+                ["/usr/bin/swift", script_path],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode == 0:
+                return (result.stdout or "").strip()
+            stderr = (result.stderr or "").strip()
+            if _is_user_cancel_message(stderr):
+                return ""
+            raise RuntimeError(stderr or "Swift NSOpenPanel failed")
+        finally:
+            try:
+                Path(script_path).unlink(missing_ok=True)
+            except Exception:
+                logger.debug("Could not remove temporary Swift picker script", exc_info=True)
+
     try:
         if platform.system() == "Darwin":
             errors = []
@@ -2262,6 +2313,13 @@ $.exit(1);
             logger.warning("macOS JXA picker failed: rc=%s stderr=%s", result_jxa.returncode, stderr_jxa)
             if stderr_jxa:
                 errors.append(f"jxa: {stderr_jxa}")
+
+            # Last resort fallback (requires Tk support in Python build).
+            try:
+                swift_path = _pick_with_swift_open_panel()
+                return jsonify({"path": swift_path})
+            except Exception:
+                logger.warning("Swift NSOpenPanel fallback failed on macOS", exc_info=True)
 
             # Last resort fallback (requires Tk support in Python build).
             try:
