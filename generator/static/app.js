@@ -1264,25 +1264,31 @@ function _gridColorByResolution(resolution, isFullGrid) {
 
 function _resolutionStats(fc) {
   if (!fc || !Array.isArray(fc.features) || !fc.features.length) return null;
-  let h3Vals = [];
-  let effVals = [];
+  let h3Min = null;
+  let h3Max = null;
+  let effMin = null;
+  let effMax = null;
+  let hasH3 = false;
+  let hasEff = false;
   let countsByRes = {};
   fc.features.forEach(function(f) {
     let p = (f || {}).properties || {};
     let h3r = Number(p.h3_resolution);
     let eff = Number(p.effective_h3_resolution);
     if (Number.isFinite(h3r)) {
-      h3Vals.push(h3r);
+      hasH3 = true;
+      if (h3Min === null || h3r < h3Min) h3Min = h3r;
+      if (h3Max === null || h3r > h3Max) h3Max = h3r;
       let key = String(Math.round(h3r));
       countsByRes[key] = (countsByRes[key] || 0) + 1;
     }
-    if (Number.isFinite(eff)) effVals.push(eff);
+    if (Number.isFinite(eff)) {
+      hasEff = true;
+      if (effMin === null || eff < effMin) effMin = eff;
+      if (effMax === null || eff > effMax) effMax = eff;
+    }
   });
-  if (!h3Vals.length && !effVals.length) return null;
-  let h3Min = h3Vals.length ? Math.min.apply(null, h3Vals) : null;
-  let h3Max = h3Vals.length ? Math.max.apply(null, h3Vals) : null;
-  let effMin = effVals.length ? Math.min.apply(null, effVals) : null;
-  let effMax = effVals.length ? Math.max.apply(null, effVals) : null;
+  if (!hasH3 && !hasEff) return null;
   return {h3Min: h3Min, h3Max: h3Max, effMin: effMin, effMax: effMax, countsByRes: countsByRes};
 }
 
