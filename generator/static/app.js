@@ -1316,11 +1316,16 @@ function _resolutionStats(fc) {
   if (!fc || !Array.isArray(fc.features) || !fc.features.length) return null;
   let h3Vals = [];
   let effVals = [];
+  let countsByRes = {};
   fc.features.forEach(function(f) {
     let p = (f || {}).properties || {};
     let h3r = Number(p.h3_resolution);
     let eff = Number(p.effective_h3_resolution);
-    if (Number.isFinite(h3r)) h3Vals.push(h3r);
+    if (Number.isFinite(h3r)) {
+      h3Vals.push(h3r);
+      let key = String(Math.round(h3r));
+      countsByRes[key] = (countsByRes[key] || 0) + 1;
+    }
     if (Number.isFinite(eff)) effVals.push(eff);
   });
   if (!h3Vals.length && !effVals.length) return null;
@@ -1328,7 +1333,15 @@ function _resolutionStats(fc) {
   let h3Max = h3Vals.length ? Math.max.apply(null, h3Vals) : null;
   let effMin = effVals.length ? Math.min.apply(null, effVals) : null;
   let effMax = effVals.length ? Math.max.apply(null, effVals) : null;
-  return {h3Min: h3Min, h3Max: h3Max, effMin: effMin, effMax: effMax};
+  return {h3Min: h3Min, h3Max: h3Max, effMin: effMin, effMax: effMax, countsByRes: countsByRes};
+}
+
+function _countsByResolutionText(countsByRes) {
+  if (!countsByRes) return '';
+  let keys = Object.keys(countsByRes).map(function(k) { return Number(k); }).filter(function(v) { return Number.isFinite(v); });
+  if (!keys.length) return '';
+  keys.sort(function(a, b) { return a - b; });
+  return keys.map(function(k) { return k + ':' + countsByRes[String(k)]; }).join(', ');
 }
 
 function _renderGridResolutionInfo(roadGrid, fullGrid) {
@@ -1343,15 +1356,19 @@ function _renderGridResolutionInfo(roadGrid, fullGrid) {
   }
   let parts = [];
   if (roadStats) {
+    let countsTxt = _countsByResolutionText(roadStats.countsByRes);
     parts.push(
       'Road grid H3 ' + roadStats.h3Min + '–' + roadStats.h3Max +
-      (roadStats.effMin != null ? (' (effective ' + roadStats.effMin + '–' + roadStats.effMax + ')') : '')
+      (roadStats.effMin != null ? (' (effective ' + roadStats.effMin + '–' + roadStats.effMax + ')') : '') +
+      (countsTxt ? (' [' + countsTxt + ']') : '')
     );
   }
   if (fullStats) {
+    let countsTxt = _countsByResolutionText(fullStats.countsByRes);
     parts.push(
       'Full grid H3 ' + fullStats.h3Min + '–' + fullStats.h3Max +
-      (fullStats.effMin != null ? (' (effective ' + fullStats.effMin + '–' + fullStats.effMax + ')') : '')
+      (fullStats.effMin != null ? (' (effective ' + fullStats.effMin + '–' + fullStats.effMax + ')') : '') +
+      (countsTxt ? (' [' + countsTxt + ']') : '')
     );
   }
   el.textContent = parts.join(' | ');
@@ -1377,9 +1394,16 @@ function rerenderGridLayersForActiveAlgo() {
         let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
         let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
         let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
+        let baseRes = (p.base_h3_resolution != null) ? p.base_h3_resolution : h3Res;
+        let targetRes = (p.target_h3_resolution != null) ? p.target_h3_resolution : h3Res;
+        let gradText = Number.isFinite(Number(p.gradient_m_per_km)) ? Number(p.gradient_m_per_km).toFixed(1) : '0.0';
+        let refined = !!p.adaptive_refined;
         layer.bindTooltip(
           'Elev: ' + elevText + ' m' +
           '<br>H3: ' + h3Res + ' (effective ' + effRes + ')' +
+          '<br>Base/Target: ' + baseRes + '→' + targetRes +
+          '<br>Gradient: ' + gradText + ' m/km' +
+          '<br>Adaptive refined: ' + (refined ? 'yes' : 'no') +
           (p.is_in_unfit_area ? '<br><i>unfit (city interior)</i>' : ''),
           {sticky: true}
         );
@@ -1404,9 +1428,16 @@ function rerenderGridLayersForActiveAlgo() {
         let elevText = Number.isFinite(Number(p.elevation)) ? Number(p.elevation).toFixed(0) : '?';
         let h3Res = (p.h3_resolution != null) ? p.h3_resolution : 'N/A';
         let effRes = (p.effective_h3_resolution != null) ? p.effective_h3_resolution : h3Res;
+        let baseRes = (p.base_h3_resolution != null) ? p.base_h3_resolution : h3Res;
+        let targetRes = (p.target_h3_resolution != null) ? p.target_h3_resolution : h3Res;
+        let gradText = Number.isFinite(Number(p.gradient_m_per_km)) ? Number(p.gradient_m_per_km).toFixed(1) : '0.0';
+        let refined = !!p.adaptive_refined;
         layer.bindTooltip(
           'Elev(max): ' + elevText + ' m' +
-          '<br>H3: ' + h3Res + ' (effective ' + effRes + ')',
+          '<br>H3: ' + h3Res + ' (effective ' + effRes + ')' +
+          '<br>Base/Target: ' + baseRes + '→' + targetRes +
+          '<br>Gradient: ' + gradText + ' m/km' +
+          '<br>Adaptive refined: ' + (refined ? 'yes' : 'no'),
           {sticky: true}
         );
       }
@@ -2056,7 +2087,11 @@ function _runTowerCoverageRequest(url, payload, successPrefix) {
     _syncCoverageFeatureUI();
     let n = (towerCoverageData.features || []).length;
     let resTxt = data.coverage_h3_resolution != null ? (' @ H3 ' + data.coverage_h3_resolution) : '';
-    setStatus((successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' + resTxt);
+    let mixTxt = _countsByResolutionText(data.cells_by_resolution || {});
+    setStatus(
+      (successPrefix || 'Tower coverage calculated') + ': ' + n + ' cells' +
+      resTxt + (mixTxt ? (' [' + mixTxt + ']') : '')
+    );
   }).catch(function(err) {
     setStatus('Tower coverage failed');
   });
@@ -2607,14 +2642,27 @@ function _mergeGapRepairCollections(parts) {
 
 function _formatAlgoH3Status(label, summary) {
   summary = summary || {};
-  let effective = Number(summary.effective_h3_resolution);
-  if (!Number.isFinite(effective)) return null;
-  let base = Number(_lastRunBaseH3Resolution);
-  let reason = summary.h3_auto_refine_reason || '';
-  if (Number.isFinite(base) && base !== effective) {
-    return label + ' H3: ' + base + '→' + effective + (reason ? ' (' + reason + ')' : '');
+  let base = Number(summary.base_h3_resolution);
+  if (!Number.isFinite(base)) base = Number(_lastRunBaseH3Resolution);
+  let minEff = Number(summary.effective_h3_resolution_min);
+  let maxEff = Number(summary.effective_h3_resolution_max);
+  if (!Number.isFinite(minEff) || !Number.isFinite(maxEff)) {
+    let effective = Number(summary.effective_h3_resolution);
+    if (!Number.isFinite(effective)) return null;
+    minEff = effective;
+    maxEff = effective;
   }
-  return label + ' H3: ' + effective + (reason ? ' (' + reason + ')' : '');
+  let reason = summary.h3_auto_refine_reason || '';
+  let countsTxt = _countsByResolutionText(summary.cells_by_resolution || {});
+  let mode = summary.h3_resolution_mode || '';
+  let rangeTxt = (minEff === maxEff) ? String(maxEff) : (minEff + '–' + maxEff);
+  let prefix = Number.isFinite(base) ? (base + '→' + rangeTxt) : rangeTxt;
+  return (
+    label + ' H3: ' + prefix +
+    (countsTxt ? (' [' + countsTxt + ']') : '') +
+    (mode ? (' {' + mode + '}') : '') +
+    (reason ? (' (' + reason + ')') : '')
+  );
 }
 
 /** Apply the active algorithm toggle: clear and re-render dp/greedy/both layers. */
