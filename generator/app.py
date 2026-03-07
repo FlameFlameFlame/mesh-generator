@@ -376,7 +376,7 @@ def _coverage_results_to_geojson(results: list[dict]) -> dict:
     return {"type": "FeatureCollection", "features": features}
 
 
-def _parse_coverage_sources(payload: list, mesh_config) -> list:
+def _parse_coverage_sources(payload: list, mesh_config, grid_provider=None) -> list:
     from mesh_calculator.network.tower_coverage import CoverageSource
 
     sources = []
@@ -389,15 +389,34 @@ def _parse_coverage_sources(payload: list, mesh_config) -> list:
         lat = raw.get("lat")
         lon = raw.get("lon")
 
-        # If lat/lon is provided, always snap to requested coverage resolution.
-        # This keeps coverage resolution independent from optimization H3.
+        # If lat/lon is provided, snap using adaptive provider when available.
         if lat is not None and lon is not None:
             lat = float(lat)
             lon = float(lon)
-            h3_index = h3.latlng_to_cell(lat, lon, mesh_config.h3_resolution)
+            if grid_provider is not None and callable(
+                getattr(type(grid_provider), "locate_adaptive_cell", None)
+            ):
+                h3_index = grid_provider.locate_adaptive_cell(
+                    lat,
+                    lon,
+                    mesh_config.h3_resolution,
+                    mesh_config,
+                )
+            else:
+                h3_index = h3.latlng_to_cell(lat, lon, mesh_config.h3_resolution)
         else:
             if h3_index is None:
                 raise ValueError("Each source requires h3_index or lat/lon")
+            if grid_provider is not None and callable(
+                getattr(type(grid_provider), "locate_adaptive_cell", None)
+            ):
+                lat0, lon0 = h3.cell_to_latlng(h3_index)
+                h3_index = grid_provider.locate_adaptive_cell(
+                    float(lat0),
+                    float(lon0),
+                    mesh_config.h3_resolution,
+                    mesh_config,
+                )
             lat, lon = h3.cell_to_latlng(h3_index)
 
         if source_id is None:
@@ -444,7 +463,7 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         mesh_config.h3_resolution = coverage_h3_resolution
 
     try:
-        sources = _parse_coverage_sources(sources_payload, mesh_config)
+        sources = _parse_coverage_sources(sources_payload, mesh_config, grid_provider=_grid_provider)
     except ValueError as exc:
         return jsonify({"error": str(exc)}), 400
 
@@ -471,6 +490,16 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         if (f.get("properties") or {}).get("is_covered")
     )
     total_count = len(geojson.get("features", []))
+    by_res = {}
+    for f in geojson.get("features", []):
+        idx = ((f.get("properties") or {}).get("h3_index"))
+        if not idx:
+            continue
+        try:
+            res = int(h3.get_resolution(idx))
+        except Exception:
+            continue
+        by_res[res] = by_res.get(res, 0) + 1
     return jsonify({
         "coverage": geojson,
         "source_count": len(sources),
@@ -478,6 +507,7 @@ def _run_runtime_tower_coverage(sources_payload: list, body: dict):
         "radius_cell_count": total_count,
         "covered_count": covered_count,
         "uncovered_count": max(total_count - covered_count, 0),
+        "cells_by_resolution": dict(sorted(by_res.items())),
         "h3_resolution": mesh_config.h3_resolution,
         "coverage_h3_resolution": mesh_config.h3_resolution,
         "max_radius_m": max_radius_m if max_radius_m is not None else mesh_config.max_coverage_radius_m,
