@@ -189,6 +189,13 @@ function _resetOptimizationProgressUI() {
 function _formatOptimizationProgressLabel(progress) {
   let stage = String(progress.stage || '').toLowerCase();
   let step = progress.step || '';
+  let chunksCompleted = Number(progress.chunks_completed);
+  let chunksTotal = Number(progress.chunks_total);
+  let hasChunkProgress = Number.isFinite(chunksCompleted) && Number.isFinite(chunksTotal) && chunksTotal > 0;
+  let chunkText = hasChunkProgress ? ('chunks ' + Math.max(0, Math.trunc(chunksCompleted)) + '/' + Math.max(0, Math.trunc(chunksTotal))) : '';
+  if (chunkText && step.indexOf('chunks ') === -1) {
+    step = step ? (step + ' • ' + chunkText) : chunkText;
+  }
   if (stage === 'route') {
     let idx = progress.route_index || 0;
     let total = progress.route_total || 0;
