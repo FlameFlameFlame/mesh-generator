@@ -294,6 +294,33 @@ class TestPickFile:
         assert data.get("path") == ""
         assert "error" not in data
 
+    def test_pick_file_uses_jxa_fallback_on_macos(self, monkeypatch):
+        import subprocess
+
+        class _Res:
+            def __init__(self, returncode, stdout="", stderr=""):
+                self.returncode = returncode
+                self.stdout = stdout
+                self.stderr = stderr
+
+        calls = {"n": 0}
+
+        def _fake_run(*args, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return _Res(1, "", "Not authorized to send Apple events.")
+            return _Res(0, "/tmp/my_project\n", "")
+
+        monkeypatch.setattr("platform.system", lambda: "Darwin")
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        with app.test_client() as client:
+            resp = client.post("/api/pick-file")
+            data = resp.get_json()
+
+        assert resp.status_code == 200
+        assert data.get("path") == "/tmp/my_project"
+
 
 class TestClearResetsState:
     def test_clear_resets_coverage(self, tmp_path):

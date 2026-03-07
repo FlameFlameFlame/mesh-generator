@@ -2008,7 +2008,7 @@ def load_project():
 
     # Resolve grid bundle path from config inputs first
     configured_grid_bundle = resolve(inputs.get("grid_bundle"))
-    if configured_grid_bundle and os.path.isfile(configured_grid_bundle):
+    if _elevation_path and configured_grid_bundle and os.path.isfile(configured_grid_bundle):
         try:
             _hydrate_grid_provider(configured_grid_bundle, elevation_path=_elevation_path)
             logger.info("Loaded grid bundle from config: %s", configured_grid_bundle)
@@ -2169,6 +2169,9 @@ def pick_file():
     import platform
     import subprocess
 
+    def _is_user_cancel_message(msg: str) -> bool:
+        return "User canceled" in msg or "(-128)" in msg
+
     def _pick_with_tk() -> str:
         import tkinter as tk
         from tkinter import filedialog
@@ -2185,33 +2188,70 @@ def pick_file():
 
     try:
         if platform.system() == "Darwin":
-            # macOS: use AppleScript choose folder.
-            # Do NOT use "tell application X to activate" — that brings focus to
-            # the calling process (Python) which crashes Flask on some macOS versions.
-            script = (
+            # macOS primary path: AppleScript choose folder.
+            script_applescript = (
                 'set f to POSIX path of '
                 '(choose folder with prompt "Select project directory (must contain config.yaml)")'
             )
-            result = subprocess.run(
-                ["/usr/bin/osascript", "-e", script],
+            result_applescript = subprocess.run(
+                ["/usr/bin/osascript", "-e", script_applescript],
                 capture_output=True, text=True, timeout=60,
             )
-            if result.returncode == 0:
-                return jsonify({"path": result.stdout.strip()})
-            stderr = (result.stderr or "").strip()
-            # User cancelled (osascript exits 1 with "User canceled" / -128)
-            if "User canceled" in stderr or "(-128)" in stderr:
+            if result_applescript.returncode == 0:
+                return jsonify({"path": result_applescript.stdout.strip()})
+            stderr_applescript = (result_applescript.stderr or "").strip()
+            if _is_user_cancel_message(stderr_applescript):
                 return jsonify({"path": ""})
-            logger.warning("macOS file picker failed: rc=%s stderr=%s", result.returncode, stderr)
-            # Secondary native fallback for macOS environments where osascript
-            # permissions are blocked but Tk dialogs are available.
+
+            # macOS secondary native path: JXA + NSOpenPanel.
+            # This works in some environments where AppleScript choose folder fails.
+            logger.warning(
+                "macOS AppleScript picker failed: rc=%s stderr=%s",
+                result_applescript.returncode,
+                stderr_applescript,
+            )
+            script_jxa = r'''
+ObjC.import('AppKit');
+const panel = $.NSOpenPanel.openPanel;
+panel.setCanChooseFiles(false);
+panel.setCanChooseDirectories(true);
+panel.setAllowsMultipleSelection(false);
+panel.setCanCreateDirectories(false);
+panel.setTitle('Select project directory (must contain config.yaml)');
+panel.setPrompt('Open');
+const result = panel.runModal();
+if (result == $.NSModalResponseOK) {
+  $.puts(ObjC.unwrap(panel.URL.path));
+  $.exit(0);
+}
+$.stderr.write('User canceled.');
+$.exit(1);
+'''
+            result_jxa = subprocess.run(
+                ["/usr/bin/osascript", "-l", "JavaScript", "-e", script_jxa],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result_jxa.returncode == 0:
+                return jsonify({"path": (result_jxa.stdout or "").strip()})
+            stderr_jxa = (result_jxa.stderr or "").strip()
+            if _is_user_cancel_message(stderr_jxa):
+                return jsonify({"path": ""})
+            logger.warning("macOS JXA picker failed: rc=%s stderr=%s", result_jxa.returncode, stderr_jxa)
+
+            # Last resort fallback (requires Tk support in Python build).
             try:
                 fallback_path = _pick_with_tk()
                 if fallback_path:
                     return jsonify({"path": fallback_path})
             except Exception:
                 logger.warning("Tk fallback picker failed on macOS", exc_info=True)
-            return jsonify({"error": f"Native picker failed: {stderr}", "path": ""})
+            detail_parts = []
+            if stderr_applescript:
+                detail_parts.append(f"AppleScript: {stderr_applescript}")
+            if stderr_jxa:
+                detail_parts.append(f"JXA: {stderr_jxa}")
+            detail = "; ".join(detail_parts) or "unknown macOS picker failure"
+            return jsonify({"error": f"Native picker failed: {detail}", "path": ""})
         else:
             # Linux/Windows: use tkinter directory picker.
             return jsonify({"path": _pick_with_tk()})
