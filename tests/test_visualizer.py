@@ -204,6 +204,35 @@ class TestLoadProject:
 
         assert data["project_status"]["parameters"]["mast_height_m"] == 28
 
+    def test_load_uses_fallback_elevation_for_grid_bundle_hydration(self, tmp_path, monkeypatch):
+        config_path = _write_fixture(tmp_path)
+        with open(config_path) as f:
+            cfg = yaml.safe_load(f)
+        cfg["inputs"]["elevation"] = "missing_elevation.tif"
+        cfg["inputs"]["grid_bundle"] = "grid_bundle.json"
+        with open(config_path, "w") as f:
+            yaml.safe_dump(cfg, f)
+
+        (tmp_path / "grid_bundle.json").write_text("{}", encoding="utf-8")
+        fallback_elevation = tmp_path / "elevation.tif"
+        fallback_elevation.write_bytes(b"not-a-real-geotiff")
+
+        captured = {}
+
+        def _fake_hydrate(bundle_path, elevation_path=None):
+            captured["bundle_path"] = bundle_path
+            captured["elevation_path"] = elevation_path
+
+        monkeypatch.setattr(app_mod, "_hydrate_grid_provider", _fake_hydrate)
+
+        with app.test_client() as client:
+            resp = client.post("/api/load", json={"path": config_path})
+            data = resp.get_json()
+
+        assert "error" not in data
+        assert captured["bundle_path"] == str(tmp_path / "grid_bundle.json")
+        assert captured["elevation_path"] == str(fallback_elevation)
+
 
 class TestCoverageEndpoint:
     def test_coverage_after_load(self, tmp_path):

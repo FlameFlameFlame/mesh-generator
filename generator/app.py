@@ -1997,7 +1997,14 @@ def load_project():
         _elevation_path = elevation_file
         logger.info("Loaded elevation from %s", elevation_file)
     else:
-        _elevation_path = None
+        # Fallback to colocated elevation file for projects where config input
+        # paths were not saved correctly but elevation.tif exists in project dir.
+        fallback_elevation = os.path.join(config_dir, "elevation.tif")
+        if os.path.isfile(fallback_elevation):
+            _elevation_path = fallback_elevation
+            logger.info("Loaded fallback elevation from %s", fallback_elevation)
+        else:
+            _elevation_path = None
 
     # Resolve grid bundle path from config inputs first
     configured_grid_bundle = resolve(inputs.get("grid_bundle"))
@@ -2041,6 +2048,18 @@ def load_project():
                     logger.info("Restored grid bundle from status: %s", gb)
                 except Exception:
                     logger.warning("Failed to restore grid bundle from status: %s", gb, exc_info=True)
+
+    # Retry configured bundle after status-based elevation restoration/fallback.
+    if _grid_provider is None and configured_grid_bundle and os.path.isfile(configured_grid_bundle):
+        try:
+            _hydrate_grid_provider(configured_grid_bundle, elevation_path=_elevation_path)
+            logger.info("Loaded grid bundle from config on retry: %s", configured_grid_bundle)
+        except Exception:
+            logger.warning(
+                "Failed to load configured grid bundle on retry: %s",
+                configured_grid_bundle,
+                exc_info=True,
+            )
 
     # Keep config.yaml parameters as canonical on load. status.json can be stale
     # when users edit config manually or reuse older optimization outputs.
@@ -2150,6 +2169,20 @@ def pick_file():
     import platform
     import subprocess
 
+    def _pick_with_tk() -> str:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", 1)
+        path = filedialog.askdirectory(
+            title="Open project directory (must contain config.yaml)",
+            initialdir=DEFAULT_OUTPUT_DIR,
+        )
+        root.destroy()
+        return path or ""
+
     try:
         if platform.system() == "Darwin":
             # macOS: use AppleScript choose folder.
@@ -2170,20 +2203,18 @@ def pick_file():
             if "User canceled" in stderr or "(-128)" in stderr:
                 return jsonify({"path": ""})
             logger.warning("macOS file picker failed: rc=%s stderr=%s", result.returncode, stderr)
+            # Secondary native fallback for macOS environments where osascript
+            # permissions are blocked but Tk dialogs are available.
+            try:
+                fallback_path = _pick_with_tk()
+                if fallback_path:
+                    return jsonify({"path": fallback_path})
+            except Exception:
+                logger.warning("Tk fallback picker failed on macOS", exc_info=True)
             return jsonify({"error": f"Native picker failed: {stderr}", "path": ""})
         else:
-            # Linux/Windows: try tkinter
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes("-topmost", 1)
-            path = filedialog.askopenfilename(
-                title="Open project config",
-                filetypes=[("YAML config", "*.yaml *.yml"), ("All files", "*")],
-            )
-            root.destroy()
-            return jsonify({"path": path or ""})
+            # Linux/Windows: use tkinter directory picker.
+            return jsonify({"path": _pick_with_tk()})
     except Exception as e:
         logger.warning("File picker failed: %s", e)
         return jsonify({"error": str(e), "path": ""})

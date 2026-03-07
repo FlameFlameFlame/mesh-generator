@@ -72,3 +72,6 @@
 - 2026-03-07: Added e2e usage docs at `tests/e2e/README.md` (`poetry run python tests/e2e/test_playwright_smoke.py`).
 - 2026-03-07: Fixed native Open picker behavior on macOS: `/api/pick-file` now distinguishes user-cancel from real osascript failures and returns explicit errors for non-cancel failures; frontend now surfaces picker-error status before manual-path fallback.
 - 2026-03-07: Added macOS picker regression tests in `tests/test_visualizer.py` for non-cancel error vs cancel handling.
+- 2026-03-07: Hardened native Open picker on macOS with a Tk directory-picker fallback when `osascript` fails (non-cancel), and aligned Linux/Windows picker behavior to directory selection for project-open flow.
+- 2026-03-07: Fixed project-load grid-provider hydration fallback: when `inputs.elevation` is missing but `elevation.tif` exists in project dir, loader now uses that file before hydrating `grid_bundle`, and retries configured bundle hydration after status-based elevation restoration.
+- 2026-03-07: Added regression test for fallback-elevation bundle hydration in `tests/test_visualizer.py`.
