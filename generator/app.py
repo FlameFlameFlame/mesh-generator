@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import webbrowser
+from datetime import datetime, timezone
 
 import h3
 # Ensure mesh_calculator (sibling package) and its dependencies are importable
@@ -136,6 +137,15 @@ _p2p_all_route_features = {} # route_id → list of feature dicts (for select-ro
 _p2p_display_features = {}   # route_id → clipped feature dicts (frontend rendering)
 _forced_waypoints = {}       # pair_key → list of osm_way_ids
 _active_mesh_parameters = {} # last loaded/applied mesh parameters for runtime coverage
+
+_CALC_LAYER_TO_FILENAME = {
+    "towers": "towers.geojson",
+    "edges": "visibility_edges.geojson",
+    "grid_cells": "grid_cells.geojson",
+    "grid_cells_full": "grid_cells_full.geojson",
+    "gap_repair_hexes": "gap_repair_hexes.geojson",
+    "coverage": "coverage.geojson",
+}
 
 
 def _close_grid_provider():
@@ -609,6 +619,67 @@ def _build_runtime_road_coverage_from_layers() -> dict | None:
         len(surface.towers),
     )
     return {"type": "FeatureCollection", "features": features}
+
+
+def _persist_current_calculation_outputs(
+    output_dir: str,
+    *,
+    parameters: dict | None = None,
+    summary: dict | None = None,
+    source: str = "manual_save",
+) -> dict | None:
+    """
+    Persist currently loaded calculation outputs and archive them as a run snapshot.
+
+    Returns:
+        Optimization run metadata dict if outputs existed and were persisted, else None.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    payloads = {}
+    for layer_key, fname in _CALC_LAYER_TO_FILENAME.items():
+        data = (_loaded_layers or {}).get(layer_key)
+        if data is not None:
+            payloads[fname] = data
+
+    if _loaded_report is not None:
+        payloads["report.json"] = _loaded_report
+
+    if not payloads:
+        return None
+
+    # Persist latest outputs at project root for compatibility/open-by-default.
+    for fname, data in payloads.items():
+        with open(os.path.join(output_dir, fname), "w") as f:
+            json.dump(data, f, indent=2)
+
+    run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+    run_dir = os.path.join(output_dir, "runs", run_id)
+    os.makedirs(run_dir, exist_ok=True)
+    for fname, data in payloads.items():
+        with open(os.path.join(run_dir, fname), "w") as f:
+            json.dump(data, f, indent=2)
+
+    run_settings = {
+        "run_id": run_id,
+        "source": source,
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+        "parameters": dict(parameters or {}),
+        "summary": dict(summary or {}),
+        "files": sorted(payloads.keys()),
+    }
+    with open(os.path.join(run_dir, "run_settings.json"), "w") as f:
+        json.dump(run_settings, f, indent=2)
+
+    return {
+        "run_id": run_id,
+        "source": source,
+        "saved_at_utc": run_settings["saved_at_utc"],
+        "parameters": run_settings["parameters"],
+        "summary": run_settings["summary"],
+        "run_dir": run_dir,
+        "files": run_settings["files"],
+    }
 
 
 def _parse_coverage_sources(payload: list, mesh_config, grid_provider=None) -> list:
@@ -1753,10 +1824,9 @@ def run_optimization():
 
     def _run_pipeline():
         import copy
-        import shutil
         import tempfile
 
-        global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _runtime_tower_coverage
+        global _opt_running, _opt_result, _loaded_layers, _loaded_coverage, _runtime_tower_coverage, _loaded_report
         _opt_running = True
         try:
             tmp_dir_dp = tempfile.mkdtemp(prefix="mesh_opt_dp_")
@@ -1802,6 +1872,10 @@ def run_optimization():
                 if os.path.isfile(fpath):
                     with open(fpath) as f:
                         result[key] = json.load(f)
+            report_path = os.path.join(tmp_dir_dp, "report.json")
+            if os.path.isfile(report_path):
+                with open(report_path) as f:
+                    result["report"] = json.load(f)
             _opt_log_queue.put({
                 "progress": {
                     "stage": "done",
@@ -1822,6 +1896,7 @@ def run_optimization():
             for key, _ in output_keys:
                 if key in result:
                     _loaded_layers[key] = result[key]
+            _loaded_report = result.get("report")
 
             logger.info(
                 "run_optimization complete: DP=%d towers/%d edges",
@@ -1832,15 +1907,18 @@ def run_optimization():
             # Persist DP results to project output_dir if provided
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
-                for fname in ["towers.geojson", "visibility_edges.geojson",
-                              "grid_cells.geojson", "grid_cells_full.geojson",
-                              "gap_repair_hexes.geojson",
-                              "report.json"]:
-                    src = os.path.join(tmp_dir_dp, fname)
-                    if os.path.isfile(src):
-                        shutil.copy2(src, os.path.join(output_dir, fname))
+                run_meta = _persist_current_calculation_outputs(
+                    output_dir,
+                    parameters=param_overrides,
+                    summary=summary,
+                    source="optimization",
+                )
                 # Write full project state so the directory can be reopened
-                _save_project_to_dir(output_dir, parameters=param_overrides)
+                _save_project_to_dir(
+                    output_dir,
+                    parameters=param_overrides,
+                    optimization_run=run_meta,
+                )
                 logger.info("Saved optimization results to %s", output_dir)
 
             _runtime_tower_coverage = None
@@ -1866,7 +1944,13 @@ def get_optimization_result():
     return jsonify(_opt_result)
 
 
-def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced_waypoints=None):
+def _save_project_to_dir(
+    output_dir,
+    parameters=None,
+    active_routes=None,
+    forced_waypoints=None,
+    optimization_run=None,
+):
     """Write config.yaml, routes.json, and status.json to output_dir.
 
     Writes geojson files (sites, boundary, roads) only if they are not already
@@ -1944,6 +2028,22 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
             json.dump(routes_export, f, indent=2)
         logger.info("Saved routes.json to %s (%d routes)", output_dir, len(_p2p_routes))
 
+    existing_status = {}
+    status_path = os.path.join(output_dir, "status.json")
+    if os.path.isfile(status_path):
+        try:
+            with open(status_path) as f:
+                existing_status = json.load(f)
+        except Exception:
+            existing_status = {}
+
+    run_history = list(existing_status.get("optimization_runs", []))
+    if optimization_run:
+        run_history.append(optimization_run)
+    # Keep status bounded.
+    if len(run_history) > 200:
+        run_history = run_history[-200:]
+
     status = {
         "has_roads": bool(_roads_geojson),
         "has_elevation": bool(_elevation_path and os.path.isfile(_elevation_path)),
@@ -1958,12 +2058,14 @@ def _save_project_to_dir(output_dir, parameters=None, active_routes=None, forced
         ),
         "grid_provider_summary": _grid_provider_summary or "",
         "parameters": export_params,
+        "optimization_runs": run_history,
+        "last_optimization_run": optimization_run or existing_status.get("last_optimization_run"),
     }
     if active_routes:
         status["active_routes"] = active_routes
     if forced_waypoints:
         status["forced_waypoints"] = forced_waypoints
-    with open(os.path.join(output_dir, "status.json"), "w") as f:
+    with open(status_path, "w") as f:
         json.dump(status, f, indent=2)
     logger.info("Saved status.json to %s", output_dir)
 
@@ -2014,6 +2116,15 @@ def export():
     req_params.setdefault("max_towers_per_route", max_towers_per_route)
     active_routes = data.get("active_routes", {})
     forced_waypoints = data.get("forced_waypoints", {})
+    global _active_mesh_parameters
+    _active_mesh_parameters = dict(req_params)
+
+    run_meta = _persist_current_calculation_outputs(
+        output_dir,
+        parameters=req_params,
+        summary=(_opt_result or {}).get("summary", {}),
+        source="manual_save",
+    )
 
     # Write config.yaml + status.json via helper
     _save_project_to_dir(
@@ -2021,6 +2132,7 @@ def export():
         parameters=req_params,
         active_routes=active_routes,
         forced_waypoints=forced_waypoints,
+        optimization_run=run_meta,
     )
 
     config_path = os.path.join(output_dir, "config.yaml")
