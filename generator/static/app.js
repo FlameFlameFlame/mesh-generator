@@ -2826,7 +2826,21 @@ function _renderOptimizationResult(res) {
   if (dpData.towers) _cachedTowersGeojson = dpData.towers;
 
   // Coverage/grid from DP result
-  if (dpData.coverage) { coverageData = dpData.coverage; coverageFetched = true; }
+  coverageData = null;
+  coverageFetched = false;
+  hasCoverage = false;
+  if (dpData.coverage) {
+    coverageData = dpData.coverage;
+    coverageFetched = true;
+    hasCoverage = true;
+  }
+  layerGroups.coverage.clearLayers();
+  let coverageChk = document.getElementById('chk-coverage');
+  if (coverageChk && !hasCoverage) {
+    coverageChk.checked = false;
+    let coverageMetricRow = document.getElementById('coverage-metric-row');
+    if (coverageMetricRow) coverageMetricRow.style.display = 'none';
+  }
   _cachedGridCells = dpData.grid_cells || null;
   _cachedGridCellsFull = dpData.grid_cells_full || null;
   _gridLayersFromProvider = false;

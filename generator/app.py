@@ -1622,7 +1622,6 @@ def run_optimization():
             output_keys = [
                 ("towers", "towers.geojson"),
                 ("edges", "visibility_edges.geojson"),
-                ("coverage", "coverage.geojson"),
                 ("grid_cells", "grid_cells.geojson"),
                 ("grid_cells_full", "grid_cells_full.geojson"),
                 ("gap_repair_hexes", "gap_repair_hexes.geojson"),
@@ -1649,6 +1648,8 @@ def run_optimization():
                 }
             })
 
+            _loaded_layers.pop("coverage", None)
+            _loaded_coverage = None
             for key, _ in output_keys:
                 if key in result:
                     _loaded_layers[key] = result[key]
@@ -1663,7 +1664,6 @@ def run_optimization():
             if output_dir:
                 os.makedirs(output_dir, exist_ok=True)
                 for fname in ["towers.geojson", "visibility_edges.geojson",
-                              "coverage.geojson",
                               "grid_cells.geojson", "grid_cells_full.geojson",
                               "gap_repair_hexes.geojson",
                               "report.json"]:
