@@ -49,7 +49,7 @@ from generator.elevation import fetch_and_write_elevation_cached, render_elevati
 
 logger = logging.getLogger(__name__)
 
-_WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+_WORKSPACE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 DEFAULT_OUTPUT_DIR = os.path.join(_WORKSPACE_ROOT, "projects")
 
 
