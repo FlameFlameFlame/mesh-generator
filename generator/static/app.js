@@ -64,6 +64,7 @@ let _sharedWayIds = new Set();   // way_ids used by 2+ active routes (for shared
 let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by multiple routes
 let _optResult = null;
 let _suppressNextLayersOutsideClick = false;
+let _suppressNextCoverageOutsideClick = false;
 let _lastRunBaseH3Resolution = null;
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
@@ -470,6 +471,8 @@ map.on('moveend', function() {
 map.on('movestart', function() {
   // Drag/pan should not be treated as a dismiss click for the floating Layers window.
   _suppressNextLayersOutsideClick = true;
+  // Same for Coverage popup while map drag ends with a click event.
+  _suppressNextCoverageOutsideClick = true;
 });
 map.on('zoomend', function() {
   _refreshGridForViewportIfVisible();
@@ -4999,7 +5002,9 @@ document.addEventListener('click', function(e) {
   let covCard = document.getElementById('section-coverage');
   let covBtn = document.getElementById('btn-map-coverage');
   if (covCard && covBtn && covCard.classList.contains('coverage-popup-open')) {
-    if (!covCard.contains(e.target) && !covBtn.contains(e.target)) {
+    if (_suppressNextCoverageOutsideClick) {
+      _suppressNextCoverageOutsideClick = false;
+    } else if (!covCard.contains(e.target) && !covBtn.contains(e.target)) {
       closeCoveragePopupWindow();
     }
   }

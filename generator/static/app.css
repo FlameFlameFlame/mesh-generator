@@ -354,12 +354,22 @@ body {
 #coverage-panel .sub-control { margin-left: 22px; margin-top: 2px; }
 
 #section-coverage.coverage-busy {
-  background: rgba(80, 113, 157, 0.18);
-  border-color: #6d8eb7;
+  background: #d7dbe2;
+  border-color: #8f98a6;
 }
 
 #section-coverage.coverage-busy .section-header {
-  background: rgba(86, 122, 170, 0.34);
+  background: #c5ccd7;
+}
+
+#section-coverage.coverage-busy #coverage-panel {
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+#section-coverage.coverage-busy #tower-coverage-progress-row {
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .button-group {
