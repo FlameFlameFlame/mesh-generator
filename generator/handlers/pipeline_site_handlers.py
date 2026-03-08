@@ -140,6 +140,7 @@ def update_site(idx):
     if idx < 0 or idx >= len(store):
         return jsonify({"error": "invalid index"}), 400
     site = store.get(idx)
+    moved = False
     if "name" in data:
         name = str(data.get("name", "")).strip()
         if not name:
@@ -147,16 +148,25 @@ def update_site(idx):
         if _site_name_exists(name, exclude_idx=idx):
             return jsonify({"error": f'site name "{name}" already exists'}), 400
         site.name = name
+    if "lat" in data:
+        site.lat = float(data["lat"])
+        moved = True
+    if "lon" in data:
+        site.lon = float(data["lon"])
+        moved = True
     if "priority" in data:
         store.update_priority(idx, data["priority"])
     if "site_height_m" in data:
         site.site_height_m = float(data.get("site_height_m", 0.0) or 0.0)
     if "fetch_city" in data:
         site.fetch_city = bool(data["fetch_city"])
-        if not site.fetch_city:
-            site.boundary_geojson = None
-            site.boundary_name = ""
-    logger.info("Updated site %d: name=%s priority=%d", idx, site.name, site.priority)
+    if moved or not site.fetch_city:
+        site.boundary_geojson = None
+        site.boundary_name = ""
+    logger.info(
+        "Updated site %d: name=%s priority=%d lat=%.6f lon=%.6f",
+        idx, site.name, site.priority, site.lat, site.lon,
+    )
     return jsonify(store.to_list())
 
 

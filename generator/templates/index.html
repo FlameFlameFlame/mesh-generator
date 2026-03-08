@@ -20,24 +20,20 @@
     <div class="section-header">
       <h2 id="hdr-site-management">Site Management</h2>
     </div>
-    <div class="section-body" id="section-body-site-management">
+      <div class="section-body" id="section-body-site-management">
       <div id="site-management-block">
+        <div class="button-group wrap">
+          <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
+        </div>
         <div id="site-dup-warning" class="site-warning" style="display:none;"></div>
         <div class="button-group wrap">
           <button id="btn-resolve-site-dups" onclick="doResolveDuplicateSiteNames()" style="display:none;">Resolve Duplicate Names</button>
         </div>
         <div id="site-list">
           <table>
-            <thead><tr><th title="Download city boundary on 'Download Roads'">City</th><th>Name</th><th>Priority</th><th>Site Height (m)</th></tr></thead>
+            <thead><tr><th title="Download city boundary on 'Download Roads'">City</th><th>Name</th><th>Priority</th><th>Site Height (m)</th><th title="Actions">Actions</th></tr></thead>
             <tbody id="site-tbody"></tbody>
           </table>
-        </div>
-        <div id="controls">
-          <div class="btn-row">
-            <button onclick="doDetectCity()">Detect City</button>
-            <button class="danger" onclick="doDelete()">Delete</button>
-          </div>
-          <div id="city-info" style="display:none;font-size:0.85em;color:#555;margin-top:4px;"></div>
         </div>
       </div>
     </div>
@@ -71,7 +67,6 @@
       </div>
       <div class="section-body" id="section-body-preparation">
         <div class="button-group wrap">
-          <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
           <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
         </div>
         <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">&#x2715;</a></span>

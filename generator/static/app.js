@@ -10,6 +10,7 @@ let siteMarkers = [];
 let siteCityLayers = {};  // site index -> L.Layer (city boundary polygon)
 let selectedIdx = -1;
 let addMode = false;
+let _siteRepositionIdx = -1;
 
 // Data layers
 let layerGroups = { roads: L.layerGroup().addTo(map),
@@ -344,6 +345,7 @@ function _algorithmBadge(alg, dpSteps, repairRound) {
 }
 
 function toggleAddMode() {
+  if (!addMode && _siteRepositionIdx >= 0) _finishSiteReposition(true);
   addMode = !addMode;
   let btn = document.getElementById('btn-add-site');
   let hint = document.getElementById('hint');
@@ -448,6 +450,10 @@ map.on('mouseup', function(e) {
 map.on('click', function(e) {
   if (_manualCoverageModeActive && _coverageSourceMode === 'manual') {
     calculatePointCoverage(e.latlng.lat, e.latlng.lng);
+    return;
+  }
+  if (_siteRepositionIdx >= 0) {
+    _completeSiteReposition(e.latlng.lat, e.latlng.lng);
     return;
   }
   if (!addMode) return;
@@ -663,7 +669,7 @@ function refresh() {
   if (!sites.length) {
     let emptyRow = document.createElement('tr');
     emptyRow.className = 'site-empty-row';
-    emptyRow.innerHTML = '<td colspan="4">No sites yet. Click "+ Add Site" and place one on the map.</td>';
+    emptyRow.innerHTML = '<td colspan="5">No sites yet. Click "+ Add Site" and place one on the map.</td>';
     tbody.appendChild(emptyRow);
   }
   sites.forEach((s, i) => {
@@ -684,7 +690,13 @@ function refresh() {
       '<option value="4"' + (String(s.priority) === '4' ? ' selected' : '') + '>4</option>' +
       '<option value="5"' + (String(s.priority) === '5' ? ' selected' : '') + '>5</option>' +
       '</select></td>' +
-      '<td><input class="site-inline-height" type="number" min="0" max="200" step="0.5" value="' + siteHeight.toFixed(1) + '"></td>';
+      '<td><input class="site-inline-height" type="number" min="0" max="200" step="0.5" value="' + siteHeight.toFixed(1) + '"></td>' +
+      '<td class="site-row-actions">' +
+        '<button class="site-action-btn site-action-move' + (_siteRepositionIdx === i ? ' active' : '') + '" title="Move site position on map"' +
+          ' onclick="event.stopPropagation(); beginSiteReposition(' + i + '); return false;">&#9998;</button>' +
+        '<button class="site-action-btn site-action-delete" title="Delete site"' +
+          ' onclick="event.stopPropagation(); deleteSiteByIndex(' + i + '); return false;">&#10005;</button>' +
+      '</td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
     if (_duplicateSiteNameIdxs.has(i)) tr.classList.add('site-row-dup');
@@ -736,10 +748,10 @@ function selectSite(i) {
   if (editPriority) editPriority.value = s.priority;
   if (editSiteHeight) editSiteHeight.value = Number(s.site_height_m || 0);
   let info = document.getElementById('city-info');
-  if (s.boundary_name) {
+  if (info && s.boundary_name) {
     info.textContent = 'City: ' + s.boundary_name;
     info.style.display = 'block';
-  } else {
+  } else if (info) {
     info.style.display = 'none';
   }
   map.panTo([s.lat, s.lon]);
@@ -777,10 +789,149 @@ function doUpdate() {
   });
 }
 
+function _clearSiteCityLayerAtIndex(idx) {
+  if (siteCityLayers[idx]) {
+    layerGroups.cities.removeLayer(siteCityLayers[idx]);
+    delete siteCityLayers[idx];
+  }
+}
+
+function _reindexSiteCityLayersAfterDelete(deletedIdx) {
+  let remapped = {};
+  Object.keys(siteCityLayers).forEach(function(k) {
+    let idx = parseInt(k, 10);
+    if (!Number.isFinite(idx)) return;
+    if (idx < deletedIdx) remapped[idx] = siteCityLayers[k];
+    else if (idx > deletedIdx) remapped[idx - 1] = siteCityLayers[k];
+  });
+  siteCityLayers = remapped;
+}
+
+function _detectCityForSite(idx, opts) {
+  opts = opts || {};
+  if (idx < 0 || idx >= sites.length) return Promise.resolve();
+  if (!opts.silent) setStatus(opts.startStatus || 'Querying Overpass for city boundary...');
+  return fetch('/api/sites/' + idx + '/detect-city', {method: 'POST'})
+    .then(safeJson)
+    .then(function(data) {
+      if (!sites[idx]) return;
+      if (data && data.found) {
+        _clearSiteCityLayerAtIndex(idx);
+        if (data.geometry) {
+          siteCityLayers[idx] = L.geoJSON(data.geometry, {
+            style: { color: '#8800aa', weight: 2, dashArray: '6 4',
+                     fillColor: '#cc88ff', fillOpacity: 0.1 }
+          }).bindTooltip(data.name).addTo(layerGroups.cities);
+        }
+        sites[idx].boundary_name = data.name;
+        if (!opts.silent) setStatus('Detected city: ' + data.name);
+        else if (opts.successStatus) setStatus(opts.successStatus);
+      } else {
+        _clearSiteCityLayerAtIndex(idx);
+        sites[idx].boundary_name = '';
+        if (!opts.silent) setStatus('No city boundary found at this location');
+        else if (opts.notFoundStatus) setStatus(opts.notFoundStatus);
+      }
+      refresh();
+      _setProjectDirty(true);
+    })
+    .catch(function(err) {
+      if (!opts.silent) {
+        setStatus('City detection failed');
+        alert('Error: ' + err);
+      }
+    });
+}
+
+function beginSiteReposition(idx) {
+  if (idx < 0 || idx >= sites.length) return;
+  if (addMode) toggleAddMode();
+  if (_siteRepositionIdx === idx) {
+    _finishSiteReposition(true);
+    return;
+  }
+  _siteRepositionIdx = idx;
+  selectedIdx = idx;
+  let mapEl = document.getElementById('map');
+  let hint = document.getElementById('hint');
+  if (mapEl) mapEl.classList.add('placing');
+  if (hint) hint.textContent = 'Click on map to move site "' + sites[idx].name + '"';
+  setStatus('Pick a new location for site "' + sites[idx].name + '".');
+  refresh();
+}
+
+function _finishSiteReposition(cancelled) {
+  let idx = _siteRepositionIdx;
+  _siteRepositionIdx = -1;
+  let mapEl = document.getElementById('map');
+  let hint = document.getElementById('hint');
+  if (mapEl && !addMode) mapEl.classList.remove('placing');
+  if (hint && !addMode) hint.textContent = '';
+  refresh();
+  if (cancelled && idx >= 0 && sites[idx]) {
+    setStatus('Cancelled site move for "' + sites[idx].name + '".');
+  }
+}
+
+function _completeSiteReposition(lat, lon) {
+  let idx = _siteRepositionIdx;
+  if (idx < 0 || idx >= sites.length) return;
+  let s = sites[idx];
+  setStatus('Updating location for site "' + s.name + '"...');
+  fetch('/api/sites/' + idx, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      lat: lat,
+      lon: lon,
+      fetch_city: s.fetch_city !== false,
+    })
+  }).then(safeJson).then(function(data) {
+    if (data && data.error) {
+      setStatus('Site move failed: ' + data.error);
+      _finishSiteReposition(true);
+      return;
+    }
+    sites = data;
+    selectedIdx = Math.min(idx, Math.max(0, sites.length - 1));
+    _hasRoads = false;
+    _setProjectDirty(true);
+    _finishSiteReposition(false);
+    if (sites[idx] && sites[idx].fetch_city !== false) {
+      _detectCityForSite(idx, {
+        silent: true,
+        startStatus: 'Recalculating city boundary...',
+        successStatus: 'Site moved and city boundary recalculated.',
+        notFoundStatus: 'Site moved. No city boundary found at new location.',
+      });
+    } else {
+      _clearSiteCityLayerAtIndex(idx);
+      refresh();
+      setStatus('Site moved.');
+    }
+  });
+}
+
+function deleteSiteByIndex(idx) {
+  if (idx < 0 || idx >= sites.length) return;
+  fetch('/api/sites/' + idx, {method: 'DELETE'})
+    .then(safeJson).then(function(data) {
+      _clearSiteCityLayerAtIndex(idx);
+      _reindexSiteCityLayersAfterDelete(idx);
+      sites = data;
+      if (selectedIdx === idx) selectedIdx = -1;
+      else if (selectedIdx > idx) selectedIdx -= 1;
+      if (_siteRepositionIdx === idx) _siteRepositionIdx = -1;
+      else if (_siteRepositionIdx > idx) _siteRepositionIdx -= 1;
+      _hasRoads = false;
+      refresh();
+      _setProjectDirty(true);
+    });
+}
+
 function doDelete() {
   if (selectedIdx < 0) return;
-  fetch('/api/sites/' + selectedIdx, {method: 'DELETE'})
-    .then(safeJson).then(data => { sites = data; selectedIdx = -1; _hasRoads = false; refresh(); _setProjectDirty(true); });
+  deleteSiteByIndex(selectedIdx);
 }
 
 function toggleFetchCity(idx, value) {
@@ -796,6 +947,13 @@ function toggleFetchCity(idx, value) {
       delete siteCityLayers[idx];
     }
     refresh();
+    if (value) {
+      _detectCityForSite(idx, {
+        silent: true,
+        startStatus: 'Detecting city boundary...',
+        successStatus: 'City boundary updated.',
+      });
+    }
     _setProjectDirty(true);
   });
 }
@@ -1035,35 +1193,7 @@ function doOpenProject() {
 
 function doDetectCity() {
   if (selectedIdx < 0) { alert('Select a site first.'); return; }
-  setStatus('Querying Overpass for city boundary...');
-  fetch('/api/sites/' + selectedIdx + '/detect-city', {method: 'POST'})
-    .then(safeJson).then(data => {
-      let info = document.getElementById('city-info');
-      if (data.found) {
-        setStatus('Detected city: ' + data.name);
-        info.textContent = 'City: ' + data.name;
-        info.style.display = 'block';
-        // Render boundary on map, track by site index so it can be removed
-        if (data.geometry) {
-          if (siteCityLayers[selectedIdx]) layerGroups.cities.removeLayer(siteCityLayers[selectedIdx]);
-          siteCityLayers[selectedIdx] = L.geoJSON(data.geometry, {
-            style: { color: '#8800aa', weight: 2, dashArray: '6 4',
-                     fillColor: '#cc88ff', fillOpacity: 0.1 }
-          }).bindTooltip(data.name).addTo(layerGroups.cities);
-        }
-        // Update site list display
-        if (sites[selectedIdx]) sites[selectedIdx].boundary_name = data.name;
-        refresh();
-        _setProjectDirty(true);
-      } else {
-        setStatus('No city boundary found at this location');
-        info.textContent = 'No city found';
-        info.style.display = 'block';
-      }
-    }).catch(err => {
-      setStatus('City detection failed');
-      alert('Error: ' + err);
-    });
+  _detectCityForSite(selectedIdx, {silent: false});
 }
 
 function doExport() {

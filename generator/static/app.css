@@ -342,6 +342,34 @@ body {
   border-color: #c95555;
   box-shadow: 0 0 0 1px rgba(201, 85, 85, 0.24) inset;
 }
+#site-list th:last-child,
+#site-list td:last-child {
+  width: 84px;
+  text-align: center;
+}
+#site-list .site-row-actions {
+  white-space: nowrap;
+}
+#site-list .site-action-btn {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  margin: 0 2px;
+  border-radius: 6px;
+  font-size: 0.9em;
+  line-height: 1;
+}
+#site-list .site-action-move.active {
+  background: var(--btn-primary-bg);
+  border-color: var(--btn-primary-border);
+}
+#site-list .site-action-delete {
+  background: var(--btn-danger-bg);
+  border-color: var(--btn-danger-border);
+}
+#site-list .site-action-delete:hover {
+  background: var(--btn-danger-hover);
+}
 #site-list tr.site-empty-row td {
   text-align: center;
   color: var(--muted);
