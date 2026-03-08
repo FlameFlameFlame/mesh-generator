@@ -29,6 +29,42 @@ def test_site_height_crud_roundtrip(monkeypatch):
         assert data2[0]["site_height_m"] == 9.0
 
 
+def test_site_name_must_be_unique_backend(monkeypatch):
+    store = SiteStore()
+    monkeypatch.setattr(app_mod, "store", store)
+    monkeypatch.setattr(app_mod, "_counter", 0)
+
+    with app.test_client() as client:
+        first = client.post("/api/sites", json={
+            "name": "a",
+            "lat": 40.0,
+            "lon": 44.0,
+            "priority": 1,
+        })
+        assert first.status_code == 200
+
+        duplicate_create = client.post("/api/sites", json={
+            "name": "A",
+            "lat": 40.1,
+            "lon": 44.1,
+            "priority": 1,
+        })
+        assert duplicate_create.status_code == 400
+        assert "already exists" in duplicate_create.get_json()["error"]
+
+        second = client.post("/api/sites", json={
+            "name": "b",
+            "lat": 40.2,
+            "lon": 44.2,
+            "priority": 1,
+        })
+        assert second.status_code == 200
+
+        duplicate_update = client.put("/api/sites/1", json={"name": "a"})
+        assert duplicate_update.status_code == 400
+        assert "already exists" in duplicate_update.get_json()["error"]
+
+
 def test_filter_p2p_propagates_site_height(monkeypatch):
     store = SiteStore()
     store.add(SiteModel(name="A", lat=40.0, lon=44.0, priority=1, site_height_m=4.0))

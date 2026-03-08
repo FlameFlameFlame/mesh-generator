@@ -93,6 +93,22 @@ from generator import graph as graph_mod
 from generator.roads import fetch_roads_cached
 from generator.elevation import fetch_and_write_elevation_cached, render_elevation_image
 
+
+def _normalized_site_name(name: str) -> str:
+    return str(name or "").strip().lower()
+
+
+def _site_name_exists(name: str, exclude_idx: int | None = None) -> bool:
+    target = _normalized_site_name(name)
+    if not target:
+        return False
+    for i, site in enumerate(store):
+        if exclude_idx is not None and i == exclude_idx:
+            continue
+        if _normalized_site_name(getattr(site, "name", "")) == target:
+            return True
+    return False
+
 def get_sites():
     return jsonify(store.to_list())
 
@@ -100,9 +116,14 @@ def get_sites():
 def add_site():
     global _counter
     data = request.json
+    name = str(data.get("name", "")).strip()
+    if not name:
+        return jsonify({"error": "site name cannot be empty"}), 400
+    if _site_name_exists(name):
+        return jsonify({"error": f'site name "{name}" already exists'}), 400
     _counter += 1
     site = SiteModel(
-        name=data["name"],
+        name=name,
         lat=data["lat"],
         lon=data["lon"],
         priority=data.get("priority", 1),
@@ -120,7 +141,12 @@ def update_site(idx):
         return jsonify({"error": "invalid index"}), 400
     site = store.get(idx)
     if "name" in data:
-        site.name = data["name"]
+        name = str(data.get("name", "")).strip()
+        if not name:
+            return jsonify({"error": "site name cannot be empty"}), 400
+        if _site_name_exists(name, exclude_idx=idx):
+            return jsonify({"error": f'site name "{name}" already exists'}), 400
+        site.name = name
     if "priority" in data:
         store.update_priority(idx, data["priority"])
     if "site_height_m" in data:

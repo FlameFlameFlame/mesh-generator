@@ -489,7 +489,16 @@ function addSite(name, lat, lon, priority, siteHeightM) {
       priority,
       site_height_m: Number.isFinite(siteHeightM) ? siteHeightM : 0.0,
     })
-  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); _setProjectDirty(true); });
+  }).then(safeJson).then(function(data) {
+    if (data && data.error) {
+      setStatus('Add site failed: ' + data.error);
+      return;
+    }
+    sites = data;
+    _hasRoads = false;
+    refresh();
+    _setProjectDirty(true);
+  });
 }
 
 function _normalizeSiteName(name) {
@@ -579,6 +588,11 @@ function _updateSiteInline(idx, patch) {
       fetch_city: s.fetch_city !== false,
     })
   }).then(safeJson).then(function(data) {
+    if (data && data.error) {
+      setStatus('Site update failed: ' + data.error);
+      refresh();
+      return;
+    }
     sites = data;
     _hasRoads = false;
     refresh();
@@ -745,7 +759,16 @@ function doUpdate() {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({name, priority, site_height_m: siteHeight})
-  }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); _setProjectDirty(true); });
+  }).then(safeJson).then(function(data) {
+    if (data && data.error) {
+      setStatus('Site update failed: ' + data.error);
+      return;
+    }
+    sites = data;
+    _hasRoads = false;
+    refresh();
+    _setProjectDirty(true);
+  });
 }
 
 function doDelete() {
