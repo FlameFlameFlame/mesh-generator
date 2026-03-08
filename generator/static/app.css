@@ -560,11 +560,23 @@ body {
   gap: 8px;
 }
 
-#previous-results-header .section-toggle {
-  width: 28px;
-  min-width: 28px;
-  padding: 2px;
+#previous-results-header .prev-results-toggle {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
   line-height: 1;
+  border-radius: 6px;
+  border: 1px solid var(--btn-border);
+  background: var(--btn-bg);
+  color: var(--fg);
+  font-size: 0.78rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+#previous-results-header .prev-results-toggle:hover {
+  background: var(--btn-hover);
 }
 
 #previous-results-panel.collapsed #btn-toggle-previous-results {
