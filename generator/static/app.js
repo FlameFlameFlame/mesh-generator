@@ -1178,6 +1178,16 @@ function doRefreshProjects() {
 }
 
 function doNewProject(silent) {
+  if (_projectDirty && _currentProjectName) {
+    let proceed = confirm(
+      'Current project "' + _currentProjectName + '" has unsaved changes. ' +
+      'Create a new project anyway? Unsaved changes will be lost from in-memory state.'
+    );
+    if (!proceed) {
+      if (!silent) setStatus('New project creation cancelled.');
+      return;
+    }
+  }
   if (!silent) setStatus('Creating project…');
   fetch('/api/projects/create', {
     method: 'POST',
