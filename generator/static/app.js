@@ -92,6 +92,7 @@ let _currentProjectName = null;
 let _projectRuns = [];
 let _statusActivityMessage = '';
 let _duplicateSiteNameIdxs = new Set();
+let _busyOverlayDepth = 0;
 let _projectDirty = false;
 
 function _setOptimizationRunUiState(isRunning) {
@@ -872,6 +873,7 @@ function onRunSelectionChanged() {
 }
 
 function doRefreshProjects() {
+  setStatus('Refreshing project list…');
   return fetch('/api/projects')
     .then(safeJson)
     .then(function(data) {
@@ -892,14 +894,17 @@ function doRefreshProjects() {
 }
 
 function doNewProject(silent) {
+  if (!silent) setStatus('Creating project…');
   fetch('/api/projects/create', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({}),
   }).then(safeJson).then(function(data) {
     if (data.error) { if (!silent) alert(data.error); return; }
+    setStatus('Refreshing project list…');
     doRefreshProjects();
     _setCurrentProject(data.name);
+    setStatus('Clearing in-memory project state…');
     fetch('/api/clear', {method: 'POST'}).then(safeJson).then(function() {
       _applyClearedState();
       _renderRunsPanel([], null);
@@ -928,6 +933,8 @@ function doLoadSelectedRun() {
   if (!_currentProjectName) { setStatus('Select a project first.'); return; }
   let sel = document.getElementById('run-select');
   if (!sel || !sel.value) { setStatus('No runs to load.'); return; }
+  let endBusy = _beginBusyOverlay('Loading roads/elevation/results from selected run…');
+  setStatus('Loading saved calculation run…');
   fetch('/api/projects/load-run', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -947,11 +954,17 @@ function doLoadSelectedRun() {
     _syncCoverageFeatureUI();
     _setProjectDirty(false);
     setStatus('Loaded run: ' + sel.value);
+  }).catch(function(err) {
+    setStatus('Load run failed: ' + err);
+  }).finally(function() {
+    endBusy();
   });
 }
 
 function doOpenProject() {
   if (!_currentProjectName) { setStatus('Select a project first.'); return; }
+  let endBusy = _beginBusyOverlay('Loading roads/elevation/results from existing project…');
+  setStatus('Opening project metadata…');
   fetch('/api/projects/open', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -968,6 +981,7 @@ function doOpenProject() {
       setStatus('Opened empty project: ' + info.project_name);
       return;
     }
+    setStatus('Loading project sites and layers…');
     _loadProjectFromPath(info.config_path, function(data) {
       _renderRunsPanel(info.runs || data.runs || [], info.latest_run_id || data.latest_run_id || null);
       if (info.latest_run_id) {
@@ -976,6 +990,10 @@ function doOpenProject() {
       _setProjectDirty(false);
       setStatus('Opened project: ' + info.project_name);
     });
+  }).catch(function(err) {
+    setStatus('Open project failed: ' + err);
+  }).finally(function() {
+    endBusy();
   });
 }
 
@@ -1021,6 +1039,7 @@ function doExport() {
     return;
   }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
+  setStatus('Saving project configuration…');
   let forcedWaypointsSerial = {};
   Object.keys(_forcedWaypoints).forEach(function(k) {
     forcedWaypointsSerial[k] = Array.from(_forcedWaypoints[k]);
@@ -1125,6 +1144,7 @@ function _applyClearedState() {
 
 function doClear() {
   if (!confirm('Close current project and clear map state? Project files will be kept on disk.')) return;
+  setStatus('Clearing in-memory project state…');
   fetch('/api/clear', {method: 'POST'})
     .then(safeJson).then(data => {
       _applyClearedState();
@@ -1181,18 +1201,29 @@ function doFetchRoads() {
 function doDownloadData() {
   if (sites.length < 2) { alert('Place at least 2 sites first.'); return; }
   if (!_currentProjectName) { alert('Select a project first.'); return; }
+  let endBusy = _beginBusyOverlay('Downloading roads/elevation/grid…');
+  setStatus('Preparing request…');
   let btn = document.getElementById('btn-download');
   btn.disabled = true;
   btn.textContent = 'Downloading Roads\u2026';
+  setStatus('Downloading roads…');
   doFetchRoads()
     .then(function() {
       btn.textContent = 'Downloading Elevation\u2026';
+      setStatus('Downloading elevation tiles…');
       return doFetchElevation();
     })
-    .then(function() { btn.textContent = 'Download Data'; btn.disabled = false; })
+    .then(function() {
+      setStatus('Building adaptive grid bundle…');
+      btn.textContent = 'Download Data';
+      btn.disabled = false;
+    })
     .catch(function(err) {
       btn.textContent = 'Download Data'; btn.disabled = false;
       if (err && err.message) setStatus('Download failed: ' + err.message);
+    }).finally(function() {
+      if (!(document.getElementById('btn-download') || {}).disabled) setStatus('Finalizing and refreshing UI…');
+      endBusy();
     });
 }
 
@@ -1201,7 +1232,7 @@ function doDownloadData() {
 function doFilterP2P() {
   let btn = document.getElementById('btn-p2p');
   btn.disabled = true;
-  setStatus('Filtering roads\u2026');
+  setStatus('Filtering P2P routes…');
   fetch('/api/roads/filter-p2p', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({})
@@ -1242,6 +1273,7 @@ function doFilterP2P() {
   }).catch(function(err) {
     btn.disabled = false;
     alert('Error: ' + err);
+    setStatus('Filtering P2P routes failed.');
   });
 }
 
@@ -1623,13 +1655,14 @@ function doLoadProject() {
 }
 
 function _loadProjectFromPath(configPath, onLoaded) {
-  setStatus('Loading project...');
+  setStatus('Loading project sites and layers…');
   fetch('/api/load', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({path: configPath})
   }).then(safeJson).then(data => {
     if (data.error) { alert(data.error); setStatus(''); return; }
+    setStatus('Validating project data…');
     sites = data.sites || [];
     hasCoverage = data.has_coverage || false;
     coverageData = null;
@@ -1640,12 +1673,14 @@ function _loadProjectFromPath(configPath, onLoaded) {
     _manualCoverageSource = null;
     if (_pointCoverageMarker) { map.removeLayer(_pointCoverageMarker); _pointCoverageMarker = null; }
     _resetPointCoverageMode();
+    setStatus('Loading roads/elevation/results from existing project…');
     refresh();
     renderLayers(data.layers || {});
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
     if (data.report) showReport(data.report);
     applyProjectStatus(data.project_status, data);
     _autoCoverageModeFromCurrentState(true);
+    setStatus('Restoring previous route selections…');
     _applyLoadedRoutes(data);
     if (data.project_name) _setCurrentProject(data.project_name);
     if ((sites || []).length > 0) _setSiteManagementVisible(true);
@@ -2402,7 +2437,7 @@ function _ensureGridLayersLoaded(forceRefresh, opts) {
     return Promise.reject('grid provider is not ready');
   }
   if (_gridLayersLoadingPromise) return _gridLayersLoadingPromise;
-  setStatus('Loading adaptive grid layers...');
+  setStatus('Loading adaptive grid cells for current viewport…');
   _setGridRenderStatus('Rendering grid for current map view…');
   _gridLayersLoadingPromise = fetch('/api/grid-layers', {
     method: 'POST',
@@ -3190,6 +3225,21 @@ function setStatus(msg) {
   _refreshStatusBar();
 }
 
+function _beginBusyOverlay(msg) {
+  let overlay = document.getElementById('global-busy-overlay');
+  let text = document.getElementById('global-busy-text');
+  _busyOverlayDepth += 1;
+  if (overlay) overlay.style.display = 'block';
+  if (text) text.textContent = msg || 'Working…';
+  let done = false;
+  return function endBusyOverlay() {
+    if (done) return;
+    done = true;
+    _busyOverlayDepth = Math.max(0, _busyOverlayDepth - 1);
+    if (_busyOverlayDepth === 0 && overlay) overlay.style.display = 'none';
+  };
+}
+
 // --- Run mesh_calculator optimization on selected routes ---
 
 function toggleSettings() {
@@ -3242,6 +3292,7 @@ function doSaveSettings() {
 function doClearCalculations() {
   if (!_currentProjectName) { alert('Select a project first.'); return; }
   if (!confirm('Clear calculation layers from the map? Files in project "' + _currentProjectName + '" will be kept.')) return;
+  setStatus('Clearing calculation layers…');
   fetch('/api/clear-calculations', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
