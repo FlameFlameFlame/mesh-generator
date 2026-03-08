@@ -709,9 +709,12 @@ function refresh() {
 function selectSite(i) {
   selectedIdx = i;
   let s = sites[i];
-  document.getElementById('edit-name').value = s.name;
-  document.getElementById('edit-priority').value = s.priority;
-  document.getElementById('edit-site-height').value = Number(s.site_height_m || 0);
+  let editName = document.getElementById('edit-name');
+  let editPriority = document.getElementById('edit-priority');
+  let editSiteHeight = document.getElementById('edit-site-height');
+  if (editName) editName.value = s.name;
+  if (editPriority) editPriority.value = s.priority;
+  if (editSiteHeight) editSiteHeight.value = Number(s.site_height_m || 0);
   let info = document.getElementById('city-info');
   if (s.boundary_name) {
     info.textContent = 'City: ' + s.boundary_name;
@@ -725,9 +728,13 @@ function selectSite(i) {
 
 function doUpdate() {
   if (selectedIdx < 0) return;
-  let name = document.getElementById('edit-name').value.trim();
-  let priority = parseInt(document.getElementById('edit-priority').value);
-  let siteHeight = parseFloat(document.getElementById('edit-site-height').value);
+  let editName = document.getElementById('edit-name');
+  let editPriority = document.getElementById('edit-priority');
+  let editSiteHeight = document.getElementById('edit-site-height');
+  if (!editName || !editPriority || !editSiteHeight) return;
+  let name = editName.value.trim();
+  let priority = parseInt(editPriority.value);
+  let siteHeight = parseFloat(editSiteHeight.value);
   if (!Number.isFinite(siteHeight) || siteHeight < 0) siteHeight = 0.0;
   if (!name) { setStatus('Site name cannot be empty.'); return; }
   if (_isSiteNameTaken(name, selectedIdx)) {

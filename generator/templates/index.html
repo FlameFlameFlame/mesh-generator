@@ -110,22 +110,7 @@
             </table>
           </div>
           <div id="controls">
-            <label>Name
-              <input id="edit-name" type="text" placeholder="Select a site">
-            </label>
-            <label>Priority
-              <select id="edit-priority">
-                <option value="1">1</option><option value="2">2</option>
-                <option value="3">3</option><option value="4">4</option>
-                <option value="5">5</option>
-              </select>
-            </label>
-            <label title="Additional antenna height at this site endpoint (added to global mast height)">
-              Site height (m)
-              <input id="edit-site-height" type="number" value="0" min="0" max="200" step="0.5">
-            </label>
             <div class="btn-row">
-              <button onclick="doUpdate()">Update</button>
               <button onclick="doDetectCity()">Detect City</button>
               <button class="danger" onclick="doDelete()">Delete</button>
             </div>
