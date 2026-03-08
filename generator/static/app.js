@@ -91,23 +91,28 @@ let _optCancelInFlight = false;
 let _currentProjectName = null;
 let _projectRuns = [];
 let _statusActivityMessage = '';
+let _duplicateSiteNameIdxs = new Set();
 let _projectDirty = false;
 
 function _setOptimizationRunUiState(isRunning) {
   let runBtn = document.getElementById('btn-optimize');
   let cancelBtn = document.getElementById('btn-cancel-opt');
-  if (runBtn) runBtn.disabled = !!isRunning || !_hasRoutes || !_isGridProviderReady();
+  if (runBtn) runBtn.disabled = !!isRunning || !_hasRoutes || !_isGridProviderReady() || _hasLegacyDuplicateSiteNames();
   if (cancelBtn) cancelBtn.disabled = !isRunning;
   _refreshDisabledButtonTooltips();
   _refreshStatusBar();
 }
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
-  let ready = _hasRoutes && _isGridProviderReady();
+  let ready = _hasRoutes && _isGridProviderReady() && !_hasLegacyDuplicateSiteNames();
   btn.disabled = !ready || !!_optEventSource;
-  btn.title = ready
-    ? 'Run mesh_calculator optimization'
-    : 'Requires: Filter P2P + Grid provider ready';
+  if (_hasLegacyDuplicateSiteNames()) {
+    btn.title = 'Resolve duplicate site names first';
+  } else {
+    btn.title = ready
+      ? 'Run mesh_calculator optimization'
+      : 'Requires: Filter P2P + Grid provider ready';
+  }
   _refreshDisabledButtonTooltips();
 }
 
@@ -490,6 +495,45 @@ function _normalizeSiteName(name) {
   return String(name || '').trim().toLowerCase();
 }
 
+function _computeDuplicateSiteNameIdxs() {
+  let byName = {};
+  let dup = new Set();
+  sites.forEach(function(s, idx) {
+    let key = _normalizeSiteName(s && s.name);
+    if (!key) return;
+    if (!byName[key]) byName[key] = [];
+    byName[key].push(idx);
+  });
+  Object.keys(byName).forEach(function(key) {
+    let idxs = byName[key];
+    if (idxs.length > 1) idxs.forEach(function(i) { dup.add(i); });
+  });
+  return dup;
+}
+
+function _hasLegacyDuplicateSiteNames() {
+  return _duplicateSiteNameIdxs.size > 0;
+}
+
+function _refreshDuplicateSiteWarnings() {
+  _duplicateSiteNameIdxs = _computeDuplicateSiteNameIdxs();
+  let warning = document.getElementById('site-dup-warning');
+  let resolveBtn = document.getElementById('btn-resolve-site-dups');
+  if (warning) {
+    if (_hasLegacyDuplicateSiteNames()) {
+      warning.style.display = 'block';
+      warning.textContent = 'Duplicate site names detected. Save/Run are blocked until names are unique.';
+    } else {
+      warning.style.display = 'none';
+      warning.textContent = '';
+    }
+  }
+  if (resolveBtn) resolveBtn.style.display = _hasLegacyDuplicateSiteNames() ? '' : 'none';
+  let saveBtn = document.getElementById('btn-save-project');
+  if (saveBtn) saveBtn.disabled = _hasLegacyDuplicateSiteNames();
+  _updateOptimizeBtn();
+}
+
 function _isSiteNameTaken(name, excludeIdx) {
   let needle = _normalizeSiteName(name);
   if (!needle) return false;
@@ -541,6 +585,54 @@ function _updateSiteInline(idx, patch) {
   });
 }
 
+async function doResolveDuplicateSiteNames() {
+  let dupIdxs = Array.from(_computeDuplicateSiteNameIdxs()).sort(function(a, b) { return a - b; });
+  if (!dupIdxs.length) {
+    _refreshDuplicateSiteWarnings();
+    setStatus('Site names are already unique.');
+    return;
+  }
+  setStatus('Resolving duplicate site names…');
+  let used = new Set();
+  let nextNames = {};
+  sites.forEach(function(s, idx) {
+    let base = String((s && s.name) || '').trim();
+    if (!base) base = 'Site_' + (idx + 1);
+    let candidate = base;
+    let n = 2;
+    while (used.has(_normalizeSiteName(candidate))) {
+      candidate = base + ' (' + n + ')';
+      n += 1;
+    }
+    used.add(_normalizeSiteName(candidate));
+    nextNames[idx] = candidate;
+  });
+
+  for (let i = 0; i < sites.length; i++) {
+    let s = sites[i];
+    if (!s) continue;
+    let targetName = nextNames[i];
+    if (!targetName || targetName === s.name) continue;
+    let payload = {
+      name: targetName,
+      priority: parseInt(s.priority, 10) || 1,
+      site_height_m: Number.isFinite(parseFloat(s.site_height_m)) ? parseFloat(s.site_height_m) : 0.0,
+      fetch_city: s.fetch_city !== false,
+    };
+    let res = await fetch('/api/sites/' + i, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(payload),
+    });
+    let data = await safeJson(res);
+    if (Array.isArray(data)) sites = data;
+  }
+  _hasRoads = false;
+  refresh();
+  _setProjectDirty(true);
+  setStatus('Duplicate site names resolved automatically.');
+}
+
 function refresh() {
   siteMarkers.forEach(m => map.removeLayer(m));
   siteMarkers = [];
@@ -574,6 +666,7 @@ function refresh() {
       '<td><input class="site-inline-height" type="number" min="0" max="200" step="0.5" value="' + siteHeight.toFixed(1) + '"></td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
+    if (_duplicateSiteNameIdxs.has(i)) tr.classList.add('site-row-dup');
     let nameInput = tr.querySelector('.site-inline-input');
     let prioritySelect = tr.querySelector('.site-inline-priority');
     let heightInput = tr.querySelector('.site-inline-height');
@@ -608,6 +701,8 @@ function refresh() {
   if (document.getElementById('profile-controls').style.display !== 'none') {
     _updateProfileRouteSelect();
   }
+  _refreshDuplicateSiteWarnings();
+  _refreshDisabledButtonTooltips();
 }
 
 function selectSite(i) {
@@ -919,6 +1014,12 @@ function doDetectCity() {
 
 function doExport() {
   if (!_currentProjectName) { alert('Select a project first.'); return; }
+  if (_hasLegacyDuplicateSiteNames()) {
+    _setSiteManagementVisible(true);
+    refresh();
+    setStatus('Cannot save project: duplicate site names must be resolved first.');
+    return;
+  }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let forcedWaypointsSerial = {};
   Object.keys(_forcedWaypoints).forEach(function(k) {
@@ -1548,8 +1649,13 @@ function _loadProjectFromPath(configPath, onLoaded) {
     _applyLoadedRoutes(data);
     if (data.project_name) _setCurrentProject(data.project_name);
     if ((sites || []).length > 0) _setSiteManagementVisible(true);
+    _refreshDuplicateSiteWarnings();
     saveProjectState(null);
-    setStatus('Loaded project: ' + (data.config_path || ''));
+    if (_hasLegacyDuplicateSiteNames()) {
+      setStatus('Loaded project with duplicate site names. Resolve duplicates before save/run.');
+    } else {
+      setStatus('Loaded project: ' + (data.config_path || ''));
+    }
     if (data.bounds) map.fitBounds(data.bounds);
     if (typeof onLoaded === 'function') onLoaded(data);
   });
@@ -3366,6 +3472,12 @@ function doRunOptimization() {
     alert('Select a project first.');
     return;
   }
+  if (_hasLegacyDuplicateSiteNames()) {
+    _setSiteManagementVisible(true);
+    refresh();
+    setStatus('Cannot run optimization: duplicate site names must be resolved first.');
+    return;
+  }
   let maxTowers = parseInt(document.getElementById('opt-max-towers').value) || 8;
   let parameters = getSettings();
   _lastRunBaseH3Resolution = parameters.h3_resolution || null;
@@ -4298,6 +4410,7 @@ function _disabledButtonReason(btn) {
   if (!btn) return 'This action is currently unavailable.';
   let id = btn.id || '';
   if (id === 'btn-optimize') {
+    if (_hasLegacyDuplicateSiteNames()) return 'Resolve duplicate site names before running optimization.';
     if (_optEventSource) return 'Optimization is already running.';
     if (!_hasRoutes) return 'Run Filter P2P first to generate routes.';
     if (!_isGridProviderReady()) return 'Download data/elevation until the grid provider is ready.';
@@ -4326,6 +4439,9 @@ function _disabledButtonReason(btn) {
       return 'No tower sources are available for runtime coverage.';
     }
     return 'Tower coverage calculation is unavailable right now.';
+  }
+  if (id === 'btn-save-project' && _hasLegacyDuplicateSiteNames()) {
+    return 'Resolve duplicate site names before saving the project.';
   }
   let label = (btn.textContent || '').replace(/\s+/g, ' ').trim();
   if (label) return label + ' is unavailable right now.';
@@ -4476,6 +4592,7 @@ if (window.matchMedia) {
 applyTheme();
 _applyUiSectionState();
 _restoreSiteManagementVisibility();
+_refreshDuplicateSiteWarnings();
 _refreshDisabledButtonTooltips();
 _refreshStatusBar();
 setInterval(_refreshStatusBar, 1000);
