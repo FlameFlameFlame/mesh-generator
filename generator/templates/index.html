@@ -12,6 +12,7 @@
 <div id="main">
   <div id="map"></div>
   <div id="map-toolbar">
+    <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
     <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
     <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
     <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
@@ -76,7 +77,6 @@
         <div class="button-group wrap">
           <button id="btn-download" onclick="doDownloadData()">Download Data</button>
           <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
-          <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
         </div>
         <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
         <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>

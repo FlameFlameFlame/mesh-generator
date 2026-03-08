@@ -94,6 +94,23 @@ body {
   gap: 8px;
 }
 
+#map-toolbar #btn-theme {
+  width: 38px;
+  min-width: 38px;
+  padding: 6px 0;
+  border: 1px solid var(--btn-border);
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--fg);
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#map-toolbar #btn-theme:hover {
+  background: var(--btn-hover);
+}
+
 #btn-map-layers {
   padding: 6px 12px;
   border: 1px solid var(--btn-primary-border);
