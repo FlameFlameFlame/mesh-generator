@@ -4599,10 +4599,31 @@ function _attachLinkAnalysisHover(data) {
 
 const _STATE_KEY = 'meshProjectState';
 const _UI_SECTION_STATE_KEY = 'meshUiSectionStateV1';
+const _PREV_RESULTS_COLLAPSED_KEY = 'meshPrevResultsCollapsedV1';
 
 function _setSectionToggleGlyph(section, expanded) {
   let btn = document.querySelector('.section-toggle[data-section-target=\"' + section + '\"]');
   if (btn) btn.textContent = expanded ? '▾' : '▸';
+}
+
+function _applyPreviousResultsCollapsedState() {
+  let panel = document.getElementById('previous-results-panel');
+  let btn = document.getElementById('btn-toggle-previous-results');
+  if (!panel || !btn) return;
+  let collapsed = false;
+  try { collapsed = localStorage.getItem(_PREV_RESULTS_COLLAPSED_KEY) === '1'; } catch(e) { /* ignore */ }
+  panel.classList.toggle('collapsed', collapsed);
+  btn.textContent = collapsed ? '▸' : '▾';
+}
+
+function togglePreviousResultsCollapsed() {
+  let panel = document.getElementById('previous-results-panel');
+  let btn = document.getElementById('btn-toggle-previous-results');
+  if (!panel || !btn) return;
+  panel.classList.toggle('collapsed');
+  let collapsed = panel.classList.contains('collapsed');
+  btn.textContent = collapsed ? '▸' : '▾';
+  try { localStorage.setItem(_PREV_RESULTS_COLLAPSED_KEY, collapsed ? '1' : '0'); } catch(e) { /* ignore */ }
 }
 
 function _loadUiSectionState() {
@@ -5011,6 +5032,7 @@ if (window.matchMedia) {
 // Apply theme on load
 applyTheme();
 _applyUiSectionState();
+_applyPreviousResultsCollapsedState();
 _restoreSiteManagementVisibility();
 _refreshDuplicateSiteWarnings();
 _refreshDisabledButtonTooltips();

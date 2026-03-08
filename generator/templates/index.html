@@ -123,8 +123,13 @@
           </label>
           <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
           <div id="previous-results-panel">
-            <strong>Previous Results</strong>
-            <div id="previous-results-list" class="sub-note">No saved results yet.</div>
+            <div id="previous-results-header">
+              <strong>Previous Results</strong>
+              <button id="btn-toggle-previous-results" class="section-toggle" type="button" onclick="togglePreviousResultsCollapsed()" aria-label="Toggle Previous Results">▾</button>
+            </div>
+            <div id="previous-results-body">
+              <div id="previous-results-list" class="sub-note">No saved results yet.</div>
+            </div>
           </div>
         </div>
         <div class="button-group wrap">

@@ -553,8 +553,33 @@ body {
   font-size: 0.82em;
 }
 
-#previous-results-list {
+#previous-results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+#previous-results-header .section-toggle {
+  width: 28px;
+  min-width: 28px;
+  padding: 2px;
+  line-height: 1;
+}
+
+#previous-results-panel.collapsed #btn-toggle-previous-results {
+  transform: rotate(-90deg);
+}
+
+#previous-results-body {
   margin-top: 6px;
+}
+
+#previous-results-panel.collapsed #previous-results-body {
+  display: none;
+}
+
+#previous-results-list {
   display: grid;
   gap: 6px;
 }
