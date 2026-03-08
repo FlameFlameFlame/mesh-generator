@@ -9,6 +9,7 @@ from shapely.ops import unary_union
 from generator.models import SiteModel
 
 logger = logging.getLogger(__name__)
+_EXPORT_EXCLUDED_PARAMETER_KEYS = {"h3_resolution", "max_coverage_radius_m"}
 
 
 def export_sites_geojson(sites: list[SiteModel], path: str) -> None:
@@ -117,7 +118,6 @@ def export_config_yaml(
 ) -> None:
     """Write config.yaml for mesh-engine."""
     defaults = {
-        "h3_resolution": 8,
         "frequency_hz": 868000000.0,
         "mast_height_m": 5.0,
         "tx_power_mw": 500.0,
@@ -128,6 +128,8 @@ def export_config_yaml(
     }
     if parameters:
         defaults.update(parameters)
+    for key in _EXPORT_EXCLUDED_PARAMETER_KEYS:
+        defaults.pop(key, None)
     def _rel(p):
         """Make path relative to output_dir if possible, else keep as-is."""
         if not p:

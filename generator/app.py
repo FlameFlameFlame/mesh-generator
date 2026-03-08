@@ -529,7 +529,6 @@ def _save_project_to_dir(
     import shutil
 
     default_params = {
-        "h3_resolution": 8,
         "frequency_hz": 868_000_000,
         "mast_height_m": 5,
         "tx_power_mw": 500,
@@ -541,6 +540,8 @@ def _save_project_to_dir(
     export_params = dict(default_params)
     if parameters:
         export_params.update(parameters)
+    export_params.pop("h3_resolution", None)
+    export_params.pop("max_coverage_radius_m", None)
 
     sites = list(store)
     sites_path = os.path.join(output_dir, "sites.geojson")

@@ -129,6 +129,6 @@ class TestExportConfigYaml:
             config = yaml.safe_load(f)
         assert config["parameters"]["frequency_hz"] == 433000000.0
         assert config["parameters"]["mast_height_m"] == 10.0
-        assert config["parameters"]["h3_resolution"] == 9
+        assert "h3_resolution" not in config["parameters"]
         # Non-overridden defaults preserved
         assert config["parameters"]["max_towers_per_route"] == 10

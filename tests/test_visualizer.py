@@ -673,7 +673,7 @@ def test_save_project_routes_export_uses_runtime_parameters(tmp_path, monkeypatc
     with open(tmp_path / "status.json") as f:
         status_data = json.load(f)
 
-    assert routes_data["parameters"]["h3_resolution"] == 9
+    assert "h3_resolution" not in routes_data["parameters"]
     assert routes_data["parameters"]["frequency_hz"] == 915000000
     assert routes_data["parameters"]["mast_height_m"] == 2
     assert routes_data["routes"][0]["max_towers_per_route"] == 5
