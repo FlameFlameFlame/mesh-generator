@@ -11,9 +11,11 @@
 
 <div id="main">
   <div id="map"></div>
-  <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
-  <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
-  <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
+  <div id="map-toolbar">
+    <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
+    <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
+    <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
+  </div>
   <section class="ui-section" id="section-site-management">
     <div class="section-header">
       <h2 id="hdr-site-management">Site Management</h2>

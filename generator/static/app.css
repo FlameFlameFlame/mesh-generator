@@ -84,11 +84,17 @@ body {
 
 #map.placing { cursor: crosshair !important; }
 
-#btn-map-layers {
+#map-toolbar {
   position: absolute;
   left: 70px;
   top: 12px;
   z-index: 1200;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#btn-map-layers {
   padding: 6px 12px;
   border: 1px solid var(--btn-primary-border);
   border-radius: 8px;
@@ -123,10 +129,6 @@ body {
 }
 
 #btn-map-profile {
-  position: absolute;
-  left: 240px;
-  top: 12px;
-  z-index: 1200;
   padding: 6px 12px;
   border: 1px solid var(--btn-border);
   border-radius: 8px;
@@ -142,10 +144,6 @@ body {
 }
 
 #btn-map-coverage {
-  position: absolute;
-  left: 150px;
-  top: 12px;
-  z-index: 1200;
   padding: 6px 12px;
   border: 1px solid var(--btn-primary-border);
   border-radius: 8px;
