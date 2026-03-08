@@ -56,6 +56,7 @@
         <div class="button-group wrap">
           <button id="btn-open-project" onclick="doOpenProject()" title="Open selected project and load latest run">Open Project</button>
           <button class="primary" id="btn-save-project" onclick="doExport()">Save</button>
+          <button class="danger" id="btn-clear-project" onclick="doClear()" title="Clear current in-memory project state; keep files on disk">Clear Project</button>
         </div>
         <input id="output-dir" type="hidden" value="{{ default_output_dir }}">
       </div>
