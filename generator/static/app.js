@@ -1000,7 +1000,14 @@ function _setCurrentProject(name) {
     if (p) document.getElementById('output-dir').value = p;
   }
   _refreshProjectSelectLabels();
+  _refreshLoadPreviousResultsButton();
   _refreshStatusBar();
+}
+
+function _refreshLoadPreviousResultsButton() {
+  let btn = document.getElementById('btn-load-prev-results');
+  if (!btn) return;
+  btn.disabled = !_currentProjectName || !_projectRuns.length;
 }
 
 function _renderProjectList(projects) {
@@ -1033,6 +1040,7 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!_projectRuns.length) {
     panel.style.display = 'none';
     meta.textContent = '';
+    _refreshLoadPreviousResultsButton();
     _refreshStatusBar();
     return;
   }
@@ -1048,6 +1056,7 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   panel.style.display = '';
   onRunSelectionChanged();
+  _refreshLoadPreviousResultsButton();
   _refreshStatusBar();
 }
 
@@ -1153,6 +1162,29 @@ function doLoadSelectedRun() {
   }).finally(function() {
     endBusy();
   });
+}
+
+function doLoadPreviousResults() {
+  if (!_currentProjectName) { setStatus('Select a project first.'); return; }
+  setStatus('Fetching run history…');
+  fetch('/api/projects/runs?project_name=' + encodeURIComponent(_currentProjectName))
+    .then(safeJson)
+    .then(function(data) {
+      if (data.error) { setStatus('Run history load failed: ' + data.error); return; }
+      let runs = Array.isArray(data.runs) ? data.runs : [];
+      if (!runs.length) { setStatus('No saved calculation results found for this project.'); return; }
+      let sel = document.getElementById('run-select');
+      let currentRunId = sel && sel.value ? String(sel.value) : '';
+      let target = runs[0];
+      if (currentRunId && runs.length > 1 && String(runs[0].run_id) === currentRunId) {
+        target = runs[1];
+      }
+      _renderRunsPanel(runs, target.run_id);
+      doLoadSelectedRun();
+    })
+    .catch(function(err) {
+      setStatus('Run history load failed: ' + err);
+    });
 }
 
 function doOpenProject() {
@@ -1304,6 +1336,7 @@ function _applyClearedState() {
   _refreshGridProviderStatusUI();
   _syncCoverageFeatureUI();
   _renderRunsPanel([], null);
+  _refreshLoadPreviousResultsButton();
   _setProjectDirty(false);
   saveProjectState(null);
 }
@@ -4772,6 +4805,11 @@ function _disabledButtonReason(btn) {
   }
   if (id === 'btn-save-project' && _hasLegacyDuplicateSiteNames()) {
     return 'Resolve duplicate site names before saving the project.';
+  }
+  if (id === 'btn-load-prev-results') {
+    if (!_currentProjectName) return 'Select a project first.';
+    if (!_projectRuns.length) return 'No saved runs are available for this project yet.';
+    return 'Loading previous run results is unavailable right now.';
   }
   let label = (btn.textContent || '').replace(/\s+/g, ' ').trim();
   if (label) return label + ' is unavailable right now.';
