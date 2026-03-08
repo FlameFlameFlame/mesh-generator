@@ -117,7 +117,7 @@ body {
 #section-site-management {
   position: fixed;
   z-index: 1240;
-  width: min(460px, calc(100vw - 24px));
+  width: min(640px, calc(100vw - 24px));
   max-height: min(62vh, 560px);
   overflow: hidden;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
@@ -383,13 +383,24 @@ body {
 
 #site-list {
   overflow-y: auto;
+  overflow-x: hidden;
   min-height: 120px;
   max-height: 260px;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
 }
 
-#site-list table { width: 100%; border-collapse: collapse; }
+#site-list table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+#site-list th:nth-child(1),
+#site-list td:nth-child(1) { width: 56px; }
+#site-list th:nth-child(3),
+#site-list td:nth-child(3) { width: 130px; }
+#site-list th:nth-child(4),
+#site-list td:nth-child(4) { width: 190px; }
 #site-list th,
 #site-list td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--table-border); }
 #site-list tr.selected { background: var(--row-selected); }
@@ -426,6 +437,24 @@ body {
 }
 #site-list .site-action-delete:hover {
   background: var(--btn-danger-hover);
+}
+#section-site-management #btn-add-site {
+  width: 100%;
+  border-radius: 10px;
+  border: 1px solid var(--btn-primary-border);
+  background: linear-gradient(180deg, #8fb4df 0%, #7aa3d2 100%);
+  color: #10273f;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  padding: 8px 12px;
+}
+#section-site-management #btn-add-site:hover {
+  background: linear-gradient(180deg, #9abce4 0%, #86add8 100%);
+}
+#section-site-management #btn-add-site.active {
+  background: linear-gradient(180deg, #d35d5d 0%, #b53b3b 100%);
+  color: #fff;
+  border-color: #8f2d2d;
 }
 #site-list tr.site-empty-row td {
   text-align: center;

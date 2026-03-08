@@ -4624,6 +4624,10 @@ function _positionSiteManagementWindow() {
   let margin = 8;
   let left = Math.max(margin, Math.round(rect.left));
   let top = Math.round(rect.bottom + margin);
+  let maxLeft = Math.max(margin, window.innerWidth - card.offsetWidth - margin);
+  let maxTop = Math.max(margin, window.innerHeight - card.offsetHeight - margin);
+  left = Math.min(left, maxLeft);
+  top = Math.min(top, maxTop);
   card.style.left = left + 'px';
   card.style.top = top + 'px';
 }
