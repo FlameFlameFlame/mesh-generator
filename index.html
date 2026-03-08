@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Mesh Site Generator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+window.__API_BASE__ = window.__API_BASE__ || '/api/v2';
+</script>
+
+</head>
+<body>
+
+<div id="main">
+  <div id="map"></div>
+  <div id="map-toolbar">
+    <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
+    <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
+    <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
+    <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
+  </div>
+  <button id="btn-map-info" type="button" onclick="toggleInfoPanelFromMap()" title="Show generator usage instructions">Info</button>
+  <section class="ui-section" id="section-site-management">
+    <div class="section-header">
+      <h2 id="hdr-site-management">Site Management</h2>
+      <button class="section-toggle" type="button" data-section-target="site-management" onclick="toggleUiSection('site-management')" aria-label="Toggle Site Management">▾</button>
+    </div>
+    <div class="section-body" id="section-body-site-management">
+      <div id="site-management-block">
+        <div class="button-group wrap">
+          <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
+        </div>
+        <div id="site-dup-warning" class="site-warning" style="display:none;"></div>
+        <div class="button-group wrap">
+          <button id="btn-resolve-site-dups" onclick="doResolveDuplicateSiteNames()" style="display:none;">Resolve Duplicate Names</button>
+        </div>
+        <div id="site-list">
+          <table>
+            <thead><tr><th title="Download city boundary on 'Download Roads'">City</th><th>Name</th><th>Priority</th><th>Site Height (m)</th><th title="Actions">Actions</th></tr></thead>
+            <tbody id="site-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+  <div id="sidebar">
+    <div id="status-bar"></div>
+    <section class="ui-section" id="section-projects">
+      <div class="section-header">
+        <h2 id="hdr-projects">Projects</h2>
+        <button class="section-toggle" type="button" data-section-target="projects" onclick="toggleUiSection('projects')" aria-label="Toggle Projects">▾</button>
+      </div>
+      <div class="section-body" id="section-body-projects">
+        <div class="button-group wrap">
+          <button id="btn-refresh-projects" onclick="doRefreshProjects()" title="Refresh projects list">Refresh Projects</button>
+          <button id="btn-new-project" onclick="doNewProject()" title="Create a new project">New Project</button>
+          <button id="btn-rename-project" onclick="doRenameProject()" title="Rename selected project">Rename Project</button>
+        </div>
+        <select id="project-select" title="Project under projects/ root"></select>
+        <div class="button-group wrap">
+          <button id="btn-open-project" onclick="doOpenProject()" title="Open selected project and load latest run">Open Project</button>
+          <button class="primary" id="btn-save-project" onclick="doExport()">Save</button>
+          <button class="danger" id="btn-clear-project" onclick="doClear()" title="Clear current in-memory project state; keep files on disk">Clear Project</button>
+        </div>
+        <input id="output-dir" type="hidden" value="">
+      </div>
+    </section>
+
+    <section class="ui-section" id="section-preparation">
+      <div class="section-header">
+        <h2 id="hdr-preparation">Preparation</h2>
+        <button class="section-toggle" type="button" data-section-target="preparation" onclick="toggleUiSection('preparation')" aria-label="Toggle Preparation">▾</button>
+      </div>
+      <div class="section-body" id="section-body-preparation">
+        <div class="button-group wrap">
+          <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
+        </div>
+        <span id="bbox-status" style="font-size:0.82em;color:#555;display:none;">BBox set <a href="#" id="bbox-clear" onclick="clearBbox();return false;" style="color:#c00;text-decoration:none;" title="Remove bounding box">&#x2715;</a></span>
+        <div class="button-group wrap">
+          <button id="btn-download" onclick="doDownloadData()">Download Data</button>
+          <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
+        </div>
+        <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
+        <span id="elev-progress" class="progress-wrap"><progress id="elev-bar"></progress><span id="elev-label">Fetching...</span></span>
+        <span id="grid-progress" class="progress-wrap"><progress id="grid-bar"></progress><span id="grid-label">Building grid...</span></span>
+        <span id="profile-controls" style="display:none;align-items:center;gap:4px;font-size:0.85em;">
+          <select id="profile-route" title="Route to profile" style="max-width:240px;"></select>
+          <button onclick="doPathProfile()" title="Requires Filter P2P + Download Elevation">Show Profile</button>
+        </span>
+        <div id="hint" class="hint">Click "Add Site" then click on the map</div>
+      </div>
+    </section>
+
+    <section class="ui-section" id="section-results">
+      <div class="section-header">
+        <h2 id="hdr-results">Optimization</h2>
+        <button class="section-toggle" type="button" data-section-target="results" onclick="toggleUiSection('results')" aria-label="Toggle Optimization">▾</button>
+      </div>
+      <div class="section-body" id="section-body-results">
+        <div id="settings-panel">
+          <strong title="Optimization and RF calculation settings">Mesh Calculator Settings<br></strong>
+          <label title="Maximum towers to place per route">Towers per route
+            <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1" title="Maximum towers to place per route">
+          </label>
+          <label title="Radio frequency in MHz">Frequency (MHz)
+            <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1" title="Radio frequency in MHz">
+          </label>
+          <label title="Antenna mast height above ground">Mast height (m)
+            <input id="set-mast-height" type="number" value="5" min="0.5" max="200" step="0.5" title="Antenna mast height above ground">
+          </label>
+          <label title="Transmit power in milliwatts">TX power (mW)
+            <input id="set-tx-power-mw" type="number" value="500" min="1" max="5000" step="10" title="Transmit power in milliwatts">
+          </label>
+          <label title="Antenna gain at both TX and RX">Antenna gain (dBi)
+            <input id="set-antenna-gain" type="number" value="2.0" min="0" max="30" step="0.5" title="Antenna gain at both TX and RX">
+          </label>
+          <label title="Minimum receivable signal level">RX sensitivity (dBm)
+            <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1" title="Minimum receivable signal level">
+          </label>
+          <label title="How Fresnel clearance affects link acceptance">
+            LOS policy
+            <select id="set-los-policy" title="How Fresnel clearance affects link acceptance">
+              <option value="strict" selected>Strict LOS (clearance &gt;= 0)</option>
+              <option value="budget">Budget + Diffraction (allow NLOS)</option>
+            </select>
+          </label>
+          <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
+            <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50" title="Expand tower candidate area beyond roads (0 = road cells only)">
+          </label>
+          <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
+          <div id="previous-results-panel">
+            <div id="previous-results-header">
+              <strong>Previous Results</strong>
+              <button id="btn-toggle-previous-results" class="prev-results-toggle" type="button" onclick="togglePreviousResultsCollapsed()" aria-label="Toggle Previous Results">▾</button>
+            </div>
+            <div id="previous-results-body">
+              <div id="previous-results-list" class="sub-note">No saved results yet.</div>
+            </div>
+          </div>
+        </div>
+        <div class="button-group wrap">
+          <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
+            title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
+          <button class="danger" id="btn-cancel-opt" onclick="doCancelOptimization()" disabled
+            title="Cancel currently running optimization">Cancel Calculation</button>
+        </div>
+        <div class="button-group wrap">
+          <button class="danger" onclick="doClearCalculations()" title="Clear map calculation layers only; keep files">Clear Calc</button>
+        </div>
+        <div id="runs-panel">
+          <strong>Calculation Runs</strong>
+          <select id="run-select" style="width:100%;margin-top:6px;" onchange="onRunSelectionChanged()"></select>
+          <div class="btn-row" style="margin-top:6px;">
+            <button onclick="doLoadSelectedRun()">Load Run</button>
+          </div>
+          <div id="run-meta" class="sub-note" style="margin-top:4px;"></div>
+        </div>
+        <div id="report-panel">
+          <strong>Report</strong>
+          <table id="report-table"></table>
+        </div>
+        <div id="opt-log-panel">
+          <strong>Optimization Log</strong>
+          <div id="opt-progress-panel" style="display:none;">
+            <div class="opt-progress-row" id="opt-progress-row-dp">
+              <div class="opt-progress-head"><span class="opt-progress-algo">DP</span><span id="opt-progress-pct-dp">0%</span></div>
+              <progress id="opt-progress-bar-dp" max="100" value="0"></progress>
+              <div class="opt-progress-label" id="opt-progress-label-dp">Queued…</div>
+            </div>
+          </div>
+          <pre id="opt-log"></pre>
+        </div>
+        <div id="route-list"></div>
+      </div>
+    </section>
+  </div>
+
+  <section class="ui-section" id="section-layers">
+      <div class="section-header">
+        <h2 id="hdr-layers">Layers</h2>
+        <button class="section-toggle" type="button" data-section-target="layers" onclick="toggleUiSection('layers')" aria-label="Toggle Layers">▾</button>
+      </div>
+      <div class="section-body" id="section-body-layers">
+        <div id="layer-panel">
+          <div class="layer-group layer-group-prep" data-testid="prep-layers-group">
+            <strong id="hdr-preparation-layers">Preparation Layers</strong>
+            <div id="grid-provider-status" class="sub-note">Grid provider: not ready</div>
+            <label><input type="checkbox" id="chk-roads" onchange="toggleLayer('roads')" checked> Roads</label>
+            <label><input type="checkbox" id="chk-boundary" onchange="toggleLayer('boundary')" checked> Boundary</label>
+            <label><input type="checkbox" id="chk-cities" onchange="toggleLayer('cities')" checked> City Boundaries</label>
+            <label><input type="checkbox" id="chk-elevation" onchange="toggleElevation()" disabled> Elevation</label>
+            <div class="sub-control" id="elevation-opacity-row" style="display:none;">
+              <label>Opacity <input type="range" id="elev-opacity" min="0" max="1" step="0.05" value="0.5" oninput="setElevationOpacity(this.value)"></label>
+            </div>
+            <label><input type="checkbox" id="chk-grid-cells" onchange="toggleGridCells()"> Grid Cells (road buffer)</label>
+            <label><input type="checkbox" id="chk-grid-cells-full" onchange="toggleGridCellsFull()"> Grid Cells (full boundary)</label>
+            <div class="sub-control">
+              <select id="grid-color-mode" onchange="rerenderGridLayersForActiveAlgo()">
+                <option value="resolution">Grid color: resolution</option>
+                <option value="elevation">Grid color: elevation</option>
+              </select>
+            </div>
+            <div class="sub-control sub-note" id="grid-render-status" style="display:none;"></div>
+            <div class="sub-control sub-note" id="grid-resolution-info" style="display:none;"></div>
+          </div>
+
+          <div class="layer-group layer-group-results" data-testid="result-layers-group">
+            <strong id="hdr-result-layers">Result Layers</strong>
+            <label><input type="checkbox" id="chk-towers" onchange="toggleLayer('towers')" checked> Towers</label>
+            <label><input type="checkbox" id="chk-edges" onchange="toggleEdges()" checked> Visibility Links</label>
+            <div class="sub-control" id="edge-filter-row">
+              <select id="edge-los-filter" onchange="rerenderEdges()">
+                <option value="all">All links</option>
+                <option value="los">LOS only</option>
+                <option value="nlos">NLOS only</option>
+              </select>
+            </div>
+            <label><input type="checkbox" id="chk-gap-repair-hexes" onchange="toggleLayer('gapRepairHexes')"> Search Hexes (all attempts)</label>
+            <div class="sub-control" id="gap-repair-filter-row" style="display:none;">
+              <select id="gap-repair-preset" onchange="applyGapRepairPreset()">
+                <option value="custom">Preset: Custom</option>
+                <option value="dp_fallback">DP fallback search</option>
+                <option value="dp_gap">DP gap repair</option>
+              </select>
+              <select id="gap-repair-algo-filter" onchange="onGapRepairFilterChanged()">
+                <option value="all">All algorithms</option>
+                <option value="dp">DP only</option>
+              </select>
+              <select id="gap-repair-phase-filter" onchange="onGapRepairFilterChanged()" style="margin-top:4px;">
+                <option value="all">All phases</option>
+                <option value="initial">Initial</option>
+                <option value="gap_repair">Gap repair</option>
+                <option value="fallback_initial">Fallback initial</option>
+              </select>
+              <select id="gap-repair-scope-filter" onchange="onGapRepairFilterChanged()" style="margin-top:4px;">
+                <option value="all">All scopes</option>
+                <option value="initial_corridor">Initial corridor</option>
+                <option value="initial_buffer_candidate">Initial buffer candidate</option>
+                <option value="initial_buffer_selected">Initial buffer selected</option>
+                <option value="fallback_corridor">Fallback corridor</option>
+                <option value="fallback_buffer_candidate">Fallback buffer candidate</option>
+                <option value="fallback_buffer_selected">Fallback buffer selected</option>
+                <option value="gap_repair_subcorridor">Gap-repair subcorridor</option>
+              </select>
+              <select id="gap-repair-color-mode" onchange="rerenderGapRepairHexes()" style="margin-top:4px;">
+                <option value="buffer_growth">Color: buffer growth</option>
+                <option value="phase">Color: phase</option>
+              </select>
+              <div id="gap-repair-scope-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;">
+                Scopes: corridor, buffer candidates, selected injections, gap subcorridor.
+              </div>
+              <div id="gap-repair-color-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;display:none;"></div>
+            </div>
+          </div>
+        </div>
+        <div id="tower-legend">
+          <strong>Tower Sources</strong>
+          <div id="tower-legend-items"></div>
+        </div>
+      </div>
+  </section>
+
+  <section class="ui-section" id="section-coverage">
+    <div class="section-header">
+      <h2 id="hdr-coverage">Coverage</h2>
+      <button class="section-toggle" type="button" onclick="closeCoveragePopupWindow()" aria-label="Close Coverage">✕</button>
+    </div>
+    <div class="section-body" id="section-body-coverage">
+      <div id="coverage-panel">
+        <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Route Coverage (roads)</label>
+        <div class="sub-control" id="coverage-metric-row" style="display:none;">
+          <select id="coverage-metric" onchange="renderCoverage()">
+            <option value="visible_tower_count">Visible tower count</option>
+            <option value="path_loss">Path loss (dB)</option>
+            <option value="elevation">Elevation (m)</option>
+            <option value="clearance">Clearance (m)</option>
+            <option value="distance_to_closest_tower">Distance to tower (m)</option>
+          </select>
+        </div>
+        <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
+        <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
+          <label title="Maximum distance from source used for runtime coverage computation">
+            Calculation radius (m)
+            <input id="tower-coverage-radius-m" type="number" value="15000" min="100" max="200000" step="100" style="width:110px;">
+          </label>
+          <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
+            <option value="received_power_dbm">Received power (dBm)</option>
+            <option value="path_loss_db">Path loss (dB)</option>
+            <option value="distance_m">Distance to tower (m)</option>
+            <option value="elevation">Elevation (m)</option>
+          </select>
+          <select id="tower-coverage-state-filter" onchange="renderTowerCoverage()">
+            <option value="all">All cells</option>
+            <option value="covered">Covered only</option>
+            <option value="uncovered">Uncovered only</option>
+          </select>
+          <label title="Choose source type for runtime coverage">
+            Coverage Source
+            <select id="tower-coverage-source-mode" onchange="onCoverageSourceModeChange()">
+              <option value="manual">Manual (map click)</option>
+              <option value="towers">Existing towers</option>
+            </select>
+          </label>
+          <div id="tower-coverage-manual-row" style="margin-top:6px;">
+            <div style="font-size:0.8em;opacity:0.9;margin-bottom:4px;">Click map to place/recalculate coverage.</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to place a temporary tower and calculate coverage">Place Tower</button>
+            </div>
+          </div>
+          <div id="tower-coverage-towers-row" style="display:none;margin-top:6px;">
+            <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
+              <option value="all">All towers</option>
+            </select>
+            <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+              <button id="btn-calc-selected-coverage" onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
+              <button id="btn-calc-all-coverage" onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
+            </div>
+          </div>
+          <div id="tower-coverage-progress-row" class="progress-wrap" style="margin-top:6px;">
+            <progress id="tower-coverage-progress-bar" max="100" value="0"></progress>
+            <span id="tower-coverage-progress-label">Calculating coverage...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ui-section" id="section-info">
+    <div class="section-header">
+      <h2 id="hdr-info">Usage Guide</h2>
+      <button class="section-toggle" type="button" onclick="closeInfoPopupWindow()" aria-label="Close Usage Guide">✕</button>
+    </div>
+    <div class="section-body" id="section-body-info">
+      <div id="info-panel">
+        <ol>
+          <li>Select or create a project in the `Projects` section, then click `Open Project`.</li>
+          <li>Add sites in `Site Management` using `+ Add Site`, then click on the map to place each site.</li>
+          <li>For each site, set priority and height inline; use the city checkbox to fetch city boundaries.</li>
+          <li>Optional: draw a bounding box in `Preparation` if you want to limit data download area.</li>
+          <li>Click `Download Data` to fetch roads, elevation, and prepare the planning grid.</li>
+          <li>Click `Filter P2P` to build candidate routes between sites.</li>
+          <li>Review and adjust parameters in `Optimization`, then click `Run Optimization`.</li>
+          <li>Use `Calculation Runs`, `Report`, and `Optimization Log` to inspect results and reload past runs.</li>
+          <li>Open `Layers` to control map overlays for preparation data and optimization outputs.</li>
+          <li>Open `Coverage` to run runtime tower coverage checks and inspect coverage metrics.</li>
+          <li>Click `Save` in `Projects` to persist current state and outputs to the selected project.</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+</div>
+
+<div id="path-profile-panel" style="display:none;">
+  <div id="path-profile-header">
+    <strong id="path-profile-title">Path Profile</strong>
+    <button onclick="closePathProfile()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">&#x2715;</button>
+  </div>
+  <div style="position:relative;line-height:0;">
+    <canvas id="path-profile-canvas" width="560" height="180"></canvas>
+    <div id="profile-hover-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(0,0,0,0.72);color:#fff;font-size:14px;font-weight:bold;padding:3px 8px;border-radius:3px;white-space:nowrap;z-index:10;"></div>
+  </div>
+  <div id="path-profile-stats" style="font-size:0.82em;color:#444;padding:4px 0;"></div>
+</div>
+
+<div id="link-analysis-panel" style="display:none;">
+  <div id="link-analysis-header">
+    <strong id="link-analysis-title">Link Analysis</strong>
+    <button onclick="closeLinkAnalysis()" style="float:right;border:none;background:none;cursor:pointer;font-size:1.1em;">&#x2715;</button>
+  </div>
+  <div id="link-analysis-meta" style="font-size:0.82em;padding:2px 0 4px;"></div>
+  <div style="position:relative;line-height:0;font-size:0;">
+    <canvas id="link-analysis-canvas" width="560" height="200"></canvas>
+    <div id="link-analysis-tooltip" style="display:none;position:absolute;pointer-events:none;background:rgba(0,0,0,0.78);color:#fff;font-size:12px;line-height:1.5;padding:4px 9px;border-radius:4px;white-space:nowrap;z-index:10;"></div>
+  </div>
+</div>
+
+<div class="color-legend" id="color-legend">
+  <div id="legend-title">Coverage</div>
+  <div class="gradient-bar" id="legend-gradient"></div>
+  <div class="labels"><span id="legend-min">0</span><span id="legend-max">1</span></div>
+</div>
+
+<div id="global-busy-overlay" style="display:none;">
+  <div class="busy-content">
+    <div class="busy-spinner" aria-hidden="true"></div>
+    <div id="global-busy-text">Working…</div>
+  </div>
+</div>
+
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>
