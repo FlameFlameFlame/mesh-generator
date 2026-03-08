@@ -660,6 +660,12 @@ function refresh() {
   });
   let tbody = document.getElementById('site-tbody');
   tbody.innerHTML = '';
+  if (!sites.length) {
+    let emptyRow = document.createElement('tr');
+    emptyRow.className = 'site-empty-row';
+    emptyRow.innerHTML = '<td colspan="4">No sites yet. Click "+ Add Site" and place one on the map.</td>';
+    tbody.appendChild(emptyRow);
+  }
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
     let siteHeight = Number(s.site_height_m);

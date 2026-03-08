@@ -117,15 +117,15 @@ body {
 #section-site-management {
   position: fixed;
   z-index: 1240;
-  width: min(520px, calc(100vw - 24px));
-  max-height: min(66vh, 620px);
+  width: min(460px, calc(100vw - 24px));
+  max-height: min(62vh, 560px);
   overflow: hidden;
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
 }
 
 #section-site-management .section-body {
   overflow-y: auto;
-  max-height: calc(min(66vh, 620px) - 48px);
+  max-height: calc(min(62vh, 560px) - 48px);
 }
 
 #btn-map-profile {
@@ -326,6 +326,7 @@ body {
 
 #site-list {
   overflow-y: auto;
+  min-height: 120px;
   max-height: 260px;
   border: 1px solid var(--panel-border);
   border-radius: 8px;
@@ -340,6 +341,12 @@ body {
 #site-list tr.site-row-dup .site-inline-input {
   border-color: #c95555;
   box-shadow: 0 0 0 1px rgba(201, 85, 85, 0.24) inset;
+}
+#site-list tr.site-empty-row td {
+  text-align: center;
+  color: var(--muted);
+  font-style: italic;
+  padding: 14px 8px;
 }
 
 .site-warning {
