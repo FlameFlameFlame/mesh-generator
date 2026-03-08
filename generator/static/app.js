@@ -1100,7 +1100,7 @@ function _renderPreviousResultsList() {
     mainBtn.innerHTML = '<strong>' + ts + '</strong><span class="sub-note">Towers: ' + towers + ' | Clusters: ' + clusters + '</span>';
     mainBtn.onclick = function() { _selectPreviousResult(runId); };
     let delBtn = document.createElement('button');
-    delBtn.className = 'prev-result-delete';
+    delBtn.className = 'site-action-btn site-action-delete';
     delBtn.type = 'button';
     delBtn.title = 'Delete this saved result';
     delBtn.textContent = '✕';

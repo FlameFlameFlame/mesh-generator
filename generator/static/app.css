@@ -445,7 +445,7 @@ body {
 #site-list .site-row-actions {
   white-space: nowrap;
 }
-#site-list .site-action-btn {
+.site-action-btn {
   width: 28px;
   height: 28px;
   padding: 0;
@@ -454,15 +454,15 @@ body {
   font-size: 0.9em;
   line-height: 1;
 }
-#site-list .site-action-move.active {
+.site-action-move.active {
   background: var(--btn-primary-bg);
   border-color: var(--btn-primary-border);
 }
-#site-list .site-action-delete {
+.site-action-delete {
   background: var(--btn-danger-bg);
   border-color: var(--btn-danger-border);
 }
-#site-list .site-action-delete:hover {
+.site-action-delete:hover {
   background: var(--btn-danger-hover);
 }
 #section-site-management #btn-add-site {
@@ -621,23 +621,6 @@ body {
   background: var(--card-active-bg);
 }
 
-.prev-result-delete {
-  width: 28px;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  border-radius: 6px;
-  border: 1px solid var(--btn-danger-border);
-  background: var(--btn-danger-bg);
-  color: var(--fg);
-  cursor: pointer;
-  line-height: 1;
-  font-size: 0.9em;
-}
-
-.prev-result-delete:hover {
-  background: var(--btn-danger-hover);
-}
 
 #status-bar {
   background: var(--status-bg);
