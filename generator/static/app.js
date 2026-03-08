@@ -464,6 +464,15 @@ map.on('zoomend', function() {
 });
 
 function addSite(name, lat, lon, priority, siteHeightM) {
+  name = String(name || '').trim();
+  if (!name) {
+    setStatus('Site name cannot be empty.');
+    return;
+  }
+  if (_isSiteNameTaken(name, -1)) {
+    setStatus('Site name must be unique: "' + name + '" already exists.');
+    return;
+  }
   fetch('/api/sites', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -475,6 +484,61 @@ function addSite(name, lat, lon, priority, siteHeightM) {
       site_height_m: Number.isFinite(siteHeightM) ? siteHeightM : 0.0,
     })
   }).then(safeJson).then(data => { sites = data; _hasRoads = false; refresh(); _setProjectDirty(true); });
+}
+
+function _normalizeSiteName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+function _isSiteNameTaken(name, excludeIdx) {
+  let needle = _normalizeSiteName(name);
+  if (!needle) return false;
+  for (let i = 0; i < sites.length; i++) {
+    if (i === excludeIdx) continue;
+    if (_normalizeSiteName(sites[i] && sites[i].name) === needle) return true;
+  }
+  return false;
+}
+
+function _updateSiteInline(idx, patch) {
+  let s = sites[idx];
+  if (!s) return;
+  let nextName = Object.prototype.hasOwnProperty.call(patch || {}, 'name')
+    ? String(patch.name || '').trim()
+    : String(s.name || '').trim();
+  let nextPriority = Object.prototype.hasOwnProperty.call(patch || {}, 'priority')
+    ? parseInt(patch.priority, 10)
+    : parseInt(s.priority, 10);
+  let nextHeight = Object.prototype.hasOwnProperty.call(patch || {}, 'site_height_m')
+    ? parseFloat(patch.site_height_m)
+    : parseFloat(s.site_height_m);
+  if (!nextName) {
+    setStatus('Site name cannot be empty.');
+    refresh();
+    return;
+  }
+  if (_isSiteNameTaken(nextName, idx)) {
+    setStatus('Site name must be unique: "' + nextName + '" already exists.');
+    refresh();
+    return;
+  }
+  if (!Number.isFinite(nextPriority) || nextPriority < 1 || nextPriority > 5) nextPriority = 1;
+  if (!Number.isFinite(nextHeight) || nextHeight < 0) nextHeight = 0.0;
+  fetch('/api/sites/' + idx, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      name: nextName,
+      priority: nextPriority,
+      site_height_m: nextHeight,
+      fetch_city: s.fetch_city !== false,
+    })
+  }).then(safeJson).then(function(data) {
+    sites = data;
+    _hasRoads = false;
+    refresh();
+    _setProjectDirty(true);
+  });
 }
 
 function refresh() {
@@ -491,17 +555,53 @@ function refresh() {
   tbody.innerHTML = '';
   sites.forEach((s, i) => {
     let tr = document.createElement('tr');
-    let label = s.name + (s.boundary_name ? ' [' + s.boundary_name + ']' : '');
     let siteHeight = Number(s.site_height_m);
     if (!Number.isFinite(siteHeight)) siteHeight = 0.0;
     let chk = '<input type="checkbox" title="Download city boundary on \'Download Roads\'"'
             + (s.fetch_city !== false ? ' checked' : '')
             + ' onclick="event.stopPropagation()" onchange="toggleFetchCity(' + i + ', this.checked)">';
-    tr.innerHTML = '<td>' + chk + '</td><td>' + label + '</td><td>' +
-      '\\u2605'.repeat(s.priority) + ' (' + s.priority + ')</td><td>' +
-      siteHeight.toFixed(1) + '</td>';
+    let nameVal = String(s.name || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+    let boundaryTip = s.boundary_name ? (' title="City: ' + String(s.boundary_name).replace(/"/g, '&quot;') + '"') : '';
+    tr.innerHTML = '<td>' + chk + '</td>' +
+      '<td><input class="site-inline-input" type="text" value="' + nameVal + '"' + boundaryTip + '></td>' +
+      '<td><select class="site-inline-priority">' +
+      '<option value="1"' + (String(s.priority) === '1' ? ' selected' : '') + '>1</option>' +
+      '<option value="2"' + (String(s.priority) === '2' ? ' selected' : '') + '>2</option>' +
+      '<option value="3"' + (String(s.priority) === '3' ? ' selected' : '') + '>3</option>' +
+      '<option value="4"' + (String(s.priority) === '4' ? ' selected' : '') + '>4</option>' +
+      '<option value="5"' + (String(s.priority) === '5' ? ' selected' : '') + '>5</option>' +
+      '</select></td>' +
+      '<td><input class="site-inline-height" type="number" min="0" max="200" step="0.5" value="' + siteHeight.toFixed(1) + '"></td>';
     tr.onclick = () => selectSite(i);
     if (i === selectedIdx) tr.classList.add('selected');
+    let nameInput = tr.querySelector('.site-inline-input');
+    let prioritySelect = tr.querySelector('.site-inline-priority');
+    let heightInput = tr.querySelector('.site-inline-height');
+    [nameInput, prioritySelect, heightInput].forEach(function(ctrl) {
+      if (!ctrl) return;
+      ctrl.addEventListener('click', function(ev) { ev.stopPropagation(); });
+      ctrl.addEventListener('keydown', function(ev) {
+        if (ev.key === 'Enter') {
+          ev.preventDefault();
+          ctrl.blur();
+        }
+      });
+    });
+    if (nameInput) {
+      nameInput.addEventListener('change', function() {
+        _updateSiteInline(i, {name: nameInput.value});
+      });
+    }
+    if (prioritySelect) {
+      prioritySelect.addEventListener('change', function() {
+        _updateSiteInline(i, {priority: parseInt(prioritySelect.value, 10)});
+      });
+    }
+    if (heightInput) {
+      heightInput.addEventListener('change', function() {
+        _updateSiteInline(i, {site_height_m: parseFloat(heightInput.value)});
+      });
+    }
     tbody.appendChild(tr);
   });
   // Keep profile site selects in sync
@@ -533,7 +633,11 @@ function doUpdate() {
   let priority = parseInt(document.getElementById('edit-priority').value);
   let siteHeight = parseFloat(document.getElementById('edit-site-height').value);
   if (!Number.isFinite(siteHeight) || siteHeight < 0) siteHeight = 0.0;
-  if (!name) return;
+  if (!name) { setStatus('Site name cannot be empty.'); return; }
+  if (_isSiteNameTaken(name, selectedIdx)) {
+    setStatus('Site name must be unique: "' + name + '" already exists.');
+    return;
+  }
   fetch('/api/sites/' + selectedIdx, {
     method: 'PUT',
     headers: {'Content-Type': 'application/json'},
@@ -1443,6 +1547,7 @@ function _loadProjectFromPath(configPath, onLoaded) {
     _autoCoverageModeFromCurrentState(true);
     _applyLoadedRoutes(data);
     if (data.project_name) _setCurrentProject(data.project_name);
+    if ((sites || []).length > 0) _setSiteManagementVisible(true);
     saveProjectState(null);
     setStatus('Loaded project: ' + (data.config_path || ''));
     if (data.bounds) map.fitBounds(data.bounds);
@@ -4131,7 +4236,9 @@ function toggleSiteManagement() {
   let block = document.getElementById('site-management-block');
   if (!block) return;
   let isVisible = block.style.display !== 'none';
-  _setSiteManagementVisible(!isVisible);
+  let next = !isVisible;
+  _setSiteManagementVisible(next);
+  if (next) refresh();
 }
 
 function toggleLayersPanelFromMap() {
