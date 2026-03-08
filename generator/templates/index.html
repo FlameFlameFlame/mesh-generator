@@ -91,9 +91,6 @@
       <div class="section-body" id="section-body-results">
         <div id="settings-panel">
           <strong title="Optimization and RF calculation settings">Mesh Calculator Settings</strong>
-          <label title="H3 resolution (6=coarse, 9=fine)">H3 resolution
-            <input id="set-h3-resolution" type="number" value="8" min="6" max="9" step="1" title="H3 resolution (6=coarse, 9=fine)">
-          </label>
           <label title="Radio frequency in MHz">Frequency (MHz)
             <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1" title="Radio frequency in MHz">
           </label>
@@ -118,9 +115,6 @@
           </label>
           <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
             <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50" title="Expand tower candidate area beyond roads (0 = road cells only)">
-          </label>
-          <label title="Maximum radius around each tower to compute coverage (meters)">Coverage radius (m)
-            <input id="set-coverage-radius-m" type="number" value="15000" min="1000" max="100000" step="1000" title="Maximum radius around each tower to compute coverage (meters)">
           </label>
           <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
         </div>
