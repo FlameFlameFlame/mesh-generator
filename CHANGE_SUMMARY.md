@@ -1,5 +1,6 @@
 # Change Summary
 
+- 2026-03-08: Split `mesh-generator` into a frontend-only Vite app: migrated UI to `index.html` + `src/`, added `/api` -> `/api/v2` fetch/EventSource adapter (`src/api-base.js`), enabled Vite dev proxy for `/api/v2`, added Vitest coverage for API URL rewriting, and removed legacy Flask backend/Python test stack from this repo.
 - 2026-03-08: Fixed `/api/grid-layers` NameError after handler extraction by injecting missing app helpers (`_cells_in_bbox`, `_grid_cells_to_geojson`) into `pipeline_site_handlers` call context.
 - 2026-03-08: Added regression test `TestGridLayersEndpoint.test_grid_layers_uses_helper_injected_from_app_module` in `tests/test_visualizer.py`.
 - 2026-03-08: Fixed `Grid Cells (full boundary)` toggle when road-grid cache already exists: `_ensureGridLayersLoaded(...)` now supports `requireFull`, forces `include_full=true` when full layer is requested, and avoids cache short-circuit unless full-grid payload is actually present.
