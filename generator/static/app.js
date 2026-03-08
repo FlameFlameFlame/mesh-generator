@@ -4663,6 +4663,7 @@ function toggleUiSection(section) {
 
 function _applyUiSectionState() {
   let defaults = {
+    'site-management': true,
     projects: true,
     preparation: true,
     results: true,
