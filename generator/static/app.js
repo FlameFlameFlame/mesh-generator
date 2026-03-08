@@ -3287,11 +3287,6 @@ function _beginBusyOverlay(msg) {
 
 // --- Run mesh_calculator optimization on selected routes ---
 
-function toggleSettings() {
-  let panel = document.getElementById('settings-panel');
-  panel.style.display = panel.style.display === 'none' ? '' : 'none';
-}
-
 function getSettings() {
   let freqMhz = parseFloat(document.getElementById('set-frequency-mhz').value) || 868;
   let losPolicy = document.getElementById('set-los-policy').value || 'strict';

@@ -50,7 +50,6 @@
         <div class="button-group wrap">
           <button id="btn-download" onclick="doDownloadData()">Download Data</button>
           <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
-          <button onclick="toggleSettings()" title="Mesh calculator settings">Settings &#x2699;</button>
           <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
         </div>
         <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
@@ -61,42 +60,6 @@
           <button onclick="doPathProfile()" title="Requires Filter P2P + Download Elevation">Show Profile</button>
         </span>
         <div id="hint" class="hint">Click "Add Site" then click on the map</div>
-
-        <div id="settings-panel" style="display:none;">
-          <strong>Mesh Calculator Settings</strong>
-          <label title="H3 resolution (6=coarse, 9=fine)">H3 resolution
-            <input id="set-h3-resolution" type="number" value="8" min="6" max="9" step="1">
-          </label>
-          <label title="Radio frequency in MHz">Frequency (MHz)
-            <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1">
-          </label>
-          <label title="Antenna mast height above ground">Mast height (m)
-            <input id="set-mast-height" type="number" value="5" min="0.5" max="200" step="0.5">
-          </label>
-          <label title="Transmit power in milliwatts">TX power (mW)
-            <input id="set-tx-power-mw" type="number" value="500" min="1" max="5000" step="10">
-          </label>
-          <label title="Antenna gain at both TX and RX">Antenna gain (dBi)
-            <input id="set-antenna-gain" type="number" value="2.0" min="0" max="30" step="0.5">
-          </label>
-          <label title="Minimum receivable signal level">RX sensitivity (dBm)
-            <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1">
-          </label>
-          <label title="How Fresnel clearance affects link acceptance">
-            LOS policy
-            <select id="set-los-policy">
-              <option value="strict" selected>Strict LOS (clearance &gt;= 0)</option>
-              <option value="budget">Budget + Diffraction (allow NLOS)</option>
-            </select>
-          </label>
-          <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
-            <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50">
-          </label>
-          <label title="Maximum radius around each tower to compute coverage (meters)">Coverage radius (m)
-            <input id="set-coverage-radius-m" type="number" value="15000" min="1000" max="100000" step="1000">
-          </label>
-          <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;">Save settings</button>
-        </div>
 
         <div id="site-management-block" style="display:none;">
           <div id="site-dup-warning" class="site-warning" style="display:none;"></div>
@@ -122,10 +85,45 @@
 
     <section class="ui-section" id="section-results">
       <div class="section-header">
-        <h2 id="hdr-results">Calculation Results</h2>
-        <button class="section-toggle" type="button" data-section-target="results" onclick="toggleUiSection('results')" aria-label="Toggle Calculation Results">▾</button>
+        <h2 id="hdr-results">Optimization</h2>
+        <button class="section-toggle" type="button" data-section-target="results" onclick="toggleUiSection('results')" aria-label="Toggle Optimization">▾</button>
       </div>
       <div class="section-body" id="section-body-results">
+        <div id="settings-panel">
+          <strong title="Optimization and RF calculation settings">Mesh Calculator Settings</strong>
+          <label title="H3 resolution (6=coarse, 9=fine)">H3 resolution
+            <input id="set-h3-resolution" type="number" value="8" min="6" max="9" step="1" title="H3 resolution (6=coarse, 9=fine)">
+          </label>
+          <label title="Radio frequency in MHz">Frequency (MHz)
+            <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1" title="Radio frequency in MHz">
+          </label>
+          <label title="Antenna mast height above ground">Mast height (m)
+            <input id="set-mast-height" type="number" value="5" min="0.5" max="200" step="0.5" title="Antenna mast height above ground">
+          </label>
+          <label title="Transmit power in milliwatts">TX power (mW)
+            <input id="set-tx-power-mw" type="number" value="500" min="1" max="5000" step="10" title="Transmit power in milliwatts">
+          </label>
+          <label title="Antenna gain at both TX and RX">Antenna gain (dBi)
+            <input id="set-antenna-gain" type="number" value="2.0" min="0" max="30" step="0.5" title="Antenna gain at both TX and RX">
+          </label>
+          <label title="Minimum receivable signal level">RX sensitivity (dBm)
+            <input id="set-rx-sensitivity" type="number" value="-137" min="-150" max="-80" step="1" title="Minimum receivable signal level">
+          </label>
+          <label title="How Fresnel clearance affects link acceptance">
+            LOS policy
+            <select id="set-los-policy" title="How Fresnel clearance affects link acceptance">
+              <option value="strict" selected>Strict LOS (clearance &gt;= 0)</option>
+              <option value="budget">Budget + Diffraction (allow NLOS)</option>
+            </select>
+          </label>
+          <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
+            <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50" title="Expand tower candidate area beyond roads (0 = road cells only)">
+          </label>
+          <label title="Maximum radius around each tower to compute coverage (meters)">Coverage radius (m)
+            <input id="set-coverage-radius-m" type="number" value="15000" min="1000" max="100000" step="1000" title="Maximum radius around each tower to compute coverage (meters)">
+          </label>
+          <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
+        </div>
         <div class="button-group wrap">
           <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled
             title="Requires: Filter P2P + Download Elevation">Run Optimization</button>
@@ -133,7 +131,7 @@
             title="Cancel currently running optimization">Cancel Calculation</button>
         </div>
         <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
-          <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1"
+          <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1" title="Maximum towers to place per route"
                  style="width:64px;padding:3px 4px;"> towers/route
         </label>
         <div class="button-group wrap">
