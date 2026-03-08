@@ -1,45 +1,27 @@
-# mesh-generator (Frontend)
+Note: All of the code was written by LLMs: Claude Code and ChatGPT.
 
-`mesh-generator` is now the frontend-only web UI for the planner workflow.
+# Project Description
+mesh-generator is the frontend web application for the mesh planner workflow. It provides the interactive UI for project setup, map operations, optimization controls, and result visualization.
 
-## Requirements
-
-- Node.js 20+
-- `mesh-backend` running with `/api/v2` endpoints
-
-## Development
-
+# How to Run It
 ```bash
 npm install
 npm run dev
 ```
 
-The Vite dev server listens on `http://127.0.0.1:5173` and proxies `/api/v2/*` to
-`http://127.0.0.1:8000` by default.
+The development server runs at http://127.0.0.1:5173 and proxies `/api/v2/*` to `http://127.0.0.1:8000`.
 
-To target another backend URL:
+To target another backend:
 
 ```bash
 BACKEND_URL=http://127.0.0.1:9000 npm run dev
 ```
 
-## Production Build
+To build production assets:
 
 ```bash
 npm run build
 ```
 
-Build output is generated in `dist/`.
-
-## Production-like Run With mesh-backend
-
-1. Build the frontend in this repo:
-   ```bash
-   npm run build
-   ```
-2. Run `mesh-backend` with `FRONTEND_DIST_DIR` pointing at this build output:
-   ```bash
-   FRONTEND_DIST_DIR=/Users/timur/Documents/src/LoraMeshPlanner/mesh-generator/dist uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
-   ```
-
-Then open `http://127.0.0.1:8000`.
+# High-Level Implementation Details
+The application is built with Vite and modern browser JavaScript modules under `src/`. During development, Vite handles local serving and API proxying; for integrated runtime, the generated `dist/` assets are served by `mesh-backend`.
