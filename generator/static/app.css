@@ -108,6 +108,20 @@ body {
   box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.3);
 }
 
+#section-site-management {
+  position: fixed;
+  z-index: 1240;
+  width: min(520px, calc(100vw - 24px));
+  max-height: min(66vh, 620px);
+  overflow: hidden;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+#section-site-management .section-body {
+  overflow-y: auto;
+  max-height: calc(min(66vh, 620px) - 48px);
+}
+
 #btn-map-profile {
   position: absolute;
   left: 240px;
@@ -575,5 +589,9 @@ body {
   #path-profile-panel,
   #link-analysis-panel {
     right: 0;
+  }
+  #section-site-management {
+    width: calc(100vw - 24px);
+    max-height: min(56vh, 520px);
   }
 }

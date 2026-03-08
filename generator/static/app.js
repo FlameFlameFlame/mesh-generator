@@ -4373,7 +4373,6 @@ function _attachLinkAnalysisHover(data) {
 
 const _STATE_KEY = 'meshProjectState';
 const _UI_SECTION_STATE_KEY = 'meshUiSectionStateV1';
-const _SITE_MGMT_OPEN_KEY = 'meshUiSiteManagementOpenV1';
 
 function _setSectionToggleGlyph(section, expanded) {
   let btn = document.querySelector('.section-toggle[data-section-target=\"' + section + '\"]');
@@ -4422,26 +4421,15 @@ function _applyUiSectionState() {
   });
 }
 
-function _setSiteManagementVisible(visible) {
+function _setSiteManagementVisible(_visible) {
   let block = document.getElementById('site-management-block');
-  let btn = document.getElementById('btn-site-management');
   if (!block) return;
-  let on = !!visible;
-  block.style.display = on ? '' : 'none';
-  if (btn) {
-    btn.textContent = on ? 'Hide Site Management' : 'Site Management';
-    btn.classList.toggle('primary', on);
-  }
-  try { localStorage.setItem(_SITE_MGMT_OPEN_KEY, on ? '1' : '0'); } catch(e) { /* ignore */ }
+  block.style.display = '';
 }
 
 function toggleSiteManagement() {
-  let block = document.getElementById('site-management-block');
-  if (!block) return;
-  let isVisible = block.style.display !== 'none';
-  let next = !isVisible;
-  _setSiteManagementVisible(next);
-  if (next) refresh();
+  _setSiteManagementVisible(true);
+  refresh();
 }
 
 function toggleLayersPanelFromMap() {
@@ -4472,6 +4460,18 @@ function _positionCoveragePopupWindow() {
   let card = document.getElementById('section-coverage');
   let btn = document.getElementById('btn-map-coverage');
   if (!card || !btn || !card.classList.contains('coverage-popup-open')) return;
+  let rect = btn.getBoundingClientRect();
+  let margin = 8;
+  let left = Math.max(margin, Math.round(rect.left));
+  let top = Math.round(rect.bottom + margin);
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+}
+
+function _positionSiteManagementWindow() {
+  let card = document.getElementById('section-site-management');
+  let btn = document.getElementById('btn-map-layers');
+  if (!card || !btn) return;
   let rect = btn.getBoundingClientRect();
   let margin = 8;
   let left = Math.max(margin, Math.round(rect.left));
@@ -4537,9 +4537,8 @@ function toggleCoveragePanelFromMap() {
 }
 
 function _restoreSiteManagementVisibility() {
-  let saved = null;
-  try { saved = localStorage.getItem(_SITE_MGMT_OPEN_KEY); } catch(e) { /* ignore */ }
-  _setSiteManagementVisible(saved === '1');
+  _setSiteManagementVisible(true);
+  _positionSiteManagementWindow();
 }
 
 function _disabledButtonReason(btn) {
@@ -4748,6 +4747,7 @@ if (document.body && window.MutationObserver) {
 window.addEventListener('resize', function() {
   _positionLayersPopupWindow();
   _positionCoveragePopupWindow();
+  _positionSiteManagementWindow();
 });
 
 document.addEventListener('click', function(e) {

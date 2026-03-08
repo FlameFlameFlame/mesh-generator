@@ -14,7 +14,34 @@
   <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
   <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
   <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
+  <section class="ui-section" id="section-site-management">
+    <div class="section-header">
+      <h2 id="hdr-site-management">Site Management</h2>
+    </div>
+    <div class="section-body" id="section-body-site-management">
+      <div id="site-management-block">
+        <div id="site-dup-warning" class="site-warning" style="display:none;"></div>
+        <div class="button-group wrap">
+          <button id="btn-resolve-site-dups" onclick="doResolveDuplicateSiteNames()" style="display:none;">Resolve Duplicate Names</button>
+        </div>
+        <div id="site-list">
+          <table>
+            <thead><tr><th title="Download city boundary on 'Download Roads'">City</th><th>Name</th><th>Priority</th><th>Site Height (m)</th></tr></thead>
+            <tbody id="site-tbody"></tbody>
+          </table>
+        </div>
+        <div id="controls">
+          <div class="btn-row">
+            <button onclick="doDetectCity()">Detect City</button>
+            <button class="danger" onclick="doDelete()">Delete</button>
+          </div>
+          <div id="city-info" style="display:none;font-size:0.85em;color:#555;margin-top:4px;"></div>
+        </div>
+      </div>
+    </div>
+  </section>
   <div id="sidebar">
+    <div id="status-bar"></div>
     <section class="ui-section" id="section-projects">
       <div class="section-header">
         <h2 id="hdr-projects">Projects</h2>
@@ -42,7 +69,6 @@
       </div>
       <div class="section-body" id="section-body-preparation">
         <div class="button-group wrap">
-          <button id="btn-site-management" onclick="toggleSiteManagement()" title="Show or hide site table and editor">Site Management</button>
           <button id="btn-add-site" class="primary" onclick="toggleAddMode()">+ Add Site</button>
           <button id="btn-bbox" onclick="toggleBboxMode()" title="Draw a bounding box to limit road fetching area">Draw BBox</button>
         </div>
@@ -60,26 +86,6 @@
           <button onclick="doPathProfile()" title="Requires Filter P2P + Download Elevation">Show Profile</button>
         </span>
         <div id="hint" class="hint">Click "Add Site" then click on the map</div>
-
-        <div id="site-management-block" style="display:none;">
-          <div id="site-dup-warning" class="site-warning" style="display:none;"></div>
-          <div class="button-group wrap">
-            <button id="btn-resolve-site-dups" onclick="doResolveDuplicateSiteNames()" style="display:none;">Resolve Duplicate Names</button>
-          </div>
-          <div id="site-list">
-            <table>
-              <thead><tr><th title="Download city boundary on 'Download Roads'">City</th><th>Name</th><th>Priority</th><th>Site Height (m)</th></tr></thead>
-              <tbody id="site-tbody"></tbody>
-            </table>
-          </div>
-          <div id="controls">
-            <div class="btn-row">
-              <button onclick="doDetectCity()">Detect City</button>
-              <button class="danger" onclick="doDelete()">Delete</button>
-            </div>
-            <div id="city-info" style="display:none;font-size:0.85em;color:#555;margin-top:4px;"></div>
-          </div>
-        </div>
       </div>
     </section>
 
@@ -129,7 +135,6 @@
                  style="width:64px;padding:3px 4px;"> towers/route
         </label>
         <div class="button-group wrap">
-          <button class="danger" onclick="doClear()">Clear</button>
           <button class="danger" onclick="doClearCalculations()" title="Clear map calculation layers only; keep files">Clear Calc</button>
         </div>
         <div id="runs-panel">
@@ -156,7 +161,6 @@
           <pre id="opt-log"></pre>
         </div>
         <div id="route-list"></div>
-        <div id="status-bar"></div>
       </div>
     </section>
   </div>
