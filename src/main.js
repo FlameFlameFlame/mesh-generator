@@ -1,52 +1,7 @@
 import './style.css';
+import { installApiV2Prefixing } from './api-base.js';
 
-const _API_BASE_RAW = (window.__API_BASE__ || '/api/v2').trim();
-const API_BASE = _API_BASE_RAW.endsWith('/') ? _API_BASE_RAW.slice(0, -1) : _API_BASE_RAW;
-
-function _rewriteApiPath(path) {
-  if (typeof path !== 'string') return path;
-  if (path.startsWith('/api/')) {
-    return API_BASE + path.slice(4);
-  }
-  try {
-    const parsed = new URL(path, window.location.origin);
-    if (parsed.origin === window.location.origin && parsed.pathname.startsWith('/api/')) {
-      parsed.pathname = API_BASE + parsed.pathname.slice(4);
-      return parsed.toString();
-    }
-  } catch (_err) {
-    return path;
-  }
-  return path;
-}
-
-const _nativeFetch = window.fetch.bind(window);
-window.fetch = function patchedFetch(input, init) {
-  if (typeof input === 'string') {
-    return _nativeFetch(_rewriteApiPath(input), init);
-  }
-  if (input instanceof URL) {
-    return _nativeFetch(new URL(_rewriteApiPath(input.toString())), init);
-  }
-  if (typeof Request !== 'undefined' && input instanceof Request) {
-    const rewritten = _rewriteApiPath(input.url);
-    if (rewritten === input.url) {
-      return _nativeFetch(input, init);
-    }
-    return _nativeFetch(new Request(rewritten, input), init);
-  }
-  return _nativeFetch(input, init);
-};
-
-if (typeof window.EventSource === 'function') {
-  const NativeEventSource = window.EventSource;
-  window.EventSource = class ApiEventSource extends NativeEventSource {
-    constructor(url, options) {
-      const nextUrl = typeof url === 'string' ? _rewriteApiPath(url) : url;
-      super(nextUrl, options);
-    }
-  };
-}
+installApiV2Prefixing(window);
 
 const COLORS = {1:"red", 2:"orange", 3:"blue", 4:"green", 5:"gray"};
 const TOWER_COLORS = {seed:"#e74c3c", route:"#3498db", bridge:"#9b59b6", corridor:"#27ae60"};
