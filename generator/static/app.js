@@ -4063,6 +4063,20 @@ function toggleSiteManagement() {
   _setSiteManagementVisible(!isVisible);
 }
 
+function toggleLayersPanelFromMap() {
+  let card = document.getElementById('section-layers');
+  if (!card) return;
+  let wasCollapsed = card.classList.contains('collapsed');
+  toggleUiSection('layers');
+  if (wasCollapsed) {
+    let sidebar = document.getElementById('sidebar');
+    if (sidebar) {
+      let cardTop = card.offsetTop - 8;
+      sidebar.scrollTo({ top: Math.max(0, cardTop), behavior: 'smooth' });
+    }
+  }
+}
+
 function _restoreSiteManagementVisibility() {
   let saved = null;
   try { saved = localStorage.getItem(_SITE_MGMT_OPEN_KEY); } catch(e) { /* ignore */ }
