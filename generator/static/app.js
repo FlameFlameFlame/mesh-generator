@@ -62,6 +62,7 @@ let _pinnedWayIds = new Set();  // flat set for O(1) lookup in render
 let _sharedWayIds = new Set();   // way_ids used by 2+ active routes (for shared-road style)
 let _wayIdSharedColors = {};     // wid -> [color, ...] for segments shared by multiple routes
 let _optResult = null;
+let _suppressNextLayersOutsideClick = false;
 let _lastRunBaseH3Resolution = null;
 // Prerequisite tracking for Run Optimization button
 let _hasRoads = false;
@@ -89,6 +90,7 @@ let _optEventSource = null;
 let _optCancelInFlight = false;
 let _currentProjectName = null;
 let _projectRuns = [];
+let _statusActivityMessage = '';
 let _projectDirty = false;
 
 function _setOptimizationRunUiState(isRunning) {
@@ -96,6 +98,8 @@ function _setOptimizationRunUiState(isRunning) {
   let cancelBtn = document.getElementById('btn-cancel-opt');
   if (runBtn) runBtn.disabled = !!isRunning || !_hasRoutes || !_isGridProviderReady();
   if (cancelBtn) cancelBtn.disabled = !isRunning;
+  _refreshDisabledButtonTooltips();
+  _refreshStatusBar();
 }
 function _updateOptimizeBtn() {
   let btn = document.getElementById('btn-optimize');
@@ -104,6 +108,7 @@ function _updateOptimizeBtn() {
   btn.title = ready
     ? 'Run mesh_calculator optimization'
     : 'Requires: Filter P2P + Grid provider ready';
+  _refreshDisabledButtonTooltips();
 }
 
 function _isGridProviderReady() {
@@ -130,6 +135,7 @@ function _refreshGridProviderStatusUI() {
     el.textContent = 'Grid provider: elevation loaded, grid bundle not ready';
     el.classList.add('warn');
   }
+  _refreshStatusBar();
 }
 
 function _setGridRenderStatus(msg) {
@@ -449,6 +455,10 @@ map.on('click', function(e) {
 map.on('moveend', function() {
   _refreshGridForViewportIfVisible();
 });
+map.on('movestart', function() {
+  // Drag/pan should not be treated as a dismiss click for the floating Layers window.
+  _suppressNextLayersOutsideClick = true;
+});
 map.on('zoomend', function() {
   _refreshGridForViewportIfVisible();
 });
@@ -584,6 +594,7 @@ function _refreshProjectSelectLabels() {
 function _setProjectDirty(isDirty) {
   _projectDirty = !!isDirty;
   _refreshProjectSelectLabels();
+  _refreshStatusBar();
 }
 
 function _setCurrentProject(name) {
@@ -595,6 +606,7 @@ function _setCurrentProject(name) {
     if (p) document.getElementById('output-dir').value = p;
   }
   _refreshProjectSelectLabels();
+  _refreshStatusBar();
 }
 
 function _renderProjectList(projects) {
@@ -627,6 +639,7 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!_projectRuns.length) {
     panel.style.display = 'none';
     meta.textContent = '';
+    _refreshStatusBar();
     return;
   }
   _projectRuns.forEach(function(r) {
@@ -641,6 +654,7 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   panel.style.display = '';
   onRunSelectionChanged();
+  _refreshStatusBar();
 }
 
 function onRunSelectionChanged() {
@@ -2353,6 +2367,7 @@ function _syncCoverageFeatureUI() {
   if (calcSelBtn) calcSelBtn.disabled = (!(_hasElevation && providerReady) || !towersAvailable);
   if (calcAllBtn) calcAllBtn.disabled = (!(_hasElevation && providerReady) || !towersAvailable);
   metricRow.style.opacity = (_hasElevation && providerReady) ? '1' : '0.6';
+  _refreshDisabledButtonTooltips();
 }
 
 function _autoCoverageModeFromCurrentState(preferTowers) {
@@ -2902,10 +2917,66 @@ function toggleLayer(name) {
   }
 }
 
-function setStatus(msg) {
+function _ensureStatusBarStructure() {
   let el = document.getElementById('status-bar');
-  if (msg) { el.style.display = 'block'; el.textContent = msg; }
-  else { el.style.display = 'none'; }
+  if (!el) return null;
+  let summary = document.getElementById('status-summary');
+  let activity = document.getElementById('status-activity');
+  if (!summary || !activity) {
+    el.innerHTML = '';
+    summary = document.createElement('div');
+    summary.id = 'status-summary';
+    summary.style.fontWeight = '600';
+    activity = document.createElement('div');
+    activity.id = 'status-activity';
+    activity.style.marginTop = '2px';
+    el.appendChild(summary);
+    el.appendChild(activity);
+  }
+  return {el, summary, activity};
+}
+
+function _projectStatusSummaryText() {
+  let project = _currentProjectName || 'none';
+  let runsCount = Array.isArray(_projectRuns) ? _projectRuns.length : 0;
+  let dirty = _projectDirty ? 'yes' : 'no';
+  let roads = _hasRoads ? 'ready' : 'missing';
+  let routes = _hasRoutes ? 'ready' : 'missing';
+  let elevation = _hasElevation ? 'ready' : 'missing';
+  let grid = _isGridProviderReady() ? 'ready' : 'pending';
+  return 'Project: ' + project +
+    ' | Runs: ' + runsCount +
+    ' | Unsaved: ' + dirty +
+    ' | Roads: ' + roads +
+    ' | Routes: ' + routes +
+    ' | Elevation: ' + elevation +
+    ' | Grid: ' + grid;
+}
+
+function _liveActivityText() {
+  let towerProg = document.getElementById('tower-coverage-progress-row');
+  if (_optEventSource) return 'Running optimization…';
+  if (_optCancelInFlight) return 'Canceling optimization…';
+  let dlBtn = document.getElementById('btn-download');
+  if (dlBtn && dlBtn.disabled) return 'Downloading roads/elevation…';
+  let p2pBtn = document.getElementById('btn-p2p');
+  if (p2pBtn && p2pBtn.disabled) return 'Filtering P2P routes…';
+  if (towerProg && towerProg.style.display !== 'none') return 'Calculating runtime tower coverage…';
+  if (_statusActivityMessage) return _statusActivityMessage;
+  return 'Idle';
+}
+
+function _refreshStatusBar() {
+  let parts = _ensureStatusBarStructure();
+  if (!parts) return;
+  parts.el.style.display = 'block';
+  parts.summary.textContent = _projectStatusSummaryText();
+  parts.activity.textContent = 'Activity: ' + _liveActivityText();
+}
+
+function setStatus(msg) {
+  _statusActivityMessage = msg ? String(msg) : '';
+  _refreshStatusBar();
 }
 
 // --- Run mesh_calculator optimization on selected routes ---
@@ -4065,22 +4136,109 @@ function toggleSiteManagement() {
 
 function toggleLayersPanelFromMap() {
   let card = document.getElementById('section-layers');
+  let btn = document.getElementById('btn-map-layers');
   if (!card) return;
-  let wasCollapsed = card.classList.contains('collapsed');
-  toggleUiSection('layers');
-  if (wasCollapsed) {
-    let sidebar = document.getElementById('sidebar');
-    if (sidebar) {
-      let cardTop = card.offsetTop - 8;
-      sidebar.scrollTo({ top: Math.max(0, cardTop), behavior: 'smooth' });
-    }
+  if (card.classList.contains('layers-popup-open')) {
+    closeLayersPopupWindow();
+    return;
   }
+  openLayersPopupWindow();
+  if (btn) btn.classList.add('active');
+}
+
+function _positionLayersPopupWindow() {
+  let card = document.getElementById('section-layers');
+  let btn = document.getElementById('btn-map-layers');
+  if (!card || !btn || !card.classList.contains('layers-popup-open')) return;
+  let rect = btn.getBoundingClientRect();
+  let margin = 8;
+  let left = Math.max(margin, Math.round(rect.left));
+  let top = Math.round(rect.bottom + margin);
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+}
+
+function openLayersPopupWindow() {
+  let card = document.getElementById('section-layers');
+  let btn = document.getElementById('btn-map-layers');
+  if (!card) return;
+  card.style.display = 'block';
+  card.classList.remove('collapsed');
+  _setSectionToggleGlyph('layers', true);
+  card.classList.add('layers-popup-open');
+  _positionLayersPopupWindow();
+  if (btn) btn.classList.add('active');
+}
+
+function closeLayersPopupWindow() {
+  let card = document.getElementById('section-layers');
+  let btn = document.getElementById('btn-map-layers');
+  if (!card) return;
+  card.classList.remove('layers-popup-open');
+  card.style.left = '';
+  card.style.top = '';
+  card.style.display = 'none';
+  if (btn) btn.classList.remove('active');
 }
 
 function _restoreSiteManagementVisibility() {
   let saved = null;
   try { saved = localStorage.getItem(_SITE_MGMT_OPEN_KEY); } catch(e) { /* ignore */ }
   _setSiteManagementVisible(saved === '1');
+}
+
+function _disabledButtonReason(btn) {
+  if (!btn) return 'This action is currently unavailable.';
+  let id = btn.id || '';
+  if (id === 'btn-optimize') {
+    if (_optEventSource) return 'Optimization is already running.';
+    if (!_hasRoutes) return 'Run Filter P2P first to generate routes.';
+    if (!_isGridProviderReady()) return 'Download data/elevation until the grid provider is ready.';
+    return 'Optimization cannot run yet.';
+  }
+  if (id === 'btn-cancel-opt') {
+    return 'No optimization job is running.';
+  }
+  if (id === 'btn-download') {
+    return 'Data download is already in progress.';
+  }
+  if (id === 'btn-p2p') {
+    return 'P2P filtering is already in progress.';
+  }
+  if (id === 'btn-point-coverage') {
+    if (!_hasElevation || !_isGridProviderReady()) {
+      return 'Load elevation and wait for grid provider readiness first.';
+    }
+    return 'Point coverage is unavailable right now.';
+  }
+  if (id === 'btn-calc-selected-coverage' || id === 'btn-calc-all-coverage') {
+    if (!_hasElevation || !_isGridProviderReady()) {
+      return 'Load elevation and wait for grid provider readiness first.';
+    }
+    if (!_hasTowerCoverageSources()) {
+      return 'No tower sources are available for runtime coverage.';
+    }
+    return 'Tower coverage calculation is unavailable right now.';
+  }
+  let label = (btn.textContent || '').replace(/\s+/g, ' ').trim();
+  if (label) return label + ' is unavailable right now.';
+  return 'This action is currently unavailable.';
+}
+
+function _refreshDisabledButtonTooltips() {
+  document.querySelectorAll('button').forEach(function(btn) {
+    if (btn.dataset.enabledTitleCaptured !== '1') {
+      btn.dataset.enabledTitle = btn.getAttribute('title') || '';
+      btn.dataset.enabledTitleCaptured = '1';
+    }
+    if (btn.disabled) {
+      btn.setAttribute('title', _disabledButtonReason(btn));
+    } else {
+      let originalTitle = btn.dataset.enabledTitle || '';
+      if (originalTitle) btn.setAttribute('title', originalTitle);
+      else btn.removeAttribute('title');
+    }
+  });
 }
 
 function saveProjectState(projectPath) {
@@ -4211,6 +4369,42 @@ if (window.matchMedia) {
 applyTheme();
 _applyUiSectionState();
 _restoreSiteManagementVisibility();
+_refreshDisabledButtonTooltips();
+_refreshStatusBar();
+setInterval(_refreshStatusBar, 1000);
+
+if (document.body && window.MutationObserver) {
+  let disabledObserver = new MutationObserver(function() {
+    _refreshDisabledButtonTooltips();
+  });
+  disabledObserver.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['disabled'],
+  });
+}
+
+window.addEventListener('resize', function() {
+  _positionLayersPopupWindow();
+});
+
+document.addEventListener('click', function(e) {
+  let card = document.getElementById('section-layers');
+  let btn = document.getElementById('btn-map-layers');
+  if (!card || !btn) return;
+  if (!card.classList.contains('layers-popup-open')) return;
+  if (_suppressNextLayersOutsideClick) {
+    _suppressNextLayersOutsideClick = false;
+    return;
+  }
+  if (card.contains(e.target) || btn.contains(e.target)) return;
+  closeLayersPopupWindow();
+});
+
+document.addEventListener('keydown', function(e) {
+  if (e.key === 'Escape') closeLayersPopupWindow();
+});
 
 let _projectSelectEl = document.getElementById('project-select');
 if (_projectSelectEl) {

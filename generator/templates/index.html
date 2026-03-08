@@ -12,6 +12,7 @@
 <div id="main">
   <div id="map"></div>
   <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
+  <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
   <div id="sidebar">
     <section class="ui-section" id="section-projects">
       <div class="section-header">
@@ -49,7 +50,6 @@
           <button id="btn-download" onclick="doDownloadData()">Download Data</button>
           <button id="btn-p2p" onclick="doFilterP2P()">Filter P2P</button>
           <button onclick="toggleSettings()" title="Mesh calculator settings">Settings &#x2699;</button>
-          <button onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile &#x1F4C8;</button>
           <button id="btn-theme" onclick="toggleTheme()" title="Toggle dark/light mode">&#x1F319;</button>
         </div>
         <span id="roads-progress" class="progress-wrap"><progress id="roads-bar"></progress><span id="roads-label">Fetching...</span></span>
@@ -177,8 +177,9 @@
         <div id="status-bar"></div>
       </div>
     </section>
+  </div>
 
-    <section class="ui-section" id="section-layers">
+  <section class="ui-section" id="section-layers">
       <div class="section-header">
         <h2 id="hdr-layers">Layers</h2>
         <button class="section-toggle" type="button" data-section-target="layers" onclick="toggleUiSection('layers')" aria-label="Toggle Layers">▾</button>
@@ -315,8 +316,7 @@
           <div id="tower-legend-items"></div>
         </div>
       </div>
-    </section>
-  </div>
+  </section>
 </div>
 
 <div id="path-profile-panel" style="display:none;">

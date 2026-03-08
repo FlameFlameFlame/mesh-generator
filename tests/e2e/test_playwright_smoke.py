@@ -139,6 +139,8 @@ def _run_ui_checks(page) -> None:
     page.wait_for_selector("#hdr-projects")
     page.wait_for_selector("#hdr-preparation")
     page.wait_for_selector("#hdr-results")
+    _assert(page.locator("#btn-map-layers").count() == 1, "Missing #btn-map-layers")
+    page.click("#btn-map-layers")
     page.wait_for_selector("#hdr-layers")
     page.wait_for_selector("#hdr-preparation-layers")
     page.wait_for_selector("#hdr-result-layers")
