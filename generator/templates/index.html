@@ -95,7 +95,7 @@
       </div>
       <div class="section-body" id="section-body-results">
         <div id="settings-panel">
-          <strong title="Optimization and RF calculation settings">Mesh Calculator Settings</strong>
+          <strong title="Optimization and RF calculation settings">Mesh Calculator Settings<br></strong>
           <label title="Radio frequency in MHz">Frequency (MHz)
             <input id="set-frequency-mhz" type="number" value="868" min="100" max="2000" step="1" title="Radio frequency in MHz">
           </label>
@@ -121,6 +121,10 @@
           <label title="Expand tower candidate area beyond roads (0 = road cells only). Uses adaptive H3 up to res 9 for terrain sampling.">Road buffer (m)
             <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50" title="Expand tower candidate area beyond roads (0 = road cells only)">
           </label>
+          <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
+            <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1" title="Maximum towers to place per route"
+                   style="width:64px;padding:3px 4px;"> towers/route
+          </label>
           <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
           <div id="previous-results-panel">
             <div id="previous-results-header">
@@ -138,10 +142,6 @@
           <button class="danger" id="btn-cancel-opt" onclick="doCancelOptimization()" disabled
             title="Cancel currently running optimization">Cancel Calculation</button>
         </div>
-        <label title="Maximum towers to place per route" style="font-size:0.85em;display:flex;align-items:center;gap:4px;">
-          <input id="opt-max-towers" type="number" value="5" min="1" max="50" step="1" title="Maximum towers to place per route"
-                 style="width:64px;padding:3px 4px;"> towers/route
-        </label>
         <div class="button-group wrap">
           <button class="danger" onclick="doClearCalculations()" title="Clear map calculation layers only; keep files">Clear Calc</button>
         </div>
