@@ -1,5 +1,8 @@
 Note: All of the code was written by LLMs: Claude Code and ChatGPT.
 
+[![Unit Tests](https://github.com/FlameFlameFlame/mesh-generator/actions/workflows/unit-tests.yml/badge.svg?branch=main)](https://github.com/FlameFlameFlame/mesh-generator/actions/workflows/unit-tests.yml)
+[![Smoke Tests](https://github.com/FlameFlameFlame/mesh-generator/actions/workflows/smoke-tests.yml/badge.svg?branch=main)](https://github.com/FlameFlameFlame/mesh-generator/actions/workflows/smoke-tests.yml)
+
 # Project Description
 mesh-generator is the frontend web application for the mesh planner workflow. It provides the interactive UI for project setup, map operations, optimization controls, and result visualization.
 
