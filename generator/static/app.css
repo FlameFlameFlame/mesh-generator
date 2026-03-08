@@ -518,6 +518,19 @@ body {
   padding: 8px 10px;
 }
 
+#settings-panel label {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.85em;
+  color: var(--muted);
+}
+
+#settings-panel input,
+#settings-panel select {
+  width: 100%;
+  margin-top: 2px;
+}
+
 #layer-panel { font-size: 0.85em; }
 #layer-panel label { display: block; margin: 3px 0; cursor: pointer; }
 #layer-panel .sub-control { margin-left: 22px; margin-top: 2px; }
