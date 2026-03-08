@@ -1,5 +1,6 @@
 import json
 import os
+import shutil
 
 import yaml
 from flask import jsonify, render_template, request
@@ -111,6 +112,37 @@ def load_project_run(app_mod):
     except FileNotFoundError as exc:
         return jsonify({"error": str(exc)}), 404
     return jsonify(payload)
+
+
+def delete_project_run(app_mod):
+    data = request.get_json(silent=True) or {}
+    project_name = (data.get("project_name") or "").strip()
+    run_id = (data.get("run_id") or "").strip()
+    if not project_name or not run_id:
+        return jsonify({"error": "project_name and run_id are required"}), 400
+    try:
+        pdir = app_mod._project_dir(project_name)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not os.path.isdir(pdir):
+        return jsonify({"error": "Project not found"}), 404
+
+    run_dir = os.path.join(pdir, "runs", run_id)
+    if not os.path.isdir(run_dir):
+        return jsonify({"error": f"Run not found: {run_id}"}), 404
+
+    try:
+        shutil.rmtree(run_dir)
+    except Exception as exc:
+        return jsonify({"error": f"Failed to delete run {run_id}: {exc}"}), 500
+
+    runs = app_mod._collect_project_runs(pdir)
+    status_payload = {
+        "optimization_runs": runs,
+        "last_optimization_run": runs[0] if runs else {},
+    }
+    app_mod._write_status_json(pdir, **status_payload)
+    return jsonify({"project_name": project_name, "deleted_run_id": run_id, "runs": runs})
 
 
 def open_project(app_mod):

@@ -417,6 +417,9 @@ def list_project_runs():
 def load_project_run():
     return project_handlers.load_project_run(app_mod=sys.modules[__name__])
 
+def delete_project_run():
+    return project_handlers.delete_project_run(app_mod=sys.modules[__name__])
+
 def open_project():
     return project_handlers.open_project(app_mod=sys.modules[__name__])
 
@@ -698,6 +701,7 @@ register_blueprints(
         "rename_project": rename_project,
         "list_project_runs": list_project_runs,
         "load_project_run": load_project_run,
+        "delete_project_run": delete_project_run,
         "open_project": open_project,
         "get_sites": get_sites,
         "add_site": add_site,

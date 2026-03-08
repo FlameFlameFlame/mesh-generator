@@ -56,7 +56,6 @@
         <select id="project-select" title="Project under projects/ root"></select>
         <div class="button-group wrap">
           <button id="btn-open-project" onclick="doOpenProject()" title="Open selected project and load latest run">Open Project</button>
-          <button id="btn-load-prev-results" onclick="doLoadPreviousResults()" title="Load previous saved calculation results">Load Previous Results</button>
           <button class="primary" id="btn-save-project" onclick="doExport()">Save</button>
           <button class="danger" id="btn-clear-project" onclick="doClear()" title="Clear current in-memory project state; keep files on disk">Clear Project</button>
         </div>
@@ -123,6 +122,10 @@
             <input id="set-road-buffer-m" type="number" value="100" min="0" max="2000" step="50" title="Expand tower candidate area beyond roads (0 = road cells only)">
           </label>
           <button onclick="doSaveSettings()" style="margin-top:8px;width:100%;padding:5px;" title="Persist optimization settings in current project state">Save settings</button>
+          <div id="previous-results-panel">
+            <strong>Previous Results</strong>
+            <div id="previous-results-list" class="sub-note">No saved results yet.</div>
+          </div>
         </div>
         <div class="button-group wrap">
           <button class="primary" id="btn-optimize" onclick="doRunOptimization()" disabled

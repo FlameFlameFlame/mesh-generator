@@ -505,6 +505,7 @@ body {
 #controls button { flex: 1; }
 
 #settings-panel,
+#previous-results-panel,
 #runs-panel,
 #report-panel,
 #opt-log-panel,
@@ -546,6 +547,71 @@ body {
 #report-panel td:last-child { font-weight: 600; text-align: right; }
 
 #runs-panel { font-size: 0.82em; display: none; }
+
+#previous-results-panel {
+  margin-top: 8px;
+  font-size: 0.82em;
+}
+
+#previous-results-list {
+  margin-top: 6px;
+  display: grid;
+  gap: 6px;
+}
+
+.prev-result-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 6px 8px;
+  background: var(--card-bg);
+}
+
+.prev-result-main {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  padding: 0;
+  cursor: pointer;
+  font-size: 0.98em;
+}
+
+.prev-result-main:hover {
+  color: var(--card-active-border);
+}
+
+.prev-result-main .sub-note {
+  display: block;
+  margin-top: 2px;
+}
+
+.prev-result-item.selected {
+  border-color: var(--card-active-border);
+  background: var(--card-active-bg);
+}
+
+.prev-result-delete {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 6px;
+  border: 1px solid var(--btn-danger-border);
+  background: var(--btn-danger-bg);
+  color: var(--fg);
+  cursor: pointer;
+  line-height: 1;
+}
+
+.prev-result-delete:hover {
+  background: var(--btn-danger-hover);
+}
 
 #status-bar {
   background: var(--status-bg);

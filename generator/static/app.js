@@ -1003,14 +1003,8 @@ function _setCurrentProject(name) {
     if (p) document.getElementById('output-dir').value = p;
   }
   _refreshProjectSelectLabels();
-  _refreshLoadPreviousResultsButton();
+  _renderPreviousResultsList();
   _refreshStatusBar();
-}
-
-function _refreshLoadPreviousResultsButton() {
-  let btn = document.getElementById('btn-load-prev-results');
-  if (!btn) return;
-  btn.disabled = !_currentProjectName || !_projectRuns.length;
 }
 
 function _renderProjectList(projects) {
@@ -1043,7 +1037,7 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!_projectRuns.length) {
     panel.style.display = 'none';
     meta.textContent = '';
-    _refreshLoadPreviousResultsButton();
+    _renderPreviousResultsList();
     _refreshStatusBar();
     return;
   }
@@ -1059,8 +1053,91 @@ function _renderRunsPanel(runs, selectedRunId) {
   if (!sel.value && sel.options.length) sel.value = sel.options[0].value;
   panel.style.display = '';
   onRunSelectionChanged();
-  _refreshLoadPreviousResultsButton();
+  _renderPreviousResultsList();
   _refreshStatusBar();
+}
+
+function _formatRunSavedAt(savedAtUtc, fallback) {
+  if (!savedAtUtc) return String(fallback || '');
+  let dt = new Date(savedAtUtc);
+  if (Number.isNaN(dt.getTime())) return String(savedAtUtc);
+  return dt.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  });
+}
+
+function _renderPreviousResultsList() {
+  let list = document.getElementById('previous-results-list');
+  let sel = document.getElementById('run-select');
+  if (!list) return;
+  if (!_currentProjectName) {
+    list.textContent = 'Select a project to view saved results.';
+    return;
+  }
+  if (!_projectRuns.length) {
+    list.textContent = 'No saved results yet.';
+    return;
+  }
+  let selectedRunId = sel && sel.value ? String(sel.value) : String((_projectRuns[0] || {}).run_id || '');
+  list.innerHTML = '';
+  _projectRuns.forEach(function(run) {
+    let runId = String(run.run_id || '');
+    let summary = run.summary || {};
+    let towers = (summary.total_towers != null) ? summary.total_towers : '?';
+    let clusters = (summary.num_clusters != null) ? summary.num_clusters : '?';
+    let ts = _formatRunSavedAt(run.saved_at_utc, run.run_id);
+
+    let item = document.createElement('div');
+    item.className = 'prev-result-item' + (runId === selectedRunId ? ' selected' : '');
+    let mainBtn = document.createElement('button');
+    mainBtn.className = 'prev-result-main';
+    mainBtn.type = 'button';
+    mainBtn.innerHTML = '<strong>' + ts + '</strong><span class="sub-note">Towers: ' + towers + ' | Clusters: ' + clusters + '</span>';
+    mainBtn.onclick = function() { _selectPreviousResult(runId); };
+    let delBtn = document.createElement('button');
+    delBtn.className = 'prev-result-delete';
+    delBtn.type = 'button';
+    delBtn.title = 'Delete this saved result';
+    delBtn.textContent = '✕';
+    delBtn.onclick = function(ev) {
+      ev.stopPropagation();
+      _deletePreviousResult(runId);
+    };
+    item.appendChild(mainBtn);
+    item.appendChild(delBtn);
+    list.appendChild(item);
+  });
+}
+
+function _selectPreviousResult(runId) {
+  let sel = document.getElementById('run-select');
+  if (!sel) return;
+  sel.value = String(runId);
+  onRunSelectionChanged();
+  _renderPreviousResultsList();
+  doLoadSelectedRun();
+}
+
+function _deletePreviousResult(runId) {
+  if (!_currentProjectName) { setStatus('Select a project first.'); return; }
+  if (!confirm('Delete saved result ' + runId + '?')) return;
+  fetch('/api/projects/delete-run', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({project_name: _currentProjectName, run_id: runId}),
+  }).then(safeJson).then(function(data) {
+    if (data.error) { setStatus('Delete run failed: ' + data.error); return; }
+    _renderRunsPanel(data.runs || [], null);
+    setStatus('Deleted saved result: ' + runId);
+    _setProjectDirty(true);
+  }).catch(function(err) {
+    setStatus('Delete run failed: ' + err);
+  });
 }
 
 function onRunSelectionChanged() {
@@ -1076,6 +1153,7 @@ function onRunSelectionChanged() {
   let mast = ((run.parameters || {}).mast_height_m != null) ? ('mast ' + run.parameters.mast_height_m + 'm') : null;
   if (mast) parts.push(mast);
   meta.textContent = parts.join(' • ');
+  _renderPreviousResultsList();
 }
 
 function doRefreshProjects() {
@@ -1165,29 +1243,6 @@ function doLoadSelectedRun() {
   }).finally(function() {
     endBusy();
   });
-}
-
-function doLoadPreviousResults() {
-  if (!_currentProjectName) { setStatus('Select a project first.'); return; }
-  setStatus('Fetching run history…');
-  fetch('/api/projects/runs?project_name=' + encodeURIComponent(_currentProjectName))
-    .then(safeJson)
-    .then(function(data) {
-      if (data.error) { setStatus('Run history load failed: ' + data.error); return; }
-      let runs = Array.isArray(data.runs) ? data.runs : [];
-      if (!runs.length) { setStatus('No saved calculation results found for this project.'); return; }
-      let sel = document.getElementById('run-select');
-      let currentRunId = sel && sel.value ? String(sel.value) : '';
-      let target = runs[0];
-      if (currentRunId && runs.length > 1 && String(runs[0].run_id) === currentRunId) {
-        target = runs[1];
-      }
-      _renderRunsPanel(runs, target.run_id);
-      doLoadSelectedRun();
-    })
-    .catch(function(err) {
-      setStatus('Run history load failed: ' + err);
-    });
 }
 
 function doOpenProject() {
@@ -1339,7 +1394,6 @@ function _applyClearedState() {
   _refreshGridProviderStatusUI();
   _syncCoverageFeatureUI();
   _renderRunsPanel([], null);
-  _refreshLoadPreviousResultsButton();
   _setProjectDirty(false);
   saveProjectState(null);
 }
@@ -4808,11 +4862,6 @@ function _disabledButtonReason(btn) {
   }
   if (id === 'btn-save-project' && _hasLegacyDuplicateSiteNames()) {
     return 'Resolve duplicate site names before saving the project.';
-  }
-  if (id === 'btn-load-prev-results') {
-    if (!_currentProjectName) return 'Select a project first.';
-    if (!_projectRuns.length) return 'No saved runs are available for this project yet.';
-    return 'Loading previous run results is unavailable right now.';
   }
   let label = (btn.textContent || '').replace(/\s+/g, ' ').trim();
   if (label) return label + ' is unavailable right now.';
