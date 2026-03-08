@@ -136,6 +136,16 @@ def _run_download_cycle(page, retries: int = 3) -> None:
 
 def _run_ui_checks(page) -> None:
     page.goto(BASE_URL, wait_until="networkidle")
+    page.wait_for_selector("#hdr-projects")
+    page.wait_for_selector("#hdr-preparation")
+    page.wait_for_selector("#hdr-results")
+    page.wait_for_selector("#hdr-layers")
+    page.wait_for_selector("#hdr-preparation-layers")
+    page.wait_for_selector("#hdr-result-layers")
+    _assert(page.locator("#btn-download").count() == 1, "Missing #btn-download")
+    _assert(page.locator("#btn-p2p").count() == 1, "Missing #btn-p2p")
+    _assert(page.locator("#btn-optimize").count() == 1, "Missing #btn-optimize")
+    _assert(page.locator("#project-select").count() == 1, "Missing #project-select")
     page.evaluate("localStorage.removeItem('meshProjectStateV1')")
     page.request.post(f"{BASE_URL}/api/clear")
     create_resp = page.request.post(f"{BASE_URL}/api/projects/create", data={"name": PROJECT_NAME})
@@ -170,7 +180,7 @@ def _run_ui_checks(page) -> None:
     _run_download_cycle(page)
     page.screenshot(path=str(ARTIFACT_DIR / "02-after-download-data.png"), full_page=True)
 
-    page.click("#toolbar button.primary:has-text('Save')")
+    page.click("#btn-save-project")
     config_path = PROJECT_DIR / "config.yaml"
     status_path = PROJECT_DIR / "status.json"
     grid_bundle = PROJECT_DIR / "grid_bundle.json"

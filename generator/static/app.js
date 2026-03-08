@@ -3993,6 +3993,81 @@ function _attachLinkAnalysisHover(data) {
 // --- localStorage project state caching ---
 
 const _STATE_KEY = 'meshProjectState';
+const _UI_SECTION_STATE_KEY = 'meshUiSectionStateV1';
+const _SITE_MGMT_OPEN_KEY = 'meshUiSiteManagementOpenV1';
+
+function _setSectionToggleGlyph(section, expanded) {
+  let btn = document.querySelector('.section-toggle[data-section-target=\"' + section + '\"]');
+  if (btn) btn.textContent = expanded ? '▾' : '▸';
+}
+
+function _loadUiSectionState() {
+  try {
+    return JSON.parse(localStorage.getItem(_UI_SECTION_STATE_KEY) || '{}');
+  } catch(e) {
+    return {};
+  }
+}
+
+function _saveUiSectionState(state) {
+  try {
+    localStorage.setItem(_UI_SECTION_STATE_KEY, JSON.stringify(state || {}));
+  } catch(e) { /* ignore */ }
+}
+
+function toggleUiSection(section) {
+  let card = document.getElementById('section-' + section);
+  if (!card) return;
+  card.classList.toggle('collapsed');
+  let expanded = !card.classList.contains('collapsed');
+  _setSectionToggleGlyph(section, expanded);
+  let state = _loadUiSectionState();
+  state[section] = expanded;
+  _saveUiSectionState(state);
+}
+
+function _applyUiSectionState() {
+  let defaults = {
+    projects: true,
+    preparation: true,
+    results: true,
+    layers: true,
+  };
+  let state = Object.assign({}, defaults, _loadUiSectionState());
+  Object.keys(defaults).forEach(function(section) {
+    let card = document.getElementById('section-' + section);
+    if (!card) return;
+    let expanded = state[section] !== false;
+    card.classList.toggle('collapsed', !expanded);
+    _setSectionToggleGlyph(section, expanded);
+  });
+}
+
+function _setSiteManagementVisible(visible) {
+  let block = document.getElementById('site-management-block');
+  let btn = document.getElementById('btn-site-management');
+  if (!block) return;
+  let on = !!visible;
+  block.style.display = on ? '' : 'none';
+  if (btn) {
+    btn.textContent = on ? 'Hide Site Management' : 'Site Management';
+    btn.classList.toggle('primary', on);
+  }
+  try { localStorage.setItem(_SITE_MGMT_OPEN_KEY, on ? '1' : '0'); } catch(e) { /* ignore */ }
+}
+
+function toggleSiteManagement() {
+  let block = document.getElementById('site-management-block');
+  if (!block) return;
+  let isVisible = block.style.display !== 'none';
+  _setSiteManagementVisible(!isVisible);
+}
+
+function _restoreSiteManagementVisibility() {
+  let saved = null;
+  try { saved = localStorage.getItem(_SITE_MGMT_OPEN_KEY); } catch(e) { /* ignore */ }
+  _setSiteManagementVisible(saved === '1');
+}
 
 function saveProjectState(projectPath) {
   try {
@@ -4120,6 +4195,8 @@ if (window.matchMedia) {
 
 // Apply theme on load
 applyTheme();
+_applyUiSectionState();
+_restoreSiteManagementVisibility();
 
 let _projectSelectEl = document.getElementById('project-select');
 if (_projectSelectEl) {
