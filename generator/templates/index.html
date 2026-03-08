@@ -12,6 +12,7 @@
 <div id="main">
   <div id="map"></div>
   <button id="btn-map-layers" type="button" onclick="toggleLayersPanelFromMap()" title="Show or hide Layers panel">Layers</button>
+  <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
   <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
   <div id="sidebar">
     <section class="ui-section" id="section-projects">
@@ -259,60 +260,6 @@
               </div>
               <div id="gap-repair-color-legend" style="margin-top:4px;font-size:0.8em;opacity:0.9;display:none;"></div>
             </div>
-            <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Coverage Hexagons (roads)</label>
-            <div class="sub-control" id="coverage-metric-row" style="display:none;">
-              <select id="coverage-metric" onchange="renderCoverage()">
-                <option value="visible_tower_count">Visible tower count</option>
-                <option value="path_loss">Path loss (dB)</option>
-                <option value="elevation">Elevation (m)</option>
-                <option value="clearance">Clearance (m)</option>
-                <option value="distance_to_closest_tower">Distance to tower (m)</option>
-              </select>
-            </div>
-            <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
-            <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
-              <label title="Maximum distance from source used for runtime coverage computation">
-                Calculation radius (m)
-                <input id="tower-coverage-radius-m" type="number" value="15000" min="100" max="200000" step="100" style="width:110px;">
-              </label>
-              <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
-                <option value="received_power_dbm">Received power (dBm)</option>
-                <option value="path_loss_db">Path loss (dB)</option>
-                <option value="distance_m">Distance to tower (m)</option>
-                <option value="elevation">Elevation (m)</option>
-              </select>
-              <select id="tower-coverage-state-filter" onchange="renderTowerCoverage()">
-                <option value="all">All cells</option>
-                <option value="covered">Covered only</option>
-                <option value="uncovered">Uncovered only</option>
-              </select>
-              <label title="Choose source type for runtime coverage">
-                Coverage Source
-                <select id="tower-coverage-source-mode" onchange="onCoverageSourceModeChange()">
-                  <option value="manual">Manual (map click)</option>
-                  <option value="towers">Existing towers</option>
-                </select>
-              </label>
-              <div id="tower-coverage-manual-row" style="margin-top:6px;">
-                <div style="font-size:0.8em;opacity:0.9;margin-bottom:4px;">Click map to place/recalculate coverage.</div>
-                <div style="display:flex;gap:4px;flex-wrap:wrap;">
-                  <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to place a temporary tower and calculate coverage">Place Tower</button>
-                </div>
-              </div>
-              <div id="tower-coverage-towers-row" style="display:none;margin-top:6px;">
-                <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
-                  <option value="all">All towers</option>
-                </select>
-                <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
-                  <button id="btn-calc-selected-coverage" onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
-                  <button id="btn-calc-all-coverage" onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
-                </div>
-              </div>
-              <div id="tower-coverage-progress-row" class="progress-wrap" style="margin-top:6px;">
-                <progress id="tower-coverage-progress-bar" max="100" value="0"></progress>
-                <span id="tower-coverage-progress-label">Calculating coverage...</span>
-              </div>
-            </div>
           </div>
         </div>
         <div id="tower-legend">
@@ -320,6 +267,71 @@
           <div id="tower-legend-items"></div>
         </div>
       </div>
+  </section>
+
+  <section class="ui-section" id="section-coverage">
+    <div class="section-header">
+      <h2 id="hdr-coverage">Coverage</h2>
+      <button class="section-toggle" type="button" onclick="closeCoveragePopupWindow()" aria-label="Close Coverage">✕</button>
+    </div>
+    <div class="section-body" id="section-body-coverage">
+      <div id="coverage-panel">
+        <label><input type="checkbox" id="chk-coverage" onchange="toggleCoverage()"> Route Coverage (roads)</label>
+        <div class="sub-control" id="coverage-metric-row" style="display:none;">
+          <select id="coverage-metric" onchange="renderCoverage()">
+            <option value="visible_tower_count">Visible tower count</option>
+            <option value="path_loss">Path loss (dB)</option>
+            <option value="elevation">Elevation (m)</option>
+            <option value="clearance">Clearance (m)</option>
+            <option value="distance_to_closest_tower">Distance to tower (m)</option>
+          </select>
+        </div>
+        <label><input type="checkbox" id="chk-tower-coverage" onchange="toggleTowerCoverage()"> Tower Coverage (runtime)</label>
+        <div class="sub-control" id="tower-coverage-metric-row" style="display:none;">
+          <label title="Maximum distance from source used for runtime coverage computation">
+            Calculation radius (m)
+            <input id="tower-coverage-radius-m" type="number" value="15000" min="100" max="200000" step="100" style="width:110px;">
+          </label>
+          <select id="tower-coverage-metric" onchange="renderTowerCoverage()">
+            <option value="received_power_dbm">Received power (dBm)</option>
+            <option value="path_loss_db">Path loss (dB)</option>
+            <option value="distance_m">Distance to tower (m)</option>
+            <option value="elevation">Elevation (m)</option>
+          </select>
+          <select id="tower-coverage-state-filter" onchange="renderTowerCoverage()">
+            <option value="all">All cells</option>
+            <option value="covered">Covered only</option>
+            <option value="uncovered">Uncovered only</option>
+          </select>
+          <label title="Choose source type for runtime coverage">
+            Coverage Source
+            <select id="tower-coverage-source-mode" onchange="onCoverageSourceModeChange()">
+              <option value="manual">Manual (map click)</option>
+              <option value="towers">Existing towers</option>
+            </select>
+          </label>
+          <div id="tower-coverage-manual-row" style="margin-top:6px;">
+            <div style="font-size:0.8em;opacity:0.9;margin-bottom:4px;">Click map to place/recalculate coverage.</div>
+            <div style="display:flex;gap:4px;flex-wrap:wrap;">
+              <button id="btn-point-coverage" onclick="togglePointCoverageMode()" title="Click map to place a temporary tower and calculate coverage">Place Tower</button>
+            </div>
+          </div>
+          <div id="tower-coverage-towers-row" style="display:none;margin-top:6px;">
+            <select id="tower-coverage-filter" onchange="renderTowerCoverage()" style="margin-top:4px;">
+              <option value="all">All towers</option>
+            </select>
+            <div style="display:flex;gap:4px;margin-top:6px;flex-wrap:wrap;">
+              <button id="btn-calc-selected-coverage" onclick="calculateSelectedTowerCoverage()" title="Calculate coverage from currently selected tower">Calc Selected</button>
+              <button id="btn-calc-all-coverage" onclick="calculateAllShownTowerCoverage()" title="Calculate coverage from all currently shown towers">Calc All Shown</button>
+            </div>
+          </div>
+          <div id="tower-coverage-progress-row" class="progress-wrap" style="margin-top:6px;">
+            <progress id="tower-coverage-progress-bar" max="100" value="0"></progress>
+            <span id="tower-coverage-progress-label">Calculating coverage...</span>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 </div>
 

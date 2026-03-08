@@ -110,7 +110,7 @@ body {
 
 #btn-map-profile {
   position: absolute;
-  left: 150px;
+  left: 240px;
   top: 12px;
   z-index: 1200;
   padding: 6px 12px;
@@ -125,6 +125,30 @@ body {
 
 #btn-map-profile:hover {
   background: var(--btn-hover);
+}
+
+#btn-map-coverage {
+  position: absolute;
+  left: 150px;
+  top: 12px;
+  z-index: 1200;
+  padding: 6px 12px;
+  border: 1px solid var(--btn-primary-border);
+  border-radius: 8px;
+  background: var(--btn-primary-bg);
+  color: var(--fg);
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#btn-map-coverage:hover {
+  background: var(--btn-primary-hover);
+}
+
+#btn-map-coverage.active {
+  background: var(--btn-primary-hover);
+  box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.3);
 }
 
 #sidebar {
@@ -231,6 +255,42 @@ body {
 #section-layers.layers-popup-open .section-body {
   overflow-y: auto;
   max-height: calc(min(78vh, 760px) - 48px);
+}
+
+#section-coverage {
+  display: none;
+}
+
+#section-coverage.coverage-popup-open {
+  display: block;
+  position: fixed;
+  z-index: 1255;
+  width: min(420px, calc(100vw - 24px));
+  max-height: min(78vh, 760px);
+  overflow: hidden;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+#section-coverage.coverage-popup-open .section-body {
+  overflow-y: auto;
+  max-height: calc(min(78vh, 760px) - 48px);
+}
+
+#coverage-panel {
+  padding: 2px 0;
+  font-size: 0.85em;
+}
+
+#coverage-panel label { display: block; margin: 3px 0; cursor: pointer; }
+#coverage-panel .sub-control { margin-left: 22px; margin-top: 2px; }
+
+#section-coverage.coverage-busy {
+  background: rgba(80, 113, 157, 0.18);
+  border-color: #6d8eb7;
+}
+
+#section-coverage.coverage-busy .section-header {
+  background: rgba(86, 122, 170, 0.34);
 }
 
 .button-group {

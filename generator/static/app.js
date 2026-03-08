@@ -2503,6 +2503,7 @@ function toggleCoverage() {
     metricRow.style.display = 'block';
     if (!coverageData && !coverageFetched) {
       coverageFetched = true;
+      _setCoverageMenuBusy(true);
       setStatus('Loading coverage data...');
       fetch('/api/coverage')
         .then(r => { if (!r.ok) throw new Error('No coverage'); return r.json(); })
@@ -2511,11 +2512,13 @@ function toggleCoverage() {
           renderCoverage();
           layerGroups.coverage.addTo(map);
           setStatus('Coverage loaded: ' + (data.features || []).length + ' cells');
+          _setCoverageMenuBusy(false);
         }).catch(err => {
           setStatus('Coverage not available');
           chk.checked = false;
           metricRow.style.display = 'none';
           coverageFetched = false;
+          _setCoverageMenuBusy(false);
         });
     } else if (coverageData) {
       renderCoverage();
@@ -2525,6 +2528,10 @@ function toggleCoverage() {
     map.removeLayer(layerGroups.coverage);
     metricRow.style.display = 'none';
     document.getElementById('color-legend').style.display = 'none';
+    let progRow = document.getElementById('tower-coverage-progress-row');
+    if (!progRow || progRow.style.display === 'none') {
+      _setCoverageMenuBusy(false);
+    }
   }
 }
 
@@ -2734,6 +2741,12 @@ function _towerCoverageProgressElements() {
   };
 }
 
+function _setCoverageMenuBusy(isBusy) {
+  let card = document.getElementById('section-coverage');
+  if (!card) return;
+  card.classList.toggle('coverage-busy', !!isBusy);
+}
+
 function _stopTowerCoverageProgressTimer() {
   if (_towerCoverageProgressTimer) {
     clearInterval(_towerCoverageProgressTimer);
@@ -2747,12 +2760,14 @@ function _hideTowerCoverageProgress() {
   if (!els.row || !els.bar || !els.label) return;
   els.row.style.display = 'none';
   els.bar.value = 0;
+  _setCoverageMenuBusy(false);
 }
 
 function _startTowerCoverageProgress(labelText) {
   _stopTowerCoverageProgressTimer();
   let els = _towerCoverageProgressElements();
   if (!els.row || !els.bar || !els.label) return;
+  _setCoverageMenuBusy(true);
   els.row.style.display = 'inline-flex';
   els.bar.max = 100;
   let progress = 5;
@@ -4428,6 +4443,18 @@ function _positionLayersPopupWindow() {
   card.style.top = top + 'px';
 }
 
+function _positionCoveragePopupWindow() {
+  let card = document.getElementById('section-coverage');
+  let btn = document.getElementById('btn-map-coverage');
+  if (!card || !btn || !card.classList.contains('coverage-popup-open')) return;
+  let rect = btn.getBoundingClientRect();
+  let margin = 8;
+  let left = Math.max(margin, Math.round(rect.left));
+  let top = Math.round(rect.bottom + margin);
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+}
+
 function openLayersPopupWindow() {
   let card = document.getElementById('section-layers');
   let btn = document.getElementById('btn-map-layers');
@@ -4449,6 +4476,39 @@ function closeLayersPopupWindow() {
   card.style.top = '';
   card.style.display = 'none';
   if (btn) btn.classList.remove('active');
+}
+
+function openCoveragePopupWindow() {
+  let card = document.getElementById('section-coverage');
+  let btn = document.getElementById('btn-map-coverage');
+  if (!card) return;
+  card.style.display = 'block';
+  card.classList.add('coverage-popup-open');
+  _positionCoveragePopupWindow();
+  if (btn) btn.classList.add('active');
+}
+
+function closeCoveragePopupWindow() {
+  let card = document.getElementById('section-coverage');
+  let btn = document.getElementById('btn-map-coverage');
+  if (!card) return;
+  card.classList.remove('coverage-popup-open');
+  card.classList.remove('coverage-busy');
+  card.style.left = '';
+  card.style.top = '';
+  card.style.display = 'none';
+  if (btn) btn.classList.remove('active');
+}
+
+function toggleCoveragePanelFromMap() {
+  let card = document.getElementById('section-coverage');
+  if (!card) return;
+  if (card.classList.contains('coverage-popup-open')) {
+    closeCoveragePopupWindow();
+    return;
+  }
+  closeLayersPopupWindow();
+  openCoveragePopupWindow();
 }
 
 function _restoreSiteManagementVisibility() {
@@ -4662,23 +4722,33 @@ if (document.body && window.MutationObserver) {
 
 window.addEventListener('resize', function() {
   _positionLayersPopupWindow();
+  _positionCoveragePopupWindow();
 });
 
 document.addEventListener('click', function(e) {
-  let card = document.getElementById('section-layers');
-  let btn = document.getElementById('btn-map-layers');
-  if (!card || !btn) return;
-  if (!card.classList.contains('layers-popup-open')) return;
-  if (_suppressNextLayersOutsideClick) {
-    _suppressNextLayersOutsideClick = false;
-    return;
+  let layersCard = document.getElementById('section-layers');
+  let layersBtn = document.getElementById('btn-map-layers');
+  if (layersCard && layersBtn && layersCard.classList.contains('layers-popup-open')) {
+    if (_suppressNextLayersOutsideClick) {
+      _suppressNextLayersOutsideClick = false;
+    } else if (!layersCard.contains(e.target) && !layersBtn.contains(e.target)) {
+      closeLayersPopupWindow();
+    }
   }
-  if (card.contains(e.target) || btn.contains(e.target)) return;
-  closeLayersPopupWindow();
+  let covCard = document.getElementById('section-coverage');
+  let covBtn = document.getElementById('btn-map-coverage');
+  if (covCard && covBtn && covCard.classList.contains('coverage-popup-open')) {
+    if (!covCard.contains(e.target) && !covBtn.contains(e.target)) {
+      closeCoveragePopupWindow();
+    }
+  }
 });
 
 document.addEventListener('keydown', function(e) {
-  if (e.key === 'Escape') closeLayersPopupWindow();
+  if (e.key === 'Escape') {
+    closeLayersPopupWindow();
+    closeCoveragePopupWindow();
+  }
 });
 
 let _projectSelectEl = document.getElementById('project-select');
