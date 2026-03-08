@@ -4604,6 +4604,18 @@ function _positionCoveragePopupWindow() {
   card.style.top = top + 'px';
 }
 
+function _positionInfoPopupWindow() {
+  let card = document.getElementById('section-info');
+  let btn = document.getElementById('btn-map-info');
+  if (!card || !btn || !card.classList.contains('info-popup-open')) return;
+  let rect = btn.getBoundingClientRect();
+  let margin = 8;
+  let left = Math.max(margin, Math.round(rect.right - card.offsetWidth));
+  let top = Math.round(rect.bottom + margin);
+  card.style.left = left + 'px';
+  card.style.top = top + 'px';
+}
+
 function _positionSiteManagementWindow() {
   let card = document.getElementById('section-site-management');
   let btn = document.getElementById('btn-map-layers');
@@ -4659,6 +4671,37 @@ function closeCoveragePopupWindow() {
   card.style.top = '';
   card.style.display = 'none';
   if (btn) btn.classList.remove('active');
+}
+
+function openInfoPopupWindow() {
+  let card = document.getElementById('section-info');
+  let btn = document.getElementById('btn-map-info');
+  if (!card) return;
+  card.style.display = 'block';
+  card.classList.add('info-popup-open');
+  _positionInfoPopupWindow();
+  if (btn) btn.classList.add('active');
+}
+
+function closeInfoPopupWindow() {
+  let card = document.getElementById('section-info');
+  let btn = document.getElementById('btn-map-info');
+  if (!card) return;
+  card.classList.remove('info-popup-open');
+  card.style.left = '';
+  card.style.top = '';
+  card.style.display = 'none';
+  if (btn) btn.classList.remove('active');
+}
+
+function toggleInfoPanelFromMap() {
+  let card = document.getElementById('section-info');
+  if (!card) return;
+  if (card.classList.contains('info-popup-open')) {
+    closeInfoPopupWindow();
+    return;
+  }
+  openInfoPopupWindow();
 }
 
 function toggleCoveragePanelFromMap() {
@@ -4883,6 +4926,7 @@ if (document.body && window.MutationObserver) {
 window.addEventListener('resize', function() {
   _positionLayersPopupWindow();
   _positionCoveragePopupWindow();
+  _positionInfoPopupWindow();
   _positionSiteManagementWindow();
 });
 
@@ -4903,12 +4947,20 @@ document.addEventListener('click', function(e) {
       closeCoveragePopupWindow();
     }
   }
+  let infoCard = document.getElementById('section-info');
+  let infoBtn = document.getElementById('btn-map-info');
+  if (infoCard && infoBtn && infoCard.classList.contains('info-popup-open')) {
+    if (!infoCard.contains(e.target) && !infoBtn.contains(e.target)) {
+      closeInfoPopupWindow();
+    }
+  }
 });
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
     closeLayersPopupWindow();
     closeCoveragePopupWindow();
+    closeInfoPopupWindow();
   }
 });
 

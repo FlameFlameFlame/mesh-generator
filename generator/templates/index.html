@@ -16,6 +16,7 @@
     <button id="btn-map-coverage" type="button" onclick="toggleCoveragePanelFromMap()" title="Show or hide Coverage panel">Coverage</button>
     <button id="btn-map-profile" type="button" onclick="toggleProfileControls()" title="Show terrain profile between two sites">Profile</button>
   </div>
+  <button id="btn-map-info" type="button" onclick="toggleInfoPanelFromMap()" title="Show generator usage instructions">Info</button>
   <section class="ui-section" id="section-site-management">
     <div class="section-header">
       <h2 id="hdr-site-management">Site Management</h2>
@@ -308,6 +309,30 @@
             <span id="tower-coverage-progress-label">Calculating coverage...</span>
           </div>
         </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="ui-section" id="section-info">
+    <div class="section-header">
+      <h2 id="hdr-info">Usage Guide</h2>
+      <button class="section-toggle" type="button" onclick="closeInfoPopupWindow()" aria-label="Close Usage Guide">✕</button>
+    </div>
+    <div class="section-body" id="section-body-info">
+      <div id="info-panel">
+        <ol>
+          <li>Select or create a project in the `Projects` section, then click `Open Project`.</li>
+          <li>Add sites in `Site Management` using `+ Add Site`, then click on the map to place each site.</li>
+          <li>For each site, set priority and height inline; use the city checkbox to fetch city boundaries.</li>
+          <li>Optional: draw a bounding box in `Preparation` if you want to limit data download area.</li>
+          <li>Click `Download Data` to fetch roads, elevation, and prepare the planning grid.</li>
+          <li>Click `Filter P2P` to build candidate routes between sites.</li>
+          <li>Review and adjust parameters in `Optimization`, then click `Run Optimization`.</li>
+          <li>Use `Calculation Runs`, `Report`, and `Optimization Log` to inspect results and reload past runs.</li>
+          <li>Open `Layers` to control map overlays for preparation data and optimization outputs.</li>
+          <li>Open `Coverage` to run runtime tower coverage checks and inspect coverage metrics.</li>
+          <li>Click `Save` in `Projects` to persist current state and outputs to the selected project.</li>
+        </ol>
       </div>
     </div>
   </section>

@@ -163,6 +163,30 @@ body {
   box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.3);
 }
 
+#btn-map-info {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 1200;
+  padding: 6px 12px;
+  border: 1px solid var(--btn-border);
+  border-radius: 8px;
+  background: var(--btn-bg);
+  color: var(--fg);
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#btn-map-info:hover {
+  background: var(--btn-hover);
+}
+
+#btn-map-info.active {
+  background: var(--btn-hover);
+  box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.25);
+}
+
 #sidebar {
   flex: 0 0 400px;
   min-width: 320px;
@@ -286,6 +310,39 @@ body {
 #section-coverage.coverage-popup-open .section-body {
   overflow-y: auto;
   max-height: calc(min(78vh, 760px) - 48px);
+}
+
+#section-info {
+  display: none;
+}
+
+#section-info.info-popup-open {
+  display: block;
+  position: fixed;
+  z-index: 1260;
+  width: min(520px, calc(100vw - 24px));
+  max-height: min(78vh, 760px);
+  overflow: hidden;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
+}
+
+#section-info.info-popup-open .section-body {
+  overflow-y: auto;
+  max-height: calc(min(78vh, 760px) - 48px);
+}
+
+#info-panel {
+  font-size: 0.86em;
+  line-height: 1.45;
+}
+
+#info-panel ol {
+  margin: 0;
+  padding-left: 18px;
+}
+
+#info-panel li {
+  margin: 0 0 6px 0;
 }
 
 #coverage-panel {
