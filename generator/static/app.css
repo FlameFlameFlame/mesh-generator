@@ -164,8 +164,8 @@ body {
 }
 
 #btn-map-info {
-  position: absolute;
-  right: 12px;
+  position: fixed;
+  left: 12px;
   top: 12px;
   z-index: 1200;
   padding: 6px 12px;

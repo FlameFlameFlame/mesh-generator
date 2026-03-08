@@ -4616,6 +4616,18 @@ function _positionInfoPopupWindow() {
   card.style.top = top + 'px';
 }
 
+function _positionInfoButton() {
+  let btn = document.getElementById('btn-map-info');
+  let mapEl = document.getElementById('map');
+  if (!btn || !mapEl) return;
+  let margin = 12;
+  let mapRect = mapEl.getBoundingClientRect();
+  let left = Math.max(margin, Math.round(mapRect.right - btn.offsetWidth - margin));
+  let top = Math.max(margin, Math.round(mapRect.top + margin));
+  btn.style.left = left + 'px';
+  btn.style.top = top + 'px';
+}
+
 function _positionSiteManagementWindow() {
   let card = document.getElementById('section-site-management');
   let btn = document.getElementById('btn-map-layers');
@@ -4914,6 +4926,7 @@ _refreshDuplicateSiteWarnings();
 _refreshDisabledButtonTooltips();
 _refreshStatusBar();
 setInterval(_refreshStatusBar, 1000);
+_positionInfoButton();
 
 if (document.body && window.MutationObserver) {
   let disabledObserver = new MutationObserver(function() {
@@ -4928,6 +4941,7 @@ if (document.body && window.MutationObserver) {
 }
 
 window.addEventListener('resize', function() {
+  _positionInfoButton();
   _positionLayersPopupWindow();
   _positionCoveragePopupWindow();
   _positionInfoPopupWindow();
