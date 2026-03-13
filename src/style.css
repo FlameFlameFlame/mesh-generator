@@ -1,5 +1,10 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
+html,
+body {
+  height: 100%;
+}
+
 :root {
   --bg: #ffffff;
   --fg: #222222;
@@ -75,11 +80,13 @@ body {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh;
   background: var(--bg);
   color: var(--fg);
+  overflow: hidden;
 }
 
-#main { display: flex; flex: 1; overflow: hidden; position: relative; }
+#main { display: flex; flex: 1; min-height: 0; overflow: hidden; position: relative; }
 #map { flex: 1 1 auto; min-width: 0; }
 
 #map.placing { cursor: crosshair !important; }
@@ -208,13 +215,24 @@ body {
   flex: 0 0 400px;
   min-width: 320px;
   max-width: 440px;
+  min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
   border-left: 1px solid var(--sidebar-border);
   background: var(--sidebar-bg);
-  overflow-y: auto;
+  max-height: 100%;
+  overflow-y: scroll;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding: 10px;
+}
+
+#sidebar > * {
+  flex-shrink: 0;
 }
 
 #sidebar button,
@@ -828,7 +846,8 @@ body {
   #sidebar {
     max-width: none;
     min-width: 0;
-    flex-basis: auto;
+    flex: 1 1 auto;
+    min-height: 0;
     border-left: none;
     border-top: 1px solid var(--sidebar-border);
   }
