@@ -1340,7 +1340,10 @@ function doLoadSelectedRun() {
   }).then(safeJson).then(function(data) {
     if (data.error) { alert(data.error); return; }
     renderLayers(data.layers || {});
-    if (data.report) showReport(data.report);
+    if (data.report) {
+      let runFinalReport = data.final_report || (((data.summary || {}).final_report) || null);
+      showReport(data.report, runFinalReport);
+    }
     hasCoverage = data.has_coverage || false;
     coverageFetched = false;
     coverageData = null;
@@ -2047,7 +2050,10 @@ function _loadProjectFromPath(configPath, onLoaded) {
     refresh();
     renderLayers(data.layers || {});
     if (data.output_dir) document.getElementById('output-dir').value = data.output_dir;
-    if (data.report) showReport(data.report);
+    if (data.report) {
+      let finalReport = data.final_report || (((((data.project_status || {}).last_optimization_run || {}).summary) || {}).final_report) || null;
+      showReport(data.report, finalReport);
+    }
     applyProjectStatus(data.project_status, data);
     _autoCoverageModeFromCurrentState(true);
     setStatus('Restoring previous route selections…');
@@ -2720,7 +2726,26 @@ function showTowerLegend(sourceCounts) {
   document.getElementById('tower-legend').style.display = 'block';
 }
 
-function showReport(report) {
+function _appendReportRow(table, label, value) {
+  let tr = document.createElement('tr');
+  tr.innerHTML = '<td>' + label + '</td><td>' + value + '</td>';
+  table.appendChild(tr);
+}
+
+function _reportHeaderRow(table, label) {
+  let tr = document.createElement('tr');
+  tr.innerHTML = '<td colspan="2" style="padding-top:8px;font-weight:700;">' + label + '</td>';
+  table.appendChild(tr);
+}
+
+function _fmtTimeSec(value, digits) {
+  let num = Number(value);
+  if (!Number.isFinite(num)) return '-';
+  let d = Number.isFinite(digits) ? digits : 3;
+  return num.toFixed(d);
+}
+
+function showReport(report, finalReport) {
   let table = document.getElementById('report-table');
   table.innerHTML = '';
   let rows = [
@@ -2735,10 +2760,36 @@ function showReport(report) {
     }
   }
   rows.forEach(([label, val]) => {
-    let tr = document.createElement('tr');
-    tr.innerHTML = '<td>' + label + '</td><td>' + val + '</td>';
-    table.appendChild(tr);
+    _appendReportRow(table, label, val);
   });
+
+  if (finalReport && typeof finalReport === 'object') {
+    _reportHeaderRow(table, 'Final Report');
+    let stage = finalReport.stage_timings_s || {};
+    _appendReportRow(table, 'Stage total time (s)', _fmtTimeSec(stage.total || finalReport.total_time_spent_s, 3));
+    _appendReportRow(table, '  route (s)', _fmtTimeSec(stage.route, 3));
+    _appendReportRow(table, '  visibility (s)', _fmtTimeSec(stage.visibility, 3));
+    _appendReportRow(table, '  city_links (s)', _fmtTimeSec(stage.city_links, 3));
+    _appendReportRow(table, '  export (s)', _fmtTimeSec(stage.export, 3));
+
+    let cells = finalReport.cells_calculated || {};
+    _appendReportRow(table, 'Cells final total', cells.total_cells_final ?? '-');
+    _appendReportRow(table, 'Cells prepared total', cells.prepared_cells_total ?? '-');
+    _appendReportRow(table, 'Cells corridor total', cells.corridor_cells_total ?? '-');
+
+    let pairs = finalReport.pairs_calculated || {};
+    _appendReportRow(table, 'Pairs requested', pairs.pairs_requested ?? '-');
+    _appendReportRow(table, 'Pairs unique', pairs.unique_pairs ?? '-');
+    _appendReportRow(table, 'Pairs computed', pairs.pairs_computed ?? '-');
+    _appendReportRow(table, 'Pairs failed', pairs.pairs_failed ?? '-');
+
+    let tp = (finalReport.time_per_pair_s || {}).overall || {};
+    _appendReportRow(table, 'Time/pair avg (s)', _fmtTimeSec(tp.avg_s, 6));
+    _appendReportRow(table, 'Time/pair min (s)', _fmtTimeSec(tp.min_s, 6));
+    _appendReportRow(table, 'Time/pair max (s)', _fmtTimeSec(tp.max_s, 6));
+    _appendReportRow(table, 'Time/pair median (s)', _fmtTimeSec(tp.median_s, 6));
+    _appendReportRow(table, 'Pair-time total (s)', _fmtTimeSec(tp.total_time_s, 3));
+  }
   document.getElementById('report-panel').style.display = 'block';
 }
 
@@ -3893,7 +3944,7 @@ function _renderOptimizationResult(res) {
         acc[r.route_id] = (r.towers_new || 0) + (r.towers_reused || 0);
         return acc;
       }, {}),
-    });
+    }, dpData.final_report || dpSummary.final_report || null);
   }
   saveProjectState(null);
 }
