@@ -717,6 +717,23 @@ body {
 .opt-progress-algo { font-weight: 700; }
 .opt-progress-row progress { width: 100%; height: 12px; }
 .opt-progress-label { margin-top: 4px; color: var(--muted); font-size: 0.82em; line-height: 1.35; min-height: 1.35em; }
+.opt-stage-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 6px;
+  margin-bottom: 4px;
+  font-size: 0.8em;
+  color: var(--muted);
+}
+.opt-stage-progress-title { font-weight: 600; }
+.opt-stage-progress-label {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.8em;
+  line-height: 1.35;
+  min-height: 1.35em;
+}
 
 .color-legend {
   position: absolute;
