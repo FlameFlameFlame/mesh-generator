@@ -3678,6 +3678,15 @@ function _beginBusyOverlay(msg) {
 
 // --- Run mesh_calculator optimization on selected routes ---
 
+function _sanitizeLegacyParallelSettings(s) {
+  if (!s || typeof s !== "object") return s;
+  if (Object.prototype.hasOwnProperty.call(s, "los_parallel_workers")) {
+    delete s.los_parallel_workers;
+    try { console.warn("Ignoring deprecated setting: los_parallel_workers"); } catch (_e) {}
+  }
+  return s;
+}
+
 function getSettings() {
   let freqMhz = parseFloat(document.getElementById('set-frequency-mhz').value) || 868;
   let losPolicy = document.getElementById('set-los-policy').value || 'strict';
@@ -3696,6 +3705,7 @@ function getSettings() {
 
 function applySettings(s) {
   if (!s) return;
+  s = _sanitizeLegacyParallelSettings(s);
   if (s.frequency_hz != null) document.getElementById('set-frequency-mhz').value = Math.round(s.frequency_hz / 1e6);
   if (s.mast_height_m != null) document.getElementById('set-mast-height').value = s.mast_height_m;
   if (s.tx_power_mw != null) document.getElementById('set-tx-power-mw').value = s.tx_power_mw;
@@ -4846,14 +4856,23 @@ function _applyUiSectionState() {
 }
 
 function _setSiteManagementVisible(_visible) {
-  let block = document.getElementById('site-management-block');
-  if (!block) return;
-  block.style.display = '';
+  // Site Management now opens as a toolbar popup; legacy callers should not force visibility.
 }
 
 function toggleSiteManagement() {
-  _setSiteManagementVisible(true);
-  refresh();
+  toggleSiteManagementPanelFromMap();
+}
+
+function toggleSiteManagementPanelFromMap() {
+  let card = document.getElementById('section-site-management');
+  let btn = document.getElementById('btn-map-site-management');
+  if (!card) return;
+  if (card.classList.contains('site-management-popup-open')) {
+    closeSiteManagementPopupWindow();
+    return;
+  }
+  openSiteManagementPopupWindow();
+  if (btn) btn.classList.add('active');
 }
 
 function toggleLayersPanelFromMap() {
@@ -4918,8 +4937,8 @@ function _positionInfoButton() {
 
 function _positionSiteManagementWindow() {
   let card = document.getElementById('section-site-management');
-  let btn = document.getElementById('btn-map-layers');
-  if (!card || !btn) return;
+  let btn = document.getElementById('btn-map-site-management');
+  if (!card || !btn || !card.classList.contains('site-management-popup-open')) return;
   let rect = btn.getBoundingClientRect();
   let margin = 8;
   let left = Math.max(margin, Math.round(rect.left));
@@ -4930,6 +4949,27 @@ function _positionSiteManagementWindow() {
   top = Math.min(top, maxTop);
   card.style.left = left + 'px';
   card.style.top = top + 'px';
+}
+
+function openSiteManagementPopupWindow() {
+  let card = document.getElementById('section-site-management');
+  let btn = document.getElementById('btn-map-site-management');
+  if (!card) return;
+  card.style.display = 'block';
+  card.classList.add('site-management-popup-open');
+  _positionSiteManagementWindow();
+  if (btn) btn.classList.add('active');
+}
+
+function closeSiteManagementPopupWindow() {
+  let card = document.getElementById('section-site-management');
+  let btn = document.getElementById('btn-map-site-management');
+  if (!card) return;
+  card.classList.remove('site-management-popup-open');
+  card.style.left = '';
+  card.style.top = '';
+  card.style.display = 'none';
+  if (btn) btn.classList.remove('active');
 }
 
 function openLayersPopupWindow() {
@@ -5020,8 +5060,7 @@ function toggleCoveragePanelFromMap() {
 }
 
 function _restoreSiteManagementVisibility() {
-  _setSiteManagementVisible(true);
-  _positionSiteManagementWindow();
+  closeSiteManagementPopupWindow();
 }
 
 function _disabledButtonReason(btn) {
@@ -5238,6 +5277,13 @@ window.addEventListener('resize', function() {
 });
 
 document.addEventListener('click', function(e) {
+  let siteCard = document.getElementById('section-site-management');
+  let siteBtn = document.getElementById('btn-map-site-management');
+  if (siteCard && siteBtn && siteCard.classList.contains('site-management-popup-open')) {
+    if (!siteCard.contains(e.target) && !siteBtn.contains(e.target)) {
+      closeSiteManagementPopupWindow();
+    }
+  }
   let layersCard = document.getElementById('section-layers');
   let layersBtn = document.getElementById('btn-map-layers');
   if (layersCard && layersBtn && layersCard.classList.contains('layers-popup-open')) {
@@ -5267,6 +5313,7 @@ document.addEventListener('click', function(e) {
 
 document.addEventListener('keydown', function(e) {
   if (e.key === 'Escape') {
+    closeSiteManagementPopupWindow();
     closeLayersPopupWindow();
     closeCoveragePopupWindow();
     closeInfoPopupWindow();
@@ -5332,6 +5379,7 @@ Object.assign(window, {
   clearBbox,
   closeCoveragePopupWindow,
   closeInfoPopupWindow,
+  closeSiteManagementPopupWindow,
   closeLinkAnalysis,
   closePathProfile,
   doCancelOptimization,
@@ -5372,6 +5420,7 @@ Object.assign(window, {
   togglePointCoverageMode,
   togglePreviousResultsCollapsed,
   toggleProfileControls,
+  toggleSiteManagementPanelFromMap,
   toggleTheme,
   toggleTowerCoverage,
   toggleUiSection,

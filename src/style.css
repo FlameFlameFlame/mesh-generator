@@ -138,7 +138,32 @@ body {
   box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.3);
 }
 
+#btn-map-site-management {
+  padding: 6px 12px;
+  border: 1px solid var(--btn-primary-border);
+  border-radius: 8px;
+  background: var(--btn-primary-bg);
+  color: var(--fg);
+  font-size: 0.85em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#btn-map-site-management:hover {
+  background: var(--btn-primary-hover);
+}
+
+#btn-map-site-management.active {
+  background: var(--btn-primary-hover);
+  box-shadow: 0 0 0 2px rgba(95, 148, 215, 0.3);
+}
+
 #section-site-management {
+  display: none;
+}
+
+#section-site-management.site-management-popup-open {
+  display: block;
   position: fixed;
   z-index: 1240;
   width: min(640px, calc(100vw - 24px));
@@ -147,7 +172,7 @@ body {
   box-shadow: 0 12px 28px rgba(0, 0, 0, 0.28);
 }
 
-#section-site-management .section-body {
+#section-site-management.site-management-popup-open .section-body {
   overflow-y: auto;
   max-height: calc(min(62vh, 560px) - 48px);
 }
