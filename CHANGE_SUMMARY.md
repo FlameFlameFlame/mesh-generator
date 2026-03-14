@@ -1,5 +1,8 @@
 # Change Summary
 
+- 2026-03-15: Added frontend legacy-settings sanitization in `src/main.js` so imported/restored project settings containing deprecated `los_parallel_workers` are stripped client-side with a console warning before applying controls.
+- 2026-03-15: Updated map interaction UX in current frontend changeset (`index.html`, `src/main.js`, `src/style.css`) including map-floating Site Management popup behavior and related control wiring used by the backend-served UI build.
+
 - 2026-03-08: Split `mesh-generator` into a frontend-only Vite app: migrated UI to `index.html` + `src/`, added `/api` -> `/api/v2` fetch/EventSource adapter (`src/api-base.js`), enabled Vite dev proxy for `/api/v2`, added Vitest coverage for API URL rewriting, and removed legacy Flask backend/Python test stack from this repo.
 - 2026-03-08: Fixed `/api/grid-layers` NameError after handler extraction by injecting missing app helpers (`_cells_in_bbox`, `_grid_cells_to_geojson`) into `pipeline_site_handlers` call context.
 - 2026-03-08: Added regression test `TestGridLayersEndpoint.test_grid_layers_uses_helper_injected_from_app_module` in `tests/test_visualizer.py`.
