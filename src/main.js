@@ -100,6 +100,8 @@ let _optProgressState = {
     stagePairLabel: 'Pairs: waiting for stage data…',
     stagePairCompleted: 0,
     stagePairTotal: 0,
+    stagePairContext: '',
+    stageTryLabel: '',
   },
 };
 let _optEventSource = null;
@@ -203,6 +205,75 @@ function _titleCaseAlgo(algo) {
   return algo === 'dp' ? 'DP' : String(algo || '').toUpperCase();
 }
 
+function _formatAttemptLabel(attemptId) {
+  let id = Number(attemptId);
+  if (!Number.isFinite(id)) return '';
+  let idx = Math.max(0, Math.trunc(id));
+  if (idx === 0) return 'initial';
+  if (idx === 1) return '1st';
+  if (idx === 2) return '2nd';
+  if (idx === 3) return '3rd';
+  return 'fallback';
+}
+
+function _extractTryLabelFromText(text) {
+  let raw = String(text || '');
+  if (!raw) return '';
+  let fallbackMatch = raw.match(/fallback\s*#\s*(\d+)/i);
+  if (fallbackMatch) {
+    return _formatAttemptLabel(Number(fallbackMatch[1]));
+  }
+  if (/\binitial\b/i.test(raw)) return 'initial';
+  if (/\bfallback\b/i.test(raw)) return 'fallback';
+  return '';
+}
+
+function _extractTryLabelFromProgress(progress, prevTryLabel) {
+  if (!progress || typeof progress !== 'object') return prevTryLabel || '';
+  let attemptKeys = ['attempt_id', 'attempt', 'attempt_idx', 'try_id', 'try_index'];
+  for (let i = 0; i < attemptKeys.length; i++) {
+    let value = Number(progress[attemptKeys[i]]);
+    if (Number.isFinite(value)) {
+      return _formatAttemptLabel(value);
+    }
+  }
+  let fromStep = _extractTryLabelFromText(progress.step);
+  if (fromStep) return fromStep;
+  return prevTryLabel || '';
+}
+
+function _extractLogInt(logLine, key) {
+  if (!logLine || !key) return null;
+  let pattern = new RegExp("['\\\"]?" + key + "['\\\"]?\\s*[:=]\\s*(-?\\d+)", 'i');
+  let match = String(logLine).match(pattern);
+  if (!match) return null;
+  let value = Number(match[1]);
+  if (!Number.isFinite(value)) return null;
+  return Math.trunc(value);
+}
+
+function _formatStagePairLabel(completed, total, options) {
+  let opts = options || {};
+  let context = String(opts.context || '').toLowerCase();
+  let tryLabel = String(opts.tryLabel || '').toLowerCase();
+  let parts = [];
+  if (context && context !== 'route') parts.push(context);
+  if (tryLabel) parts.push(tryLabel + ' try');
+  let suffix = parts.length ? (' (' + parts.join(' • ') + ')') : '';
+  return 'Pairs' + suffix + ': ' + completed + '/' + total;
+}
+
+function _formatStagePairWaitingLabel(options) {
+  let opts = options || {};
+  let context = String(opts.context || '').toLowerCase();
+  let tryLabel = String(opts.tryLabel || '').toLowerCase();
+  let parts = [];
+  if (context && context !== 'route') parts.push(context);
+  if (tryLabel) parts.push(tryLabel + ' try');
+  let suffix = parts.length ? (' (' + parts.join(' • ') + ')') : '';
+  return 'Pairs' + suffix + ': waiting for pair data…';
+}
+
 function _extractStagePairProgress(progress) {
   let keyPairs = [
     ['stage_pairs_completed', 'stage_pairs_total'],
@@ -258,6 +329,8 @@ function _resetOptimizationProgressUI() {
       stagePairLabel: 'Pairs: waiting for stage data…',
       stagePairCompleted: 0,
       stagePairTotal: 0,
+      stagePairContext: '',
+      stageTryLabel: '',
     },
   };
   let panel = document.getElementById('opt-progress-panel');
@@ -310,6 +383,8 @@ function _handleOptimizationProgress(progress) {
     stagePairLabel: 'Pairs: waiting for stage data…',
     stagePairCompleted: 0,
     stagePairTotal: 0,
+    stagePairContext: '',
+    stageTryLabel: '',
   };
   let rawPct = Number(progress.percent);
   let pct = Number.isFinite(rawPct) ? rawPct : prev.percent;
@@ -325,26 +400,70 @@ function _handleOptimizationProgress(progress) {
   let stagePairLabel = prev.stagePairLabel || 'Pairs: waiting for stage data…';
   let stagePairCompleted = prev.stagePairCompleted || 0;
   let stagePairTotal = prev.stagePairTotal || 0;
+  let stagePairContext = prev.stagePairContext || '';
+  let stageTryLabel = prev.stageTryLabel || '';
+  if (stage === 'route') {
+    stageTryLabel = _extractTryLabelFromProgress(progress, stageTryLabel);
+  } else if (stage !== prev.stage) {
+    stageTryLabel = '';
+  }
   let pairProgress = _extractStagePairProgress(progress);
   let stageChanged = stage !== prev.stage;
   if (pairProgress) {
     stagePairCompleted = pairProgress.completed;
     stagePairTotal = pairProgress.total;
     stagePairPercent = pairProgress.percent;
+    stagePairContext = stage || stagePairContext;
     if (!stageChanged && stage !== 'error') {
       stagePairPercent = Math.max(prev.stagePairPercent || 0, stagePairPercent);
     }
-    stagePairLabel = 'Pairs: ' + stagePairCompleted + '/' + stagePairTotal;
+    stagePairLabel = _formatStagePairLabel(
+      stagePairCompleted,
+      stagePairTotal,
+      {context: stagePairContext, tryLabel: stage === 'route' ? stageTryLabel : ''}
+    );
   } else if (stageChanged) {
     if (stage === 'done' && stagePairTotal > 0) {
       stagePairCompleted = stagePairTotal;
       stagePairPercent = 100;
-      stagePairLabel = 'Pairs: ' + stagePairTotal + '/' + stagePairTotal;
+      stagePairLabel = _formatStagePairLabel(
+        stagePairTotal,
+        stagePairTotal,
+        {context: stagePairContext, tryLabel: stageTryLabel}
+      );
+    } else if (stage === 'route') {
+      if (!stagePairContext) stagePairContext = 'route';
+      if (stagePairTotal > 0) {
+        stagePairLabel = _formatStagePairLabel(
+          stagePairCompleted,
+          stagePairTotal,
+          {context: stagePairContext, tryLabel: stageTryLabel}
+        );
+      } else {
+        stagePairCompleted = 0;
+        stagePairTotal = 0;
+        stagePairPercent = 0;
+        stagePairContext = 'route';
+        stagePairLabel = _formatStagePairWaitingLabel({context: stagePairContext, tryLabel: stageTryLabel});
+      }
     } else {
       stagePairCompleted = 0;
       stagePairTotal = 0;
       stagePairPercent = 0;
+      stagePairContext = '';
       stagePairLabel = 'Pairs: n/a for stage "' + (stage || 'unknown') + '"';
+    }
+  }
+  if (stage === 'route' && !pairProgress) {
+    if (!stagePairContext) stagePairContext = 'route';
+    if (stagePairTotal > 0) {
+      stagePairLabel = _formatStagePairLabel(
+        stagePairCompleted,
+        stagePairTotal,
+        {context: stagePairContext, tryLabel: stageTryLabel}
+      );
+    } else {
+      stagePairLabel = _formatStagePairWaitingLabel({context: stagePairContext, tryLabel: stageTryLabel});
     }
   }
   _optProgressState[algo] = {
@@ -356,8 +475,71 @@ function _handleOptimizationProgress(progress) {
     stagePairLabel: stagePairLabel,
     stagePairCompleted: stagePairCompleted,
     stagePairTotal: stagePairTotal,
+    stagePairContext: stagePairContext,
+    stageTryLabel: stageTryLabel,
   };
   _setOptimizationProgressRow(algo, pct, label, hasError, stagePairPercent, stagePairLabel);
+}
+
+function _handleOptimizationLogLine(logLine) {
+  let line = String(logLine || '');
+  if (!line) return;
+  if (line.toLowerCase().indexOf('dp cell-pair prefilter') === -1) return;
+
+  let algo = 'dp';
+  let prev = _optProgressState[algo];
+  if (!prev) return;
+  let stage = String(prev.stage || '').toLowerCase();
+  if (stage && stage !== 'route') return;
+
+  let pairsTotal = _extractLogInt(line, 'pairs_to_filter_total_upper_bound');
+  let pairsProcessed = _extractLogInt(line, 'pairs_processed');
+  if (pairsTotal === null && pairsProcessed === null) return;
+
+  let attemptId = _extractLogInt(line, 'attempt_id');
+  let stageTryLabel = '';
+  if (attemptId !== null) stageTryLabel = _formatAttemptLabel(attemptId);
+  if (!stageTryLabel) stageTryLabel = _extractTryLabelFromText(line);
+  if (!stageTryLabel) stageTryLabel = prev.stageTryLabel || '';
+
+  let nextTotal = (pairsTotal !== null && pairsTotal > 0)
+    ? Math.max(0, Math.trunc(pairsTotal))
+    : (prev.stagePairTotal || 0);
+  let nextCompleted = (pairsProcessed !== null)
+    ? Math.max(0, Math.trunc(pairsProcessed))
+    : (prev.stagePairCompleted || 0);
+  if (nextTotal > 0) {
+    nextCompleted = Math.max(0, Math.min(nextCompleted, nextTotal));
+  }
+  let nextPercent = prev.stagePairPercent || 0;
+  if (nextTotal > 0) {
+    nextPercent = (100.0 * nextCompleted) / nextTotal;
+    nextPercent = Math.max(prev.stagePairPercent || 0, nextPercent);
+  }
+  let nextLabel = nextTotal > 0
+    ? _formatStagePairLabel(nextCompleted, nextTotal, {context: 'prefilter', tryLabel: stageTryLabel})
+    : _formatStagePairWaitingLabel({context: 'prefilter', tryLabel: stageTryLabel});
+
+  _optProgressState[algo] = {
+    percent: prev.percent || 0,
+    label: prev.label || 'Running…',
+    error: !!prev.error,
+    stage: prev.stage || 'route',
+    stagePairPercent: nextPercent,
+    stagePairLabel: nextLabel,
+    stagePairCompleted: nextCompleted,
+    stagePairTotal: nextTotal,
+    stagePairContext: 'prefilter',
+    stageTryLabel: stageTryLabel,
+  };
+  _setOptimizationProgressRow(
+    algo,
+    prev.percent || 0,
+    prev.label || 'Running…',
+    !!prev.error,
+    nextPercent,
+    nextLabel
+  );
 }
 
 // Viridis-like 5-stop color scale
@@ -4044,6 +4226,7 @@ function doRunOptimization() {
       if (d.log) {
         logPre.textContent += d.log + '\n';
         logPre.scrollTop = logPre.scrollHeight;
+        _handleOptimizationLogLine(d.log);
       }
       if (d.progress) {
         _handleOptimizationProgress(d.progress);
