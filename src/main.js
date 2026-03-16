@@ -578,6 +578,89 @@ function terrainColor(t) {
   return 'rgb(255,255,255)';
 }
 
+// High-contrast coverage ramp used with per-render local value scaling.
+const COVERAGE_RAMP = [
+  [33, 64, 154],   // deep blue
+  [42, 157, 244],  // blue
+  [20, 184, 166],  // cyan-green
+  [56, 189, 70],   // green
+  [234, 179, 8],   // yellow
+  [249, 115, 22],  // orange
+  [220, 38, 38],   // red
+];
+
+function _coverageRampColor(t) {
+  t = Math.max(0, Math.min(1, t));
+  if (COVERAGE_RAMP.length < 2) return 'rgb(120,120,120)';
+  let idx = t * (COVERAGE_RAMP.length - 1);
+  let lo = Math.floor(idx);
+  let hi = Math.min(lo + 1, COVERAGE_RAMP.length - 1);
+  let f = idx - lo;
+  let r = Math.round(COVERAGE_RAMP[lo][0] + f * (COVERAGE_RAMP[hi][0] - COVERAGE_RAMP[lo][0]));
+  let g = Math.round(COVERAGE_RAMP[lo][1] + f * (COVERAGE_RAMP[hi][1] - COVERAGE_RAMP[lo][1]));
+  let b = Math.round(COVERAGE_RAMP[lo][2] + f * (COVERAGE_RAMP[hi][2] - COVERAGE_RAMP[lo][2]));
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+
+function _quantileFromSorted(sortedValues, q) {
+  if (!sortedValues || sortedValues.length === 0) return NaN;
+  let t = Math.max(0, Math.min(1, Number(q) || 0));
+  if (sortedValues.length === 1) return Number(sortedValues[0]);
+  let pos = (sortedValues.length - 1) * t;
+  let lo = Math.floor(pos);
+  let hi = Math.min(lo + 1, sortedValues.length - 1);
+  let frac = pos - lo;
+  let a = Number(sortedValues[lo]);
+  let b = Number(sortedValues[hi]);
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return NaN;
+  return a + (b - a) * frac;
+}
+
+function _buildCoverageScale(values, invert) {
+  let vals = (values || []).map(Number).filter(Number.isFinite);
+  if (vals.length === 0) return null;
+  let sorted = vals.slice().sort((a, b) => a - b);
+  let rawMin = sorted[0];
+  let rawMax = sorted[sorted.length - 1];
+  let displayMin = _quantileFromSorted(sorted, 0.05);
+  let displayMax = _quantileFromSorted(sorted, 0.95);
+  if (!Number.isFinite(displayMin) || !Number.isFinite(displayMax) || displayMax <= displayMin) {
+    displayMin = rawMin;
+    displayMax = rawMax;
+  }
+  let span = displayMax - displayMin;
+  let stepCount = 9; // quantize for stronger visual separation
+
+  function normalize(value) {
+    let v = Number(value);
+    if (!Number.isFinite(v)) return 0.5;
+    if (!(span > 0)) return 0.5;
+    let t = (v - displayMin) / span;
+    t = Math.max(0, Math.min(1, t));
+    if (invert) t = 1 - t;
+    return t;
+  }
+
+  function quantize(t) {
+    if (stepCount <= 1) return t;
+    return Math.round(t * (stepCount - 1)) / (stepCount - 1);
+  }
+
+  return {
+    rawMin: rawMin,
+    rawMax: rawMax,
+    displayMin: displayMin,
+    displayMax: displayMax,
+    color: function(value) {
+      return _coverageRampColor(quantize(normalize(value)));
+    },
+    colorAt: function(t) {
+      return _coverageRampColor(quantize(Math.max(0, Math.min(1, Number(t) || 0))));
+    },
+    normalized: normalize,
+  };
+}
+
 function edgeColor(dist_m) {
   // Green (short) to red (long): 0..70 km
   let t = Math.min(dist_m / 70000, 1);
@@ -3633,17 +3716,14 @@ function renderTowerCoverage() {
 
   let vals = features.map(f => f.properties[metric]).filter(v => v != null && isFinite(v));
   if (vals.length === 0) return;
-  let mn = Math.min(...vals);
-  let mx = Math.max(...vals);
-  let range = mx - mn || 1;
   // For received_power: higher = better (green), for path_loss/distance: lower = better (invert)
   let invert = (metric === 'path_loss_db' || metric === 'distance_m');
+  let scale = _buildCoverageScale(vals, invert);
+  if (!scale) return;
   L.geoJSON({type: 'FeatureCollection', features: features}, {
     style: function(feature) {
       let v = feature.properties[metric];
-      let t = (v != null && isFinite(v)) ? (v - mn) / range : 0;
-      if (invert) t = 1 - t;
-      return { fillColor: viridisColor(t), fillOpacity: 0.55, color: '#222', weight: 0.2 };
+      return { fillColor: scale.color(v), fillOpacity: 0.55, color: '#222', weight: 0.2 };
     },
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
@@ -3672,16 +3752,16 @@ function renderCoverage() {
   // Compute min/max for the selected metric
   let vals = features.map(f => f.properties[metric]).filter(v => v != null && isFinite(v));
   if (vals.length === 0) { document.getElementById('color-legend').style.display = 'none'; return; }
-  let mn = Math.min(...vals);
-  let mx = Math.max(...vals);
-  let range = mx - mn || 1;
-
-  let colorFn = (metric === 'elevation') ? terrainColor : viridisColor;
+  let invert = (metric === 'distance_to_closest_tower' || metric === 'path_loss_db' || metric === 'distance_m');
+  let scale = _buildCoverageScale(vals, invert);
+  if (!scale) { document.getElementById('color-legend').style.display = 'none'; return; }
+  let useTerrain = metric === 'elevation';
   L.geoJSON(coverageData, {
     style: function(feature) {
       let v = feature.properties[metric];
-      let t = (v != null && isFinite(v)) ? (v - mn) / range : 0;
-      return { fillColor: colorFn(t), fillOpacity: 0.6, color: '#333', weight: 0.3 };
+      let t = scale.normalized(v);
+      let fill = useTerrain ? terrainColor(t) : scale.color(v);
+      return { fillColor: fill, fillOpacity: 0.6, color: '#333', weight: 0.3 };
     },
     onEachFeature: function(feature, layer) {
       let p = feature.properties;
@@ -3699,10 +3779,14 @@ function renderCoverage() {
   document.getElementById('legend-title').textContent = metric.replace(/_/g, ' ');
   let bar = document.getElementById('legend-gradient');
   let stops = [];
-  for (let i = 0; i <= 10; i++) stops.push(colorFn(i / 10) + ' ' + (i * 10) + '%');
+  for (let i = 0; i <= 10; i++) {
+    let t = i / 10;
+    let c = useTerrain ? terrainColor(t) : scale.colorAt(t);
+    stops.push(c + ' ' + (i * 10) + '%');
+  }
   bar.style.background = 'linear-gradient(to right, ' + stops.join(', ') + ')';
-  document.getElementById('legend-min').textContent = mn.toFixed(1);
-  document.getElementById('legend-max').textContent = mx.toFixed(1);
+  document.getElementById('legend-min').textContent = scale.displayMin.toFixed(1);
+  document.getElementById('legend-max').textContent = scale.displayMax.toFixed(1);
   legend.style.display = 'block';
 }
 
